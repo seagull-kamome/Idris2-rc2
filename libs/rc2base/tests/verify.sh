@@ -91,6 +91,7 @@ TESTS=(
     "TestPosixDirectory||System.Posix.Directory: opendir, chdir, getcwd, DT_* constants"
     "TestPosixMmap||System.Posix.Mmap: PROT_/MAP_ constants, anonymous and file mappings"
     "TestPosixUio||System.Posix.Uio: writev/readv, pread/pwrite"
+    "TestPosixSocket||System.Posix.Socket: socketpair, TCP/UDP/Unix domain over the loopback, options, addresses"
     "TestPosixStdio||System.Posix.Stdio: FILE* streams, fgetc/fgets/getline/fread, writes, position, tmpfile, fmemopen"
     "TestLinux||System.Linux.Pipe: pipe2 with O_CLOEXEC/O_NONBLOCK"
     "TestTaskEnv||Control.Task: Env.slot (one value per scheduler, released at close) and Env.addSource (taken out when given up)"

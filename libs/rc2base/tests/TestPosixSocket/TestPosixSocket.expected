@@ -1,0 +1,42 @@
+AF_UNIX/INET/INET6: (1, (2, 10))
+SOCK_STREAM/DGRAM: (1, 2)
+addresses: 127.0.0.1:8080 [0:0:0:0:0:0:0:1]:443 unix:/run/x
+loopback == SockAddrIn 0x7f000001: True
+pair a->b: "hello (5/5)"
+pair b->a: "world! (6/6)"
+recv after shutdown(write): 0
+recv with nothing to read: FAILED Errno:11
+recv MSG_DONTWAIT: FAILED Errno:11
+setsockopt SO_REUSEADDR: ()
+getsockopt SO_REUSEADDR set: True
+bind port 0: ()
+listen: ()
+bound to the loopback, port chosen: True
+setsockopt TCP_NODELAY: ()
+connect: ()
+accepted from the loopback: True
+peer of the accepted is the client: True
+socketError: Errno:0
+tcp c->s: "ping (4/4)"
+tcp s->c: "pong (4/4)"
+udp bind a: ()
+udp bind b: ()
+sendTo: 8
+recvFrom: datagram, from b: True
+unix bind: ()
+unix listen: ()
+unix connect: ()
+unnamed unix peer has no address: True
+unix c->s: "over a path (11/11)"
+unix name: True
+ipv6: ok
+ipv6 text: [2001:db8:0:0:0:0:0:1]:80
+bind with a path too long: FAILED Errno:36
+send with a negative length: FAILED Errno:22
+recv at a negative offset: FAILED Errno:22
+Just 127.0.0.1:8080
+Just [0:0:0:0:0:0:0:1]:443
+getAddrInfo: a bad host is refused
+Just "192.0.2.1"
+Just "2001:db8::1"
+Nothing

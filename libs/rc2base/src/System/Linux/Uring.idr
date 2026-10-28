@@ -18,6 +18,7 @@ import Data.SortedMap
 import System.FFI
 import System.Posix.Errno
 import System.Posix.FileDesc
+import System.Posix.Socket
 
 -------------------------------------------------------------------------------
 -- Raw FFI
@@ -26,8 +27,6 @@ import System.Posix.FileDesc
 data RawURing : Type where [external]
 data RawSQE : Type where [external]
 data RawCQE : Type where [external]
-data RawSockAddr : Type where [external]
-data RawAddrInfo : Type where [external]
 
 -- liburing needs the caller to own the `struct io_uring`: `init` allocates it
 %inline %foreign "CExpr:(sizeof(struct io_uring)),liburing,liburing.h"
@@ -61,25 +60,8 @@ prim__prepAcceptSimple : Ptr RawSQE -> Int32 -> Int32 -> PrimIO ()
 %inline %foreign "CExpr:(io_uring_prep_multishot_accept((struct io_uring_sqe *)($1), (int)($2), NULL, NULL, (int)($3))),liburing,liburing.h"
 prim__prepMultishotAcceptSimple : Ptr RawSQE -> Int32 -> Int32 -> PrimIO ()
 
--- `getaddrinfo` for a stream socket of any family and a numeric port; the
--- `struct addrinfo` hints and the `struct addrinfo **` result are allocated
--- by the caller
-%inline %foreign "CExpr:(sizeof(struct addrinfo)),libc,netdb.h"
-prim__sizeofAddrInfo : Int
-%inline %foreign "CExpr:memset($1, 0, $2),libc,string.h"
-prim__memset : AnyPtr -> Int -> PrimIO ()
-%inline %foreign "CExpr:(((struct addrinfo *)($1))->ai_socktype = SOCK_STREAM, ((struct addrinfo *)($1))->ai_flags = AI_NUMERICSERV),libc,netdb.h;sys/socket.h"
-prim__setStreamHints : AnyPtr -> PrimIO ()
-%inline %foreign "CExpr:(getaddrinfo($1, $2, (const struct addrinfo *)($3), (struct addrinfo **)($4))),libc,netdb.h;sys/socket.h"
-prim__getaddrinfo : String -> String -> AnyPtr -> AnyPtr -> PrimIO Int32
-%inline %foreign "CExpr:(((struct addrinfo *)($1))->ai_addr),libc,netdb.h"
-prim__aiAddr : GCPtr RawAddrInfo -> PrimIO (Ptr RawSockAddr)
-%inline %foreign "CExpr:(((struct addrinfo *)($1))->ai_addrlen),libc,netdb.h"
-prim__aiAddrLen : GCPtr RawAddrInfo -> PrimIO Bits32
 %inline %foreign "CExpr:(AT_FDCWD),libc,fcntl.h"
 prim__AT_FDCWD : Int32
-%inline %foreign "CExpr:freeaddrinfo($1),libc,netdb.h"
-prim__freeAddrInfo : Ptr RawAddrInfo -> PrimIO ()
 
 %foreign "C:io_uring_get_sqe, liburing, liburing.h"
 prim__getSqe : Ptr RawURing -> PrimIO AnyPtr
@@ -110,7 +92,7 @@ prim__prepClose : Ptr RawSQE -> Int32 -> PrimIO ()
 %foreign "C:io_uring_prep_fsync, liburing, liburing.h"
 prim__prepFsync : Ptr RawSQE -> Int32 -> Bits32 -> PrimIO ()
 %foreign "C:io_uring_prep_connect, liburing, liburing.h"
-prim__prepConnect : Ptr RawSQE -> Int32 -> Ptr RawSockAddr -> Bits32 -> PrimIO ()
+prim__prepConnect : Ptr RawSQE -> Int32 -> AnyPtr -> Bits32 -> PrimIO ()
 %foreign "C:io_uring_prep_send, liburing, liburing.h"
 prim__prepSend : Ptr RawSQE -> Int32 -> Buffer -> Bits64 -> Int32 -> PrimIO ()
 %foreign "C:io_uring_prep_recv, liburing, liburing.h"
@@ -119,11 +101,6 @@ prim__prepRecv : Ptr RawSQE -> Int32 -> Buffer -> Bits64 -> Int32 -> PrimIO ()
 -------------------------------------------------------------------------------
 -- Lifecycle
 -------------------------------------------------------------------------------
-
-||| A resolved address for `prepConnect`, freed (`freeaddrinfo`) when nothing
-||| refers to it any more: `URing` refers to it until the request is over.
-export
-data AddrInfo = MkAddrInfo (GCPtr RawAddrInfo)
 
 ||| A live `io_uring` instance. Exactly one submission/completion queue
 ||| pair, sized by `init`'s own `queueDepth`. Not GC-managed (unlike
@@ -420,21 +397,8 @@ prepCancel64 sqe targetUserData flags = primIO (prim__prepCancel64 sqe.ptr targe
 ||| not need the ring.
 export
 resolve : (host : String) -> (port : Bits16) -> IO (Maybe AddrInfo)
-resolve host port = do
-  hints <- malloc prim__sizeofAddrInfo
-  slot <- malloc prim__sizeofPtr
-  if prim__nullAnyPtr hints /= 0 || prim__nullAnyPtr slot /= 0
-     then free hints *> free slot *> pure Nothing
-     else do
-       primIO (prim__memset hints prim__sizeofAddrInfo)
-       primIO (prim__setStreamHints hints)
-       rc <- primIO (prim__getaddrinfo host (show port) hints slot)
-       found <- primIO (prim__readPtr slot)
-       free hints
-       free slot
-       if rc == 0 && prim__nullAnyPtr found == 0
-          then Just . MkAddrInfo <$> onCollect (prim__castPtr found) (primIO . prim__freeAddrInfo)
-          else pure Nothing
+resolve host port =
+  either (const Nothing) Just <$> getAddrInfo host (show port) AF_UNSPEC SOCK_STREAM AI_NUMERICSERV
 
 ||| Connects the socket `fd` (already created, e.g. via upstream
 ||| `Network.Socket.socket`) to a resolved address. The completion's `res` is
@@ -448,9 +412,8 @@ resolve host port = do
 ||| `setUserData`.
 export
 prepConnect : URing -> SQE -> (fd : FileDesc) -> AddrInfo -> (userData : Bits64) -> IO ()
-prepConnect ring sqe fd addr@(MkAddrInfo info) userData = do
-  sockaddr <- primIO (prim__aiAddr info)
-  len <- primIO (prim__aiAddrLen info)
+prepConnect ring sqe fd addr userData = do
+  (sockaddr, len) <- addrInfoRaw addr
   primIO (prim__prepConnect sqe.ptr fd.rawfd sockaddr len)
   primIO (prim__sqeSetData64 sqe.ptr userData)
   modifyIORef ring.pendingAddrs (insert userData addr)

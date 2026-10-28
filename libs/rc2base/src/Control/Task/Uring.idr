@@ -20,6 +20,7 @@ import Data.SortedMap
 import System.Linux.Uring
 import System.Posix.Errno
 import System.Posix.FileDesc
+import System.Posix.Socket
 
 %default covering
 

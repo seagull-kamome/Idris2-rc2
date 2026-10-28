@@ -12,6 +12,7 @@ import Data.Bits
 import Data.Buffer
 import Data.IORef
 import Data.String.FFI
+import Network.RC2
 import Network.Socket
 import Network.Socket.Data
 import System.FFI
@@ -20,59 +21,9 @@ import System.Posix.Errno
 import System.Posix.Fcntl
 import System.Posix.File
 import System.Posix.FileDesc
+import System.Posix.Socket as Posix
 
 %default covering
-
-%foreign "CExpr:((int)recv($1, (char *)($2) + ($3), (size_t)($4), 0)),libc,sys/socket.h"
-prim__recv : Int32 -> Buffer -> Int -> Int -> PrimIO Int
-
--- MSG_NOSIGNAL: a peer that went away is an `EPIPE` result, not SIGPIPE.
-%foreign "CExpr:((int)send($1, (char *)($2) + ($3), (size_t)($4), MSG_NOSIGNAL)),libc,sys/socket.h"
-prim__send : Int32 -> Buffer -> Int -> Int -> PrimIO Int
-
-%foreign "CExpr:((int)accept($1, NULL, NULL)),libc,sys/socket.h"
-prim__accept : Int32 -> PrimIO Int
-
-%foreign "CExpr:((int)setsockopt($1, SOL_SOCKET, SO_REUSEADDR, (int[]){1}, sizeof(int))),libc,sys/socket.h"
-prim__reuseAddr : Int32 -> PrimIO Int32
-
-%foreign "CExpr:(shutdown($1, SHUT_WR)),libc,sys/socket.h"
-prim__shutdownWrite : Int32 -> PrimIO Int32
-
-%foreign "CExpr:((int)({ int e = 0; socklen_t l = sizeof e; getsockopt($1, SOL_SOCKET, SO_ERROR, &e, &l) == 0 ? e : errno; })),libc,sys/socket.h"
-prim__pendingError : Int32 -> PrimIO Int32
-
-%foreign "CExpr:(close($1)),libc,unistd.h"
-prim__close : Int32 -> PrimIO Int32
-
--- For the address of the peer of an accepted socket: each binding is one libc
--- call or one field, and `peerOf` below does the rest.
-%foreign "CExpr:(sizeof(struct sockaddr_storage)),libc,sys/socket.h"
-prim__sizeofSockaddrStorage : Int
-
-%foreign "CExpr:(getpeername($1, (struct sockaddr *)($2), (socklen_t *)($3))),libc,sys/socket.h"
-prim__getpeername : Int32 -> AnyPtr -> AnyPtr -> PrimIO Int32
-
-%foreign "CExpr:(*(socklen_t *)($1) = ($2)),libc,sys/socket.h"
-prim__setSocklen : AnyPtr -> Int -> PrimIO Int
-
-%foreign "CExpr:(((struct sockaddr *)($1))->sa_family),libc,sys/socket.h"
-prim__saFamily : AnyPtr -> PrimIO Int32
-
-%foreign "CExpr:(AF_INET),libc,sys/socket.h"
-prim__AF_INET : Int32
-
-%foreign "CExpr:(AF_INET6),libc,sys/socket.h"
-prim__AF_INET6 : Int32
-
-%foreign "CExpr:((void *)&((struct sockaddr_in *)($1))->sin_addr),libc,netinet/in.h"
-prim__sinAddr : AnyPtr -> PrimIO AnyPtr
-
-%foreign "CExpr:((void *)&((struct sockaddr_in6 *)($1))->sin6_addr),libc,netinet/in.h"
-prim__sin6Addr : AnyPtr -> PrimIO AnyPtr
-
-%foreign "CExpr:((void *)inet_ntop($1, $2, (char *)($3), $4)),libc,arpa/inet.h"
-prim__inetNtop : Int32 -> AnyPtr -> AnyPtr -> Int -> PrimIO AnyPtr
 
 ||| A non-blocking socket, listening or connected.
 export
@@ -93,37 +44,6 @@ export
 (.peer) : Sock -> Maybe String
 (.peer) = peerAddr
 
--- The peer address of the connected socket `n` as text (IPv4 or IPv6), if it has one.
-peerOf : Int32 -> IO (Maybe String)
-peerOf n = do
-  let size = prim__sizeofSockaddrStorage
-  ss <- malloc size
-  len <- malloc 4   -- a socklen_t
-  _ <- primIO (prim__setSocklen len size)
-  r <- primIO (prim__getpeername n ss len)
-  res <- if r /= 0 then pure Nothing else do
-           family <- primIO (prim__saFamily ss)
-           found <- addressOf family ss
-           maybe (pure Nothing) (text family) found
-  free len
-  free ss
-  pure res
-  where
-    -- The address field of the sockaddr, for the families that are handled.
-    addressOf : Int32 -> AnyPtr -> IO (Maybe AnyPtr)
-    addressOf family ss =
-      if family == prim__AF_INET then Just <$> primIO (prim__sinAddr ss)
-      else if family == prim__AF_INET6 then Just <$> primIO (prim__sin6Addr ss)
-      else pure Nothing
-
-    text : Int32 -> AnyPtr -> IO (Maybe String)
-    text family addr = do
-      buf <- malloc 64
-      p <- primIO (prim__inetNtop family addr buf 64)
-      s <- if prim__nullAnyPtr p /= 0 then pure Nothing else ptrToString buf
-      free buf
-      pure s
-
 ||| Close the socket. Closing again does nothing, so it is safe to call from a
 ||| cleanup as well as from the code that used the socket. It is not safe to call
 ||| from two threads at once: inside a task use `onReactor (close s)` (as
@@ -134,13 +54,13 @@ close s = do
   isOpen <- readIORef s.open_
   when isOpen $ do
     writeIORef s.open_ False
-    ignore (primIO (prim__close s.fd.rawfd))
+    ignore (System.Posix.FileDesc.close s.fd)
 
 ||| Tell the peer that nothing more will be sent (`shutdown(SHUT_WR)`), while
 ||| what it sends can still be read.
 export
 shutdownWrite : Sock -> IO ()
-shutdownWrite s = ignore (primIO (prim__shutdownWrite s.fd.rawfd))
+shutdownWrite s = ignore (Posix.shutdown s.fd ShutWrite)
 
 ||| Run the task and close the socket when it ends or is given up (its scope
 ||| is cancelled, a `race` lost). The close on cancellation is what stops a
@@ -156,22 +76,21 @@ setNonBlocking fd = do
     | Left e => pure (Left e)
   setStatusFlags fd (flags .|. O_NONBLOCK)
 
-adoptFrom : Maybe String -> Int32 -> IO (Either Errno Sock)
-adoptFrom peer n = case mkFileDesc n of
-  Nothing => pure (Left EBADF)
-  Just fd => do
-    r <- setNonBlocking fd
-    case r of
-      Left e => ignore (primIO (prim__close n)) *> pure (Left e)
-      Right () => do
-        -- close-on-exec, so that a program started later does not inherit the
-        -- connection (there is a short gap between the system call that made the
-        -- descriptor and here; a `fork` of another thread in it still inherits it)
-        ignore (setFdFlags fd FD_CLOEXEC)
-        (\open_ => Right (MkSock fd open_ peer)) <$> newIORef True
+adoptFrom : Maybe String -> FileDesc -> IO (Either Errno Sock)
+adoptFrom peer fd = do
+  r <- setNonBlocking fd
+  case r of
+    Left e => ignore (System.Posix.FileDesc.close fd) *> pure (Left e)
+    Right () => do
+      -- close-on-exec, so that a program started later does not inherit the
+      -- connection (there is a short gap between the system call that made the
+      -- descriptor and here; a `fork` of another thread in it still inherits it)
+      ignore (setFdFlags fd FD_CLOEXEC)
+      (\open_ => Right (MkSock fd open_ peer)) <$> newIORef True
 
-adopt : Int32 -> IO (Either Errno Sock)
+adopt : FileDesc -> IO (Either Errno Sock)
 adopt = adoptFrom Nothing
+
 
 ||| A socket listening on `bindAddr` (loopback by default) and `port`.
 export
@@ -181,14 +100,17 @@ listen {bindAddr} port = do
   Right sock <- socket AF_INET Stream 0
     | Left e => pure (Left (MkErrno (cast e)))
   r <- prepare sock
-  case r of
-    Left e => Network.Socket.close sock *> pure (Left e)
-    Right () => adopt (cast sock.descriptor)
+  case (r, fromSocket sock) of
+    (Right (), Just fd) => adopt fd
+    (Left e, _) => Network.Socket.close sock *> pure (Left e)
+    (_, Nothing) => Network.Socket.close sock *> pure (Left EBADF)
   where
     prepare : Socket -> IO (Either Errno ())
     prepare sock = do
-      0 <- primIO (prim__reuseAddr (cast sock.descriptor))
-        | _ => Left <$> errno
+      Just fd <- pure (fromSocket sock)
+        | Nothing => pure (Left EBADF)
+      Right () <- setSockOptInt fd SOL_SOCKET SO_REUSEADDR 1
+        | Left e => pure (Left e)
       0 <- bind sock (Just bindAddr) port
         | e => pure (Left (MkErrno (cast e)))
       listened <- Network.Socket.listen sock
@@ -200,15 +122,18 @@ listen {bindAddr} port = do
 ||| connect that is given up while it is under way closes its socket.
 export
 connect : SocketAddress -> Port -> Task (Either Errno Sock)
-connect addr@(IPv4Addr _ _ _ _) port = handoff start (either (\_ => pure ()) close)
+connect (IPv4Addr a b c d) port = handoff start (either (\_ => pure ()) close)
   where
+    target : SockAddr
+    target = SockAddrIn (cast a * 16777216 + cast b * 65536 + cast c * 256 + cast d) (cast port)
+
     -- A connection under way is done when the descriptor is writable; how it
     -- went is the pending error of the socket.
     finish : Sock -> IORef Bool -> Completion (Either Errno Sock) -> IO ()
     finish s settled done = do
       writeIORef settled True
-      e <- primIO (prim__pendingError s.fd.rawfd)
-      if e == 0 then done (Right s) else close s *> done (Left (MkErrno e))
+      e <- either id id <$> socketError s.fd
+      if e == MkErrno 0 then done (Right s) else close s *> done (Left e)
 
     giveUp : Sock -> IORef Bool -> IORef Cancel -> IO ()
     giveUp s settled watching = do
@@ -224,18 +149,20 @@ connect addr@(IPv4Addr _ _ _ _) port = handoff start (either (\_ => pure ()) clo
 
     start : Env -> Completion (Either Errno Sock) -> IO Cancel
     start env done = do
-      opened <- socket AF_INET Stream 0
+      opened <- Posix.socket AF_INET SOCK_STREAM 0
       case opened of
-        Left e => noCancel <$ done (Left (MkErrno (cast e)))
-        Right sock => do
-          adopted <- adopt (cast sock.descriptor)
+        Left e => noCancel <$ done (Left e)
+        Right fd => do
+          adopted <- adopt fd
           case adopted of
             Left e => noCancel <$ done (Left e)
             Right s => do
-              started <- Network.Socket.connect sock addr port
-              if started == 0 then noCancel <$ done (Right s) else
-                if elem (MkErrno (cast started)) [EINPROGRESS, EINTR] then waiting env s done
-                else close s *> (noCancel <$ done (Left (MkErrno (cast started))))
+              started <- Posix.connect fd target
+              case started of
+                Right () => noCancel <$ done (Right s)
+                Left e =>
+                  if elem e [EINPROGRESS, EINTR] then waiting env s done
+                  else close s *> (noCancel <$ done (Left e))
 connect _ _ = pure (Left EAFNOSUPPORT)
 
 ||| One attempt at a system call that answers -1 and sets `errno` on failure.
@@ -245,16 +172,21 @@ attempt call = do
   n <- primIO call
   if n >= 0 then pure (Right n) else Left <$> errno
 
+||| `retrying` for a call that gives its own result.
+export
+retryingIO : (wait : Task a) -> IO (Either Errno Int) -> Task (Either Errno Int)
+retryingIO wait call = do
+  r <- onReactor call
+  case r of
+    Left e => if e == EAGAIN then wait *> retryingIO wait call
+              else if e == EINTR then retryingIO wait call
+              else pure r
+    Right _ => pure r
+
 ||| Repeat the call, waiting with `wait` when it would block (`EAGAIN`).
 export
 retrying : (wait : Task a) -> PrimIO Int -> Task (Either Errno Int)
-retrying wait call = do
-  r <- onReactor (attempt call)
-  case r of
-    Left e => if e == EAGAIN then wait *> retrying wait call
-              else if e == EINTR then retrying wait call
-              else pure r
-    Right _ => pure r
+retrying wait call = retryingIO wait (attempt call)
 
 ||| The next connection. Waits until one arrives. The socket is handed over with
 ||| `handoff`: if the task is given up in the step between the connection being
@@ -268,11 +200,11 @@ accept l = handoff start (either (\_ => pure ()) close)
     -- descriptor is watched and the call tried again.
     try : Env -> IORef Cancel -> Completion (Either Errno Sock) -> IO ()
     try env watching done = do
-      r <- attempt (prim__accept l.fd.rawfd)
+      r <- Posix.accept l.fd
       case r of
-        Right n => do
-          peer <- peerOf (cast n)
-          adoptFrom peer (cast n) >>= done
+        Right (conn, addr) => do
+          peer <- maybe (pure Nothing) addressText addr
+          adoptFrom peer conn >>= done
         Left e => if e == EAGAIN
                     then env.watchFd l.fd EPOLLIN (\_ => try env watching done) >>= writeIORef watching
                     else if e == EINTR then try env watching done else done (Left e)
@@ -296,13 +228,13 @@ within buf off len call = do
 ||| read. `Right 0` means the peer closed the connection.
 export
 recv : Sock -> Buffer -> (off, len : Int) -> Task (Either Errno Int)
-recv s buf off len = within buf off len (retrying (awaitReadable s.fd) (prim__recv s.fd.rawfd buf off len))
+recv s buf off len = within buf off len (retryingIO (awaitReadable s.fd) (Posix.recv s.fd buf off len 0))
 
 ||| Write some of `buf[off .. off+len)`; the result is how many bytes went out
 ||| (`EINVAL` for an empty range or one outside the buffer).
 export
 send : Sock -> Buffer -> (off, len : Int) -> Task (Either Errno Int)
-send s buf off len = within buf off len (retrying (awaitWritable s.fd) (prim__send s.fd.rawfd buf off len))
+send s buf off len = within buf off len (retryingIO (awaitWritable s.fd) (Posix.send s.fd buf off len MSG_NOSIGNAL))
 
 ||| Write all of `buf[off .. off+len)`; nothing to do for an empty range.
 export
@@ -316,9 +248,9 @@ sendAll s buf off len =
 
 -- One non-blocking attempt, on the thread of the scheduler: `EAGAIN` when the
 -- call would block or was interrupted.
-once : PrimIO Int -> Task (Either Errno Int)
+once : IO (Either Errno Int) -> Task (Either Errno Int)
 once call = do
-  r <- onReactor (attempt call)
+  r <- onReactor call
   pure $ case r of
     Left e => if e == EINTR then Left EAGAIN else r
     Right _ => r
@@ -329,7 +261,7 @@ once call = do
 export
 recvUntil : Time -> Sock -> Buffer -> (off, len : Int) -> Task (Maybe (Either Errno Int))
 recvUntil t s buf off len = do
-  first <- within buf off len (once (prim__recv s.fd.rawfd buf off len))
+  first <- within buf off len (once (Posix.recv s.fd buf off len 0))
   case first of
     Left e => if e == EAGAIN then timeoutAt t (recv s buf off len) else pure (Just first)
     Right _ => pure (Just first)
@@ -339,7 +271,7 @@ export
 sendAllUntil : Time -> Sock -> Buffer -> (off, len : Int) -> Task (Maybe (Either Errno ()))
 sendAllUntil t s buf off len =
   if len <= 0 then pure (Just (Right ())) else do
-    first <- within buf off len (once (prim__send s.fd.rawfd buf off len))
+    first <- within buf off len (once (Posix.send s.fd buf off len MSG_NOSIGNAL))
     case first of
       Left e => if e == EAGAIN then timeoutAt t (sendAll s buf off len) else pure (Just (Left e))
       Right n => if n >= len then pure (Just (Right ()))
