@@ -1,11 +1,11 @@
-writev: 7
-AnyPtr.pread: 5
+writev: Right 7
+AnyPtr.pread: Right 5
   [12, 13, 100, 101, 102]
-AnyPtr.pwrite: 2
-Buffer.pread: 7
+AnyPtr.pwrite: Right 2
+Buffer.pread: Right 7
   [10, 100, 101, 13, 100, 101, 102]
-Buffer.pwrite: 1
-readv: 7
+Buffer.pwrite: Right 1
+readv: Right 7
   [10, 100, 101, 13]
   [100, 101, 99]
 sizeof iovec: 16

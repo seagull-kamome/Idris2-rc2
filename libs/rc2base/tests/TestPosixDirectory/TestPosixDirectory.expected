@@ -16,12 +16,12 @@ entry sub 4 True
 opendir missing is ENOENT: True
 fdopendir of a file is ENOTDIR: True
 dirfd ok: True
-closedir: 0
-closedir fdopendir: 0
-chdir: 0
+closedir: Right ()
+closedir fdopendir: Right ()
+chdir: Right ()
 getcwd in scratch: True
-fchdir: 0
+fchdir: Right ()
 back to start: True
-chroot missing: -1
-chdir missing: -1
+chroot missing: Left Errno:2
+chdir missing: Left Errno:2
 done

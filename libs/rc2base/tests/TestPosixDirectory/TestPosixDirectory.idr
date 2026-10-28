@@ -105,7 +105,8 @@ testDirfd = do
   Right dd <- dirfd d
     | Left _ => putStrLn "dirfd failed"
   putStrLn ("dirfd ok: " ++ show (dd.rawdirfd >= 0))
-  pos <- telldir d
+  Right pos <- telldir d
+    | Left e => putStrLn ("telldir failed: " ++ show e)
   seekdir d pos
   rewinddir d
   closedir d >>= \r => putStrLn ("closedir: " ++ show r)

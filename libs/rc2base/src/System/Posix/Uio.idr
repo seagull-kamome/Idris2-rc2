@@ -5,6 +5,7 @@ import Data.String
 import Data.String.RC2
 import public System.Posix.FileDesc
 import System.FFI
+import System.Posix.Errno
 import System.FFI.C.Ptr
 
 -------------------------------------------------------------------------------
@@ -62,23 +63,25 @@ toIOVec xs = do
 
 ||| Read data from a file descriptor into a list of memory buffers.
 public export
-readv : FileDesc -> List (AnyPtr, Bits64) -> IO Int64
+readv : FileDesc -> List (AnyPtr, Bits64) -> IO (Either Errno Nat)
 readv fd xs = do
   let n : Bits32 := cast {to=Bits32} $ length xs
   iovec <- toIOVec xs
   ret <- primIO $ prim__readv fd.rawfd iovec n
+  res <- checkCount ret   -- before `free`, which may touch `errno`
   free $ believe_me iovec
-  pure ret
+  pure res
 
 ||| Write data from a list of memory buffers to a file descriptor.
 public export
-writev : FileDesc -> List (AnyPtr, Bits64) -> IO Int64
+writev : FileDesc -> List (AnyPtr, Bits64) -> IO (Either Errno Nat)
 writev fd xs = do
   let n : Bits32 := cast {to=Bits32} $ length xs
   iovec <- toIOVec xs
   ret <- primIO $ prim__writev fd.rawfd iovec n
+  res <- checkCount ret   -- before `free`, which may touch `errno`
   free $ believe_me iovec
-  pure ret
+  pure res
 
 
 
@@ -92,9 +95,9 @@ namespace AnyPtr
 
   ||| Read from an arbitrary memory pointer at a specific offset.
   %inline public export
-  pread : FileDesc -> AnyPtr -> Bits64-> Bits64 -> IO Int64
+  pread : FileDesc -> AnyPtr -> Bits64-> Bits64 -> IO (Either Errno Nat)
   pread fd buf count offset =
-    primIO $ prim__pread fd.rawfd buf count offset
+    primIO (prim__pread fd.rawfd buf count offset) >>= checkCount
 
 
   %inline %foreign "CExpr:(pwrite($1, $2, $3, $4)),libc,unistd.h"
@@ -102,9 +105,9 @@ namespace AnyPtr
 
   ||| Write to an arbitrary memory pointer at a specific offset.
   %inline public export
-  pwrite : FileDesc -> AnyPtr -> Bits64-> Bits64 -> IO Int64
+  pwrite : FileDesc -> AnyPtr -> Bits64-> Bits64 -> IO (Either Errno Nat)
   pwrite fd buf count offset =
-    primIO $ prim__pwrite fd.rawfd buf count offset
+    primIO (prim__pwrite fd.rawfd buf count offset) >>= checkCount
 
 
 namespace Buffer
@@ -113,9 +116,9 @@ namespace Buffer
 
   ||| Read from a buffer at a specific file offset.
   %inline public export
-  pread : FileDesc -> Buffer -> Bits64-> Bits64 -> IO Int64
+  pread : FileDesc -> Buffer -> Bits64-> Bits64 -> IO (Either Errno Nat)
   pread fd buf count offset =
-    primIO $ prim__pread fd.rawfd buf count offset
+    primIO (prim__pread fd.rawfd buf count offset) >>= checkCount
 
 
   %inline %foreign "CExpr:(pwrite($1, $2, $3, $4)),libc,unistd.h"
@@ -123,9 +126,9 @@ namespace Buffer
 
   ||| Write from a buffer at a specific file offset.
   %inline public export
-  pwrite : FileDesc -> Buffer -> Bits64-> Bits64 -> IO Int64
+  pwrite : FileDesc -> Buffer -> Bits64-> Bits64 -> IO (Either Errno Nat)
   pwrite fd buf count offset =
-    primIO $ prim__pwrite fd.rawfd buf count offset
+    primIO (prim__pwrite fd.rawfd buf count offset) >>= checkCount
 
 
 

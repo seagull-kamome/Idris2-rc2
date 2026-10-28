@@ -44,8 +44,8 @@ fdopendir fd = primIO (prim__fdopendir fd.rawfd) >>= orErrno
 prim__closedir : DIRPtr -> PrimIO Int32
 
 ||| Close a directory stream.
-public export closedir : DIRPtr  -> IO Int32
-closedir dirp = primIO $ prim__closedir dirp
+public export closedir : DIRPtr  -> IO (Either Errno ())
+closedir dirp = primIO (prim__closedir dirp) >>= checkUnit
 
 
 -------------------------------------------------------------------------------
@@ -170,8 +170,8 @@ seekdir dirp loc = primIO $ prim__seekdir dirp loc
 prim__telldir : DIRPtr -> PrimIO Int64
 
 ||| Return the current position of a directory stream.
-%inline public export telldir : DIRPtr -> IO Int64
-telldir dirp = primIO $ prim__telldir dirp
+%inline public export telldir : DIRPtr -> IO (Either Errno Int64)
+telldir dirp = primIO (prim__telldir dirp) >>= checkNonNeg64
 
 
 
@@ -182,16 +182,16 @@ telldir dirp = primIO $ prim__telldir dirp
 prim__chdir : String -> PrimIO Int32
 
 ||| Change the process working directory.
-public export chdir : String -> IO Int32
-chdir path = primIO $ prim__chdir path
+public export chdir : String -> IO (Either Errno ())
+chdir path = primIO (prim__chdir path) >>= checkUnit
 
 
 %inline %foreign "CExpr:(fchdir($1)),libc,unistd.h"
 prim__fchdir : Int32 -> PrimIO Int32
 
 ||| Change the process working directory using a directory descriptor.
-public export fchdir : DirDesc -> IO Int32
-fchdir fd = primIO $ prim__fchdir fd.rawdirfd
+public export fchdir : DirDesc -> IO (Either Errno ())
+fchdir fd = primIO (prim__fchdir fd.rawdirfd) >>= checkUnit
 
 
 -------------------------------------------------------------------------------
@@ -220,8 +220,8 @@ prim__chroot : String -> PrimIO Int32
 ||| Change the process root directory.
 |||
 ||| Not in POSIX (removed from the Single UNIX Specification); Linux and BSD. Needs root.
-public export chroot : String -> IO Int32
-chroot path = primIO $ prim__chroot path
+public export chroot : String -> IO (Either Errno ())
+chroot path = primIO (prim__chroot path) >>= checkUnit
 
 
 

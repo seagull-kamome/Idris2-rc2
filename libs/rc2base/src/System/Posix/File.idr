@@ -287,11 +287,12 @@ SEEK_HOLE = MkSeekWhence prim__SEEK_HOLE
 %inline %foreign "CExpr:(lseek($1, $2, $3)),libc,sys/types.h;unistd.h"
 prim__lseekSet : Int32 -> Int64 -> Bits32 -> PrimIO Int64
 
-||| Move the file offset of a file descriptor relative to a seek origin.
+||| Move the file offset of a file descriptor relative to a seek origin; the
+||| new offset, measured from the start of the file.
 %inline public export
-lseek : FileDesc -> FileOffset -> SeekWhence -> IO Int64
+lseek : FileDesc -> FileOffset -> SeekWhence -> IO (Either Errno Int64)
 lseek fd (MkFileOffset offset) (MkSeekWhence whence) =
-  primIO $ prim__lseekSet fd.rawfd offset whence
+  primIO (prim__lseekSet fd.rawfd offset whence) >>= checkNonNeg64
 
 
 -------------------------------------------------------------------------------
@@ -302,9 +303,11 @@ prim__fallocate : Int32 -> Int64 -> Int64 -> PrimIO Int32
 
 ||| Reserve space for a file region without modifying the file contents.
 %inline public export
-fallocate : FileDesc -> FileOffset -> FileOffset -> IO Int32
-fallocate fd (MkFileOffset offset) (MkFileOffset len) =
-  primIO $ prim__fallocate fd.rawfd offset len
+fallocate : FileDesc -> FileOffset -> FileOffset -> IO (Either Errno ())
+fallocate fd (MkFileOffset offset) (MkFileOffset len) = do
+  -- `posix_fallocate` returns the error number itself, and leaves `errno` alone
+  r <- primIO (prim__fallocate fd.rawfd offset len)
+  pure (if r == 0 then Right () else Left (MkErrno r))
 
 
 
@@ -316,8 +319,8 @@ prim__chmod : String -> Bits32 -> PrimIO Int32
 
 ||| Change the permissions of a file path.
 %inline public export
-chmod : String -> Bits32 -> IO Int32
-chmod filename mode = primIO $ prim__chmod filename mode
+chmod : String -> Bits32 -> IO (Either Errno ())
+chmod filename mode = primIO (prim__chmod filename mode) >>= checkUnit
 
 
 %inline %foreign "CExpr:(fchmod($1, $2)),libc,sys/stat.h"
@@ -325,8 +328,8 @@ prim__fchmod : Int32 -> Bits32 -> PrimIO Int32
 
 ||| Change the permissions of an open file descriptor.
 %inline public export
-fchmod : FileDesc -> Bits32 -> IO Int32
-fchmod fd mode = primIO $ prim__fchmod fd.rawfd mode
+fchmod : FileDesc -> Bits32 -> IO (Either Errno ())
+fchmod fd mode = primIO (prim__fchmod fd.rawfd mode) >>= checkUnit
 
 
 
@@ -335,9 +338,9 @@ prim__fchmodat : Int32 -> String -> Bits32 -> Bits32 -> PrimIO Int32
 
 ||| Change the permissions of a path relative to a directory descriptor.
 %inline public export
-fchmodat : DirDesc -> String -> Bits32 -> Bits32 -> IO Int32
+fchmodat : DirDesc -> String -> Bits32 -> Bits32 -> IO (Either Errno ())
 fchmodat dirfd pathname mode flags =
-  primIO $ prim__fchmodat dirfd.rawdirfd pathname mode flags
+  primIO (prim__fchmodat dirfd.rawdirfd pathname mode flags) >>= checkUnit
 
 
 
@@ -349,24 +352,24 @@ prim__chown : String -> Bits32 -> Bits32 -> PrimIO Int32
 
 ||| Change the owner of a path.
 %inline public export
-chown : String -> Bits32 -> Bits32 -> IO Int32
-chown filename owner group = primIO $ prim__chown filename owner group
+chown : String -> Bits32 -> Bits32 -> IO (Either Errno ())
+chown filename owner group = primIO (prim__chown filename owner group) >>= checkUnit
 
 %inline %foreign "CExpr:(fchown($1, $2, $3)),libc,unistd.h"
 prim__fchown : Int32 -> Bits32 -> Bits32 -> PrimIO Int32
 
 ||| Change the owner of an open file descriptor.
 %inline public export
-fchown : FileDesc -> Bits32 -> Bits32 -> IO Int32
-fchown fd owner group = primIO $ prim__fchown fd.rawfd owner group
+fchown : FileDesc -> Bits32 -> Bits32 -> IO (Either Errno ())
+fchown fd owner group = primIO (prim__fchown fd.rawfd owner group) >>= checkUnit
 
 %inline %foreign "CExpr:(lchown($1, $2, $3)),libc,unistd.h"
 prim__lchown : String -> Bits32 -> Bits32 -> PrimIO Int32
 
 ||| Change the owner of a symbolic link path.
 %inline public export
-lchown : String -> Bits32 -> Bits32 -> IO Int32
-lchown filename owner group = primIO $ prim__lchown filename owner group
+lchown : String -> Bits32 -> Bits32 -> IO (Either Errno ())
+lchown filename owner group = primIO (prim__lchown filename owner group) >>= checkUnit
 
 
 %inline %foreign "CExpr:(fchownat($1, $2, $3, $4, $5)),libc,fcntl.h;unistd.h"
@@ -374,9 +377,9 @@ prim__fchownat : Int32 -> String -> Bits32 -> Bits32 -> Bits32 -> PrimIO Int32
 
 ||| Change the owner of a path relative to a directory descriptor.
 %inline public export
-fchownat : DirDesc -> String -> Bits32 -> Bits32 -> Bits32 -> IO Int32
+fchownat : DirDesc -> String -> Bits32 -> Bits32 -> Bits32 -> IO (Either Errno ())
 fchownat dirfd pathname owner group flags =
-  primIO $ prim__fchownat dirfd.rawdirfd pathname owner group flags
+  primIO (prim__fchownat dirfd.rawdirfd pathname owner group flags) >>= checkUnit
 
 
 
@@ -394,22 +397,22 @@ prim__funlock : Int32 -> PrimIO Int32
 |||
 ||| BSD-derived `flock(2)`, not in POSIX (`lockf` is the POSIX lock); available on Linux and BSD.
 %inline public export
-flockShared : FileDesc -> IO Int32
-flockShared fd = primIO $ prim__flockShared fd.rawfd
+flockShared : FileDesc -> IO (Either Errno ())
+flockShared fd = primIO (prim__flockShared fd.rawfd) >>= checkUnit
 
 ||| Acquire an exclusive lock on a file descriptor.
 |||
 ||| BSD-derived `flock(2)`, not in POSIX (`lockf` is the POSIX lock); available on Linux and BSD.
 %inline public export
-flockExclude : FileDesc -> IO Int32
-flockExclude fd = primIO $ prim__flockExclude fd.rawfd
+flockExclude : FileDesc -> IO (Either Errno ())
+flockExclude fd = primIO (prim__flockExclude fd.rawfd) >>= checkUnit
 
 ||| Release a file lock held by the current process.
 |||
 ||| BSD-derived `flock(2)`, not in POSIX (`lockf` is the POSIX lock); available on Linux and BSD.
 %inline public export
-funlock : FileDesc -> IO Int32
-funlock fd = primIO $ prim__funlock fd.rawfd
+funlock : FileDesc -> IO (Either Errno ())
+funlock fd = primIO (prim__funlock fd.rawfd) >>= checkUnit
 
 
 -------------------------------------------------------------------------------
@@ -426,23 +429,23 @@ prim__lockfTest : Int32 -> Int64 -> PrimIO Int32
 
 ||| Lock a file region.
 %inline public export
-lockf : FileDesc -> Int64 -> IO Int32
-lockf fd len = primIO (prim__lockf fd.rawfd len)
+lockf : FileDesc -> Int64 -> IO (Either Errno ())
+lockf fd len = primIO (prim__lockf fd.rawfd len) >>= checkUnit
 
 ||| Test and lock a file region non-blockingly.
 %inline public export
-lockfTestAndLock : FileDesc -> Int64 -> IO Int32
-lockfTestAndLock fd len = primIO (prim__lockfTestAndLock fd.rawfd len)
+lockfTestAndLock : FileDesc -> Int64 -> IO (Either Errno ())
+lockfTestAndLock fd len = primIO (prim__lockfTestAndLock fd.rawfd len) >>= checkUnit
 
 ||| Unlock a file region.
 %inline public export
-lockfUnlock : FileDesc -> Int64 -> IO Int32
-lockfUnlock fd len = primIO (prim__lockfUnlock fd.rawfd len)
+lockfUnlock : FileDesc -> Int64 -> IO (Either Errno ())
+lockfUnlock fd len = primIO (prim__lockfUnlock fd.rawfd len) >>= checkUnit
 
 ||| Test whether a file region is locked.
 %inline public export
-lockfTest : FileDesc -> Int64 -> IO Int32
-lockfTest fd len = primIO (prim__lockfTest fd.rawfd len)
+lockfTest : FileDesc -> Int64 -> IO (Either Errno ())
+lockfTest fd len = primIO (prim__lockfTest fd.rawfd len) >>= checkUnit
 
 
 -------------------------------------------------------------------------------
@@ -503,14 +506,14 @@ sync = primIO prim__sync
 prim__fsync : Int32 -> PrimIO Int32
 ||| Synchronize a file's in-core state with storage device.
 %inline public export
-fsync : FileDesc -> IO Int32
-fsync fd = primIO $ prim__fsync fd.rawfd
+fsync : FileDesc -> IO (Either Errno ())
+fsync fd = primIO (prim__fsync fd.rawfd) >>= checkUnit
 
 
 %inline %foreign "CExpr:(fdatasync($1)),libc,unistd.h"
 prim__fdatasync : Int32 -> PrimIO Int32
 ||| Synchronize a file's in-core data with storage device.
 %inline public export
-fdatasync : FileDesc -> IO Int32
-fdatasync fd = primIO $ prim__fdatasync fd.rawfd
+fdatasync : FileDesc -> IO (Either Errno ())
+fdatasync fd = primIO (prim__fdatasync fd.rawfd) >>= checkUnit
 
