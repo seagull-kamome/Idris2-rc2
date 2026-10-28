@@ -157,6 +157,22 @@ exchange reqHead body bodyLen = do
   bs <- bodyStart buf n
   if bs < 0 then pure "<no-header-end>" else getString buf bs (n - bs)
 
+||| POST `/echo` with a chunked body sent in the pieces given, a pause after each (so the
+||| server reads them one at a time); response body as text.
+chunked : List String -> IO String
+chunked pieces = do
+  Just sock <- connectRetry 100
+    | Nothing => pure "<no-connect>"
+  let head = "POST /echo HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+  for_ (head :: pieces) $ \p => do
+    b <- fromString p
+    sendAll sock b (byteLength b)
+    napMs 50
+  (buf, n) <- recvAllBuf sock
+  close sock
+  bs <- bodyStart buf n
+  if bs < 0 then pure "<no-header-end>" else getString buf bs (n - bs)
+
 ||| GET `path`, response body as text.
 get : (path : String) -> IO String
 get path = exchange "GET \{path} HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n" !(mkbuf 0) 0
@@ -193,6 +209,7 @@ round label stopPath binary = do
   when binary $ do
     -- 259-byte body: 0..255 then three NULs. sum of 0..255 = 32640.
     putStrLn (label ++ " echo: " ++ !(post "/echo" 259 (\i => if i < 256 then i else 0)))
+    putStrLn (label ++ " chunked: " ++ !(chunked ["3\r\nab", "c\r\n3;x=1\r\nde", "f\r\n0\r\n", "T: v\r\n", "\r\n"]))
     putStrLn (label ++ " blob: " ++ show !(getBytes "/blob"))
   putStrLn (label ++ " " ++ stopPath ++ ": " ++ !(get stopPath))
   join srv

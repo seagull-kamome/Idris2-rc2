@@ -172,7 +172,15 @@ splitAuthority s =
     else (Nothing, s)
 
 portOf : String -> Maybe Int
-portOf str = if isPrefixOf ":" str then parsePositive (rest1 str) else Nothing
+portOf str =
+  if isPrefixOf ":" str
+    then (let digits = rest1 str in
+          if digits /= "" && length digits <= 5 && all isDigit (unpack digits)
+            then (case parsePositive digits of
+                    Just p => if p <= 65535 then Just p else Nothing
+                    Nothing => Nothing)
+            else Nothing)
+    else Nothing
 
 -- drop "userinfo@" (up to and including the last '@')
 dropUserinfo : String -> String

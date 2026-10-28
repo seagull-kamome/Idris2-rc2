@@ -213,6 +213,7 @@ reasonPhrase 404 = "Not Found"
 reasonPhrase 405 = "Method Not Allowed"
 reasonPhrase 408 = "Request Timeout"
 reasonPhrase 413 = "Payload Too Large"
+reasonPhrase 417 = "Expectation Failed"
 reasonPhrase 431 = "Request Header Fields Too Large"
 reasonPhrase 500 = "Internal Server Error"
 reasonPhrase 501 = "Not Implemented"
@@ -235,22 +236,90 @@ export
 fieldSafe : String -> Bool
 fieldSafe = all (\c => c == '\t' || (ord c >= 32 && ord c /= 127)) . unpack
 
-||| The length of a request's body, `Just 0` without a `Content-Length`. `Nothing`
-||| when the headers do not frame the body reliably: a `Content-Length` that is
-||| not plain digits or does not fit (more than 18 of them), two that differ, or
-||| a `Transfer-Encoding` (chunked bodies are not supported). Taking such a
-||| request for one without a body would leave its body to be read as the next
-||| request.
-export
-bodyLength : List (String, String) -> Maybe Int
-bodyLength hdrs =
-  if isJust (lookup "transfer-encoding" hdrs) then Nothing
-  else case map snd (filter ((== "content-length") . fst) hdrs) of
-    [] => Just 0
-    v :: vs => if all (== v) vs then digits v else Nothing
+-- `trim` of SP and HTAB only, the white space around a field value (RFC 9110, 5.5); `trim`
+-- also takes VT and FF, which a stricter reader of the same header does not.
+trimOws : String -> String
+trimOws = pack . dropWhile ow . reverse . dropWhile ow . reverse . unpack
   where
+    ow : Char -> Bool
+    ow c = c == ' ' || c == '\t'
+
+||| How the body of a request is delimited.
+public export
+data Framing = Sized Int | Chunked
+
+||| Why the headers of a request do not frame its body: `Malformed` (answer 400),
+||| or `UnsupportedCoding`, a transfer coding other than `chunked` (answer 501).
+public export
+data FramingError = Malformed | UnsupportedCoding
+
+export
+Show Framing where
+  show (Sized n) = "Sized " ++ show n
+  show Chunked = "Chunked"
+
+export
+Show FramingError where
+  show Malformed = "Malformed"
+  show UnsupportedCoding = "UnsupportedCoding"
+
+||| The framing of a request's body (RFC 9112, 6.3): `Sized 0` without a
+||| `Content-Length`, `Chunked` for `Transfer-Encoding: chunked`. A refusal when the
+||| headers do not frame the body reliably: a `Content-Length` that is not plain
+||| digits or does not fit (more than 18 of them), two that differ, a
+||| `Transfer-Encoding` together with a `Content-Length`, or one that does not end
+||| with `chunked`. Taking such a request for one without a body would leave its body
+||| to be read as the next request. The codings are the tokens of all the
+||| `Transfer-Encoding` headers.
+export
+framing : List (String, String) -> Either FramingError Framing
+framing hdrs =
+  if any ((== "transfer-encoding") . fst) hdrs then coded else sized
+  where
+    valuesOf : String -> List String
+    valuesOf name = map snd (filter ((== name) . fst) hdrs)
+
+    codings : List String
+    codings = filter (/= "") . map (toLower . trimOws) $ concatMap (forget . split (== ',')) (valuesOf "transfer-encoding")
+
+    coded : Either FramingError Framing
+    coded =
+      if null codings || not (null (valuesOf "content-length")) then Left Malformed
+      else case reverse codings of
+        ["chunked"] => Right Chunked
+        "chunked" :: others => Left (if elem "chunked" others then Malformed else UnsupportedCoding)
+        _ => Left Malformed
+
     digits : String -> Maybe Int
     digits v = if v /= "" && length v <= 18 && all isDigit (unpack v) then parsePositive v else Nothing
+
+    sized : Either FramingError Framing
+    sized = case valuesOf "content-length" of
+      [] => Right (Sized 0)
+      v :: vs => if all (== v) vs then maybe (Left Malformed) (Right . Sized) (digits v) else Left Malformed
+
+||| What a request expects of the server before it sends its body (RFC 9110, 10.1.1).
+public export
+data Expectation = NoExpectation | ExpectContinue | ExpectUnmet
+
+||| The `Expect` headers of a request: `ExpectContinue` when they all are
+||| `100-continue`, `ExpectUnmet` when one is anything else (answer 417).
+export
+expectation : List (String, String) -> Expectation
+expectation hdrs = case map (toLower . trimOws . snd) (filter ((== "expect") . fst) hdrs) of
+  [] => NoExpectation
+  vs => if all (== "100-continue") vs then ExpectContinue else ExpectUnmet
+
+export
+Show Expectation where
+  show NoExpectation = "NoExpectation"
+  show ExpectContinue = "ExpectContinue"
+  show ExpectUnmet = "ExpectUnmet"
+
+||| The interim response that asks the client to send the body.
+export
+continueHead : String
+continueHead = "HTTP/1.1 100 Continue\r\n\r\n"
 
 -- Whether `Connection` (the headers' names in lower case) has the token among
 -- its comma-separated ones.
@@ -473,3 +542,129 @@ parseRequestHead b headEnd = do
 export
 parseHead : Buffer -> (headEnd : Int) -> IO (Maybe (String, String, List (String, String)))
 parseHead b headEnd = map (map (\(m, p, _, h) => (m, p, h))) (parseRequestHead b headEnd)
+
+-------------------------------------------------------------------------------
+-- Chunked bodies (RFC 9112, 7.1)
+-------------------------------------------------------------------------------
+
+||| Where a scan of a chunked body stopped: the offset of the size line of the
+||| next chunk, and the bytes of the chunks before it. A scan that needs more bytes
+||| goes on from its mark when they have come, and does not read the chunks again.
+public export
+record ChunkMark where
+  constructor MkChunkMark
+  at      : Int
+  decoded : Int
+
+||| What a scan of a chunked body found: where the body ends (the next request starts
+||| there) and how many bytes it holds; that more bytes are needed, and where to go on;
+||| that it is not a chunked body (a size that is not hexadecimal, a missing CRLF, a
+||| line over 4096 bytes, a trailer section over 8192); or that the chunks hold more
+||| than the limit.
+public export
+data ChunkScan = ChunksEnd Int Int | ChunksMore ChunkMark | ChunksBad | ChunksTooLarge
+
+||| Scan the chunked body in `buf[mark.at .. len)` as far as it goes: chunk extensions
+||| and trailer fields are checked and dropped. The data of the chunks is checked to
+||| hold no more than `maxBody` bytes as soon as a size says so, before the data has
+||| arrived. With `into`, the data of the chunks is copied there, from offset
+||| `mark.decoded`.
+export
+scanChunks : (into : Maybe Buffer) -> Buffer -> (len, maxBody : Int) -> ChunkMark -> IO ChunkScan
+scanChunks into buf len maxBody start = chunks start.at start.decoded
+  where
+    lineLimit : Int
+    lineLimit = 4096
+
+    trailerLimit : Int
+    trailerLimit = 8192
+
+    -- larger than any limit, and far from overflowing when a digit is added
+    sizeCap : Int
+    sizeCap = 4503599627370496
+
+    hexValue : Int -> Maybe Int
+    hexValue c =
+      if c >= 48 && c <= 57 then Just (c - 48)
+      else if c >= 65 && c <= 70 then Just (c - 55)
+      else if c >= 97 && c <= 102 then Just (c - 87)
+      else Nothing
+
+    extension : (i, le, size : Int) -> IO (Maybe Int)
+    extension i le size =
+      if i >= le then pure (Just size)
+      else do
+        c <- byteAt buf i
+        if (c < 32 && c /= 9) || c == 127 then pure Nothing else extension (i + 1) le size
+
+    -- the size on the line `buf[ls, le)`: hexadecimal digits, then nothing or `;` and
+    -- an extension that has no control character
+    sizeOf : (i, le : Int) -> (acc : Int) -> (digits : Nat) -> IO (Maybe Int)
+    sizeOf i le acc digits =
+      if i >= le then pure (if digits > 0 then Just acc else Nothing)
+      else do
+        c <- byteAt buf i
+        case hexValue c of
+          Just v => sizeOf (i + 1) le (min sizeCap (acc * 16 + v)) (S digits)
+          Nothing => if c == 59 && digits > 0 then extension (i + 1) le acc else pure Nothing
+
+    trailers : (mark : ChunkMark) -> (i, from : Int) -> (decoded : Int) -> IO ChunkScan
+    trailers mark i from decoded = do
+      le <- lineEnd buf i len
+      if le >= len
+        then pure (if len - i > lineLimit then ChunksBad else ChunksMore mark)
+        else if le == i
+          then pure (ChunksEnd (i + 2) decoded)
+          else if le - i > lineLimit || le + 2 - from > trailerLimit
+            then pure ChunksBad
+            else do
+              field <- parseHeaderLine buf i le
+              case field of
+                Nothing => pure ChunksBad
+                Just _ => trailers mark (le + 2) from decoded
+
+    withData : (mark : ChunkMark) -> (n, dataStart : Int) -> IO ChunkScan
+    chunks : (at, decoded : Int) -> IO ChunkScan
+    chunks at decoded = do
+      le <- lineEnd buf at len
+      let mark = MkChunkMark at decoded
+      if le >= len
+        then pure (if len - at > lineLimit then ChunksBad else ChunksMore mark)
+        else if le - at > lineLimit
+          then pure ChunksBad
+          else do
+            size <- sizeOf at le 0 Z
+            case size of
+              Nothing => pure ChunksBad
+              Just 0 => trailers mark (le + 2) (le + 2) decoded
+              Just n => withData mark n (le + 2)
+
+    withData mark n dataStart =
+      if mark.decoded + n > maxBody
+        then pure ChunksTooLarge
+        else if len < dataStart + n + 2
+          then pure (ChunksMore mark)
+          else do
+            cr <- byteAt buf (dataStart + n)
+            lf <- byteAt buf (dataStart + n + 1)
+            if cr /= 13 || lf /= 10
+              then pure ChunksBad
+              else do
+                traverse_ (\dest => copyData buf dataStart n dest mark.decoded) into
+                chunks (dataStart + n + 2) (mark.decoded + n)
+
+||| The data of the chunked body that starts at `start` in `buf[0 .. len)` and has been
+||| scanned (`ChunksEnd`) to hold `size` bytes, as one buffer.
+export
+joinChunks : Buffer -> (start, len, size : Int) -> IO Buffer
+joinChunks buf start len size = do
+  out <- newBuf size
+  _ <- scanChunks (Just out) buf len size (MkChunkMark start 0)
+  pure out
+
+||| The headers of a request whose chunked body was decoded to `size` bytes: no
+||| `Transfer-Encoding`, and the `Content-Length` that a request with that body would
+||| have had.
+export
+decodedHeaders : (size : Int) -> List (String, String) -> List (String, String)
+decodedHeaders size hdrs = filter ((/= "transfer-encoding") . fst) hdrs ++ [("content-length", show size)]

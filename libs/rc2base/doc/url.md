@@ -65,7 +65,7 @@ pathSegments : String -> List String   -- split on '/', drop empties, percent-de
 `parse` handles `scheme://[userinfo@]host[:port]/path?query#fragment`
 and the degenerate cases: scheme-relative `//host/path`, path-only
 `/path?q#f`, an IPv6 host literal `http://[::1]:9000/p`, authority with
-no path. `userinfo` is discarded. Anything it can't recognise mostly
+no path. `userinfo` is discarded. A port above 65535 is no port (`Nothing`). Anything it can't recognise mostly
 ends up in `path`.
 
 `render` isn't guaranteed byte-identical to the string `parse` was
@@ -76,11 +76,16 @@ given: `userinfo` is gone, `query` comes back through `buildQuery`
 inside one segment indistinguishable from a real separator. Use
 `pathSegments` to split-and-decode when that's what you want.
 
+The segments are decoded one by one, so a segment may hold a `/` (from `%2F`), a `.`
+or `..` (from `%2E%2E`), or a NUL. Joining them with `/` into a file name undoes what
+the splitting kept apart: check each segment first, as `Network.Async.HTTP.Static`
+does (`safeSegment`).
+
 ## Verified
 
 `tests/TestURL/TestURL.idr` (in `tests/verify.sh`), under `--cg rc2`: the
 percent codec (space, `/`, a trailing `%`, a 2-byte and a 3-byte UTF-8
 sequence, a malformed byte -> U+FFFD, encode/decode round-trip),
 `parseQuery`/`buildQuery` and their round-trip, `parse` on a full URL /
-path-only / scheme-relative / IPv6-host / no-path input, `render`, and
-`pathSegments`.
+path-only / scheme-relative / IPv6-host / no-path input, `render`, the
+range of a port, and `pathSegments`.

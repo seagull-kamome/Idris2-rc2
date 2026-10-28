@@ -67,11 +67,12 @@ main = ignore (runTaskWith 4 (serve 8080 handler))
 - `Request` and `Response`, the `Response.*` constructors and the parser are those
   of `Network.HTTP.Message`, which this module re-exports.
 - The wire-format subset is that of `http-server.md`: `Content-Length` bodies,
-  keep-alive by default (for HTTP/1.1), no chunked encoding, no TLS. What cannot be served is
+  keep-alive by default (for HTTP/1.1), chunked request bodies (decoded; see below), no TLS. What cannot be served is
   answered, with `Connection: close`, and the connection ends:
   `400` for a head that cannot be parsed or framing headers that cannot be trusted
-  (`bodyLength`, `parseHead`), `413` for a request over `limits.maxRequestBytes`
-  (default 8 MiB), `431` for a head over `limits.maxHeadBytes` (default 64 KiB; a
+  (`framing`, `parseHead`), `413` for a request over `limits.maxRequestBytes`
+  (default 8 MiB), `417` for an `Expect` other than `100-continue`, `501` for a transfer
+  coding other than `chunked`, `431` for a head over `limits.maxHeadBytes` (default 64 KiB; a
   head cannot be longer than the request limit either, so the smaller of the two
   applies). Pass `serve {limits = MkLimits head request}` to change them. After
   the answer the server does a *lingering close*: it shuts down its side, reads and
@@ -79,6 +80,17 @@ main = ignore (runTaskWith 4 (serve 8080 handler))
   does the same), then closes (a refused connection is held that much longer), so that a body that was refused unread does not make the system reset the
   connection and take the answer with it. A client that sends more than that, or
   more slowly, can still lose the answer.
+- A request body with `Transfer-Encoding: chunked` is decoded before the handler runs
+  (`scanChunks`, `joinChunks`): the handler gets the data of the chunks as `body`, and
+  the headers without `Transfer-Encoding` and with the `Content-Length` of the decoded
+  body, as for a request that had been sent that way. Chunk extensions and trailer
+  fields are checked and dropped. The data is counted against `limits.maxRequestBytes`
+  as the sizes arrive, so a chunk that is too large is answered with `413` before its
+  data is read. `400` when the body is not well formed, when `Transfer-Encoding` comes
+  with a `Content-Length` or does not end with `chunked`, and for HTTP/1.0.
+- `Expect: 100-continue` (HTTP/1.1) is answered with `100 Continue` before the body is
+  read, unless the body has arrived already or the request is refused (`413`). HTTP/1.0
+  ignores it.
 - A request with `Connection: close` (also as one token among others), or a
   handler that answers with `Connection: close`, ends the connection after the
   response, and the response then has a single `Connection: close` header: any

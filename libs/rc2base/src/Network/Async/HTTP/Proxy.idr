@@ -151,9 +151,9 @@ forwardTo {options} upstream port rest req =
           size = byteLength req.body
           passed = passedOn ("host" :: "content-length" :: "expect" :: forwardedBy) req.headers
           forwardedHost = maybe [] (\h => [("X-Forwarded-Host", h)]) (lookup "host" req.headers)
-          framing = if size > 0 || elem method ["POST", "PUT", "PATCH"] then [("Content-Length", show size)] else []
+          lengthHeader = if size > 0 || elem method ["POST", "PUT", "PATCH"] then [("Content-Length", show size)] else []
           fields = the (List (String, String)) [("Host", hostValue), ("Connection", "close")]
-                   ++ passed ++ forwardedHost ++ [("X-Forwarded-Proto", "http")] ++ framing
+                   ++ passed ++ forwardedHost ++ [("X-Forwarded-Proto", "http")] ++ lengthHeader
       in method ++ " " ++ path ++ " HTTP/1.0\r\n" ++ concatMap (\(k, v) => k ++ ": " ++ v ++ "\r\n") fields ++ "\r\n"
 
     -- `Nothing` when `deadline` has passed.
@@ -210,8 +210,8 @@ forwardTo {options} upstream port rest req =
       Just (version, code, _, hdrs) <- liftIO (parseRequestHead buf headEnd)
         | Nothing => pure (Left (Bad "bad head in the answer"))
       let status = if length code == 3 && all isDigit (unpack code) then parsePositive {a = Int} code else Nothing
-      case (isPrefixOf "HTTP/" version, status, bodyLength hdrs) of
-        (True, Just st, Just _) =>
+      case (isPrefixOf "HTTP/" version, status, framing hdrs) of
+        (True, Just st, Right (Sized _)) =>
           if st < 200 || st > 599 || headEnd + 4 > options.maxHeadBytes
              || not (all (noControl . fst) hdrs && all (fieldSafe . snd) hdrs)
             then pure (Left (Bad "bad status or head in the answer"))

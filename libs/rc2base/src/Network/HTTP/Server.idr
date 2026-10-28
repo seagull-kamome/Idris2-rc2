@@ -154,6 +154,8 @@ record Conn where
   writeLen    : IORef Int
   writeSent   : IORef Int
   shouldClose : IORef Bool
+  ||| Where the scan of a chunked body that is still arriving stopped.
+  chunkMark   : IORef (Maybe ChunkMark)
 
 record ServerState where
   constructor MkServerState
@@ -318,16 +320,30 @@ tryDispatch st handler conn = do
     | Nothing => pure ()
   Just (method, path, hdrs) <- parseHead rbuf headEnd
     | Nothing => closeConn st conn
-  case bodyLength hdrs of
-    Nothing => closeConn st conn
-    Just need => do
-      let bodyStart = headEnd + 4
+  let bodyStart = headEnd + 4
+  case framing hdrs of
+    Left _ => closeConn st conn
+    Right (Sized need) =>
       when (rlen - bodyStart >= need) $ do
         body <- slice rbuf bodyStart need
-        writeIORef conn.shouldClose (connectionClose hdrs)
-        dropFront conn (bodyStart + need)
-        handler (MkRequest method path hdrs body Nothing) (respond st conn)
-        tryDispatch st handler conn
+        dispatch method path hdrs body (bodyStart + need)
+    Right Chunked => do
+      mark <- fromMaybe (MkChunkMark bodyStart 0) <$> readIORef conn.chunkMark
+      found <- scanChunks Nothing rbuf rlen (st.maxReq - bodyStart) mark
+      case found of
+        ChunksEnd end size => do
+          body <- joinChunks rbuf bodyStart end size
+          dispatch method path (decodedHeaders size hdrs) body end
+        ChunksMore mark' => writeIORef conn.chunkMark (Just mark')
+        _ => closeConn st conn
+  where
+    dispatch : String -> String -> List (String, String) -> Buffer -> Int -> IO ()
+    dispatch method path hdrs' body consumed = do
+      writeIORef conn.shouldClose (connectionClose hdrs')
+      writeIORef conn.chunkMark Nothing
+      dropFront conn consumed
+      handler (MkRequest method path hdrs' body Nothing) (respond st conn)
+      tryDispatch st handler conn
 
 handleReadable : ServerState -> BoundHandler -> Conn -> IO ()
 handleReadable st handler conn = do
@@ -386,7 +402,7 @@ acceptLoop st =
           conn <- MkConn csock cfd
                     <$> newIORef rbuf <*> newIORef 0
                     <*> newIORef wbuf <*> newIORef 0 <*> newIORef 0
-                    <*> newIORef False
+                    <*> newIORef False <*> newIORef Nothing
           modifyIORef st.conns (insert csock.descriptor conn)
           Right () <- epollAdd st.epoll cfd EPOLLIN
             | Left _ => closeConn st conn >> acceptLoop st
