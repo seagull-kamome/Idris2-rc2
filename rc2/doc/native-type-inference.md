@@ -494,6 +494,26 @@ and on Double take 9.86s instead of 10.48s (about 6%); a String insertion
 sort through `compare x y /= GT` takes 0.134s instead of 0.139s, one
 `strcmp` fewer per comparison.
 
+## Refreshing a rep after folding
+
+`Types.repOf` gives a `let` its rep when Phase 1 builds it, from the shape of
+the value then. A value that only becomes an `ROp` later keeps `Boxed`. The
+case is `mod`/`div` on `Int` (and the other fixed-width types): `Prelude.Num.mod`
+is `case y == 0 of 0 => %Int x y; _ => crash`, which `repOf` calls `Nothing`;
+inlining with a constant `y` and `ConstFold` leave `op %Int [x, #3]` in a
+`let v : Boxed`. That `op` was emitted through the boxed `idris2rc2_mod_Int64`:
+two `mkInt64`, the call, `to_i64`, a `drop`; 16 ns where the native
+`idris2rc2_emod_i64` is under 1 ns (a loop of 100M `n mod 3` went from 1.7 s to
+0.1 s).
+
+`ConstFold.refreshReps` runs over each definition's folded body (in
+`foldConstDef` and `foldConstDefWith`, so after the refolds of `PushCon` and
+`SpecClosure` too) and gives a `Boxed` `let` whose value is now an
+`ROp`/`RPrimVal` with a native result the rep `repOf` gives it. Phase 2
+computes `natives` and `inlineableRep` after this, so it sees the same lets it
+would have had from the start. A divisor that is not a constant keeps the
+`case`, so `mod x y` is unchanged. `Test151IntModDivNative`.
+
 ## Bugs found and fixed (chronological, see `git log`/`BENCHMARKS.md` for commit-level detail)
 
 1. **`Cast Integer Int` memory corruption.** `opResultRep (Cast i o)`
