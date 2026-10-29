@@ -472,6 +472,60 @@ before trusting any A/B comparison built on it again (see
 `Test114Inline/CompareFusionThroughCall.idr`'s own doc comments, which both
 describe exactly what to expect changed between the two builds).
 
+## Criterion C: tiny callees (early run, `RCExp`)
+
+`LateInline`'s early run (before `Phase 2`) splices a callee with exactly one
+call site (Criterion B on `RCExp`). It now also splices a callee that is not in
+a call cycle, has no `RLoop` and is not a CAF, with more than one call site, in
+two tiers (`--directive notinyinline` turns both off):
+
+- at most `tinyAlwaysSize` (2) nodes: at every call site. The body is as
+  small as the call it replaces, so nothing grows;
+- at most `tinyCalleeSize` (8) nodes: only where an argument is a closure the
+  caller built (a local bound to a `partial`, possibly behind a `let` that
+  only returns it, or a constant closure). That is the shape the splice pays
+  for: the callee applies the closure, and the application becomes a call.
+
+What it is for: a function generic over `Monad`/`HasIO` specialised to `IO`
+(`modifyIORef`, ...) calls the lifted `Monad IO` bind, a 3-line worker that
+`apply`s two arguments, with two freshly built capturing `partial`s. Those
+closures were allocated and applied through the generic path: 1,397
+instructions and 7 `malloc`/`free` per `modifyIORef`, 150 ns. Neither
+`LateInline` (one call site) nor `SpecClosure` (constant closures only)
+reached them. Splicing the bind leaves `apply p [w]` of known partials, and two
+folds finish it:
+
+- `ConstFold` turns the exactly-saturating one into a call (it already did);
+- `KnownPartial.foldKnownPartials` takes the over-application (`apply k [v, w]`
+  of a partial that misses one argument) apart into the call that saturates it
+  and an `apply` of the result to the rest, and drops the `let` that only
+  returns a partial (`let x = (let y = P in y)`). Before annotation only: no
+  `dup`/`drop` exist yet.
+
+Each round exposes the next tiny callee (the bind, then the wrapper that built
+the continuation, then the read and the write), so the early inline repeats
+(splice, `foldKnownPartials`, refold, `PushCon`) while a round splices
+something or changes the program's node count, up to `maxEarlyInlineRounds`
+(8) after the first, which always runs to its end as before.
+
+Why two tiers and not "every callee of at most 8 nodes", measured on
+`modifyIORef` (instructions per call) and `llmchat` (generated C):
+
+| criterion | per call | C of llmchat |
+|---|---|---|
+| none | 1,396 | 8.64 MB |
+| 8 nodes, closure argument only | 137 | 8.78 MB |
+| 8 nodes, every call site | 67 | 9.58 MB (+9%), compile time +9% |
+| 2 nodes at every site, 8 with a closure argument (this) | 67 | 8.77 MB |
+
+The last row keeps the whole speedup (100M `modifyIORef` calls 14.95 s → 1.80
+s) because what the closure-only row leaves is a direct call to a 2-node
+wrapper (the read), which costs more than its body. Splicing every 8-node
+callee at every site is what grows the code, and it also removes the small
+functions that other passes' tests look for (`SpecConstCon` clones, `DualABI`
+workers): that is a reason to want the size, not a reason that was weighed
+first. `Test152TinyInline`.
+
 ## Criterion B: loop-free single-caller callees (2026-09-25; on the case trees since 2026-09-29)
 
 The second criterion, dropped above as not load-bearing, became

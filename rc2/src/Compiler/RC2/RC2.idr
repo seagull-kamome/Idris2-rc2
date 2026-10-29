@@ -42,6 +42,7 @@ import Compiler.RC2.DualABI
 import Compiler.RC2.DeadVars
 import Compiler.RC2.DupMerge
 import Compiler.RC2.LeafTail
+import Compiler.RC2.KnownPartial
 import Compiler.RC2.FunDedup
 import Compiler.RC2.PushDown
 import Compiler.RC2.Emit
@@ -101,6 +102,28 @@ applyReuse nested fc (MkRCFun args retRep isWorker body) = MkRCFun args retRep i
 applyReuse nested fc (MkRCError body) = MkRCError (resolveReuse nested (immOf fc body) body)
 applyReuse _ _ d@(MkRCCon _ _ _) = d
 applyReuse _ _ d@(MkRCForeign _ _ _) = d
+
+||| Callees of at most this many `RCExp` nodes are spliced at every call site
+||| in the early inline (`--directive notinyinline` turns it off).
+tinyCalleeSize : Nat
+tinyCalleeSize = 8
+
+||| Total `RCExp` node count: a round that leaves it as it was has found
+||| nothing more to fold, whether or not it spliced.
+programSize : List (Name, RCDef) -> Nat
+programSize = sum . map (\(_, d) => bodySize d)
+  where
+    nodes : RCExp -> Nat
+    nodes e = S (sum (map nodes (children e)))
+    bodySize : RCDef -> Nat
+    bodySize (MkRCFun _ _ _ b) = nodes b
+    bodySize (MkRCError b) = nodes b
+    bodySize _ = 1
+
+||| Cap on the early inline's rounds after the first. Only a guard: it stops by
+||| itself once a round splices nothing.
+maxEarlyInlineRounds : Nat
+maxEarlyInlineRounds = 8
 
 ||| Iteration cap for `foldConstProgram`'s fixpoint loop. Hitting it only
 ||| leaves some CAFs un-inlined (a missed optimisation), never an incorrect
@@ -216,7 +239,7 @@ inlineNamed disabled keep main defs =
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nocmpmerge", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nonullparams", "nostructreturn", "nomutualstruct", "nodeadcode", "nopushdown", "nodupmerge", "nodeadvars", "noleaftail", "nofundedup", "noreusenested", "noreuserecheck"]
+    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "notinyinline", "nosink", "nocmpmerge", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nonullparams", "nostructreturn", "nomutualstruct", "nodeadcode", "nopushdown", "nodupmerge", "nodeadvars", "noleaftail", "nofundedup", "noreusenested", "noreuserecheck"]
 
 ||| Stages that are off unless asked for with `--directive <name>`. They
 ||| travel to `toRCDefs` in the same list as the disables above.
@@ -286,9 +309,29 @@ toRCDefs directives incremental roots thunks preFolded0 = do
     earlyInlined <- if ("noearlyinline" `elem` directives) || ("nolateinline" `elem` directives) || ("noconstfold" `elem` directives)
                        then pure dictSpecialized
                        else logTime 2 "rc2: Early inline" $ do
-                              spliced <- applyLateInline "Early inline" True roots dictSpecialized
-                              refolded <- logTime 3 "rc2: Early inline (refold)" $ pure $ map (\(n, d) => (n, foldConstDef True empty d)) spliced
-                              if "nopushcon" `elem` directives then pure refolded else logTime 3 "rc2: Early inline (PushCon)" $ applyPushCon refolded
+                              let tiny : Nat = if "notinyinline" `elem` directives then 0 else tinyCalleeSize
+                              -- One splice, then what it exposes: partials the bind
+                              -- left applied, the refold, the push into tails. The
+                              -- first round always runs to the end; another follows
+                              -- while the last one spliced something, since each can
+                              -- expose a tiny callee the one before could not see
+                              -- (rc2/doc/inlining.md, "Criterion C: tiny callees").
+                              let round : List (Name, RCDef) -> Core (Bool, List (Name, RCDef))
+                                  round ds = do
+                                      (changed, spliced0) <- applyLateInlineWith tiny "Early inline" True roots ds
+                                      spliced <- traverse (\(n, d) => case d of
+                                                      MkRCFun a r w b => (\b' => (n, MkRCFun a r w b')) <$> foldKnownPartials b
+                                                      _ => pure (n, d)) spliced0
+                                      refolded <- logTime 3 "rc2: Early inline (refold)" $ pure $ map (\(n, d) => (n, foldConstDef True empty d)) spliced
+                                      pushed <- if "nopushcon" `elem` directives then pure refolded else logTime 3 "rc2: Early inline (PushCon)" $ applyPushCon refolded
+                                      pure (changed || programSize pushed /= programSize ds, pushed)
+                                  rounds : Nat -> List (Name, RCDef) -> Core (List (Name, RCDef))
+                                  rounds Z ds = pure ds
+                                  rounds (S k) ds = do
+                                      (changed, ds') <- round ds
+                                      if changed then rounds k ds' else pure ds'
+                              (_, first) <- round dictSpecialized
+                              rounds maxEarlyInlineRounds first
     -- doc/caf-memoization.md: right after ConstFold (and the
     -- specialization pass above, whose own clones are never 0-arg CAFs
     -- regardless) and strictly before Phase 2 (toRCDefPostFold's own
