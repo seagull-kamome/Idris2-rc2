@@ -804,3 +804,46 @@ per element. `SpecClosure` cannot clone it: the recursion passes a different
 closure at each depth (nested finger tree), so the clones would not end. A
 version of the library with the size fixed to 1 for plain elements, or a clone
 for the outermost call only, are the options.
+
+## Native: a `let` whose value simplifies to an `ROp` keeps its `Boxed` rep, so `Int` `mod`/`div` by a constant costs ~16 ns (found in an IO loop benchmark, 2026-10-29)
+
+`n `mod` 3` on `Int` compiles to `Boxed` boxing round trips: `mkInt64`,
+`idris2rc2_mod_Int64`, `to_i64`, `drop`. A loop with `n < 3` runs 100M
+iterations in 0.04 s; with `n `mod` 3 == 0` (or `div` 3) in 1.6-1.8 s, about
+16 ns more per operation, and `mod`/`div` are everywhere (indices, hashes,
+digits).
+
+Cause: `Prelude.Num.mod` is `case y == 0 of 0 => %Int x y; _ => crash`. The
+`RLet` that binds its value gets its `Rep` from `Types.repOf` when
+`Compiler.RC2.RC` builds it, and the value is still a case, so `repOf` says
+`Boxed`. After inlining with `y = 3`, `ConstFold` folds the case and leaves a
+bare `op %Int [v, #3]` in a `let v : Boxed`. Nothing revisits the rep. The
+`Add`/`Sub` lets are native because their value is an `ROp` from the start.
+
+Fix to try: after `ConstFold` (before Phase 2 annotation), give an `RBoxed`
+`RLet` whose value is now an `ROp`/`RPrimVal` with a native result type
+(`repOf`) that rep, as Phase 1 would have. Check with `--directive
+dumprcexpr` that `op %Int` is `Native Int`, and with the loops in
+`rc2/tests/bench.sh` style (`f1` above). Probably also helps other values
+that only become ops after folding.
+
+## IO: `modifyIORef` costs ~150 ns, 20 times `readIORef` + `writeIORef` (found in an IO loop benchmark)
+
+100M calls: `modifyIORef r (+ 1)` 14.95 s; the hand-written read then write
+0.2 s for a third of the iterations (about 7 ns per pair). callgrind: 1,397
+instructions per call, 7 `malloc`/`free`, 5 `mkClosure`, and the generic
+`trampoline`/`applyClosure`/`dispatchFn` machinery for about a third of them.
+
+Cause: `modifyIORef : HasIO io => ...` is specialised to `IO` but its `>>=` is a
+call to the lifted `Monad IO` bind (`{csegen:13}:3`, a 3-line worker: `let v =
+apply m [w]; apply k [v, w]`) with two freshly built capturing `partial`s as
+`m` and `k`. The bind is not inlined (`LateInline` takes only single-caller
+callees; `SpecClosure` clones only for constant closures), so both closures are
+allocated and applied through the generic path.
+
+Fix to try: an `RCExp`-level inline of a tiny non-recursive callee at a call
+site where an argument is a locally built `partial` or constant closure that
+the callee applies (the gate keeps it from growing code); `ConstFold`'s
+known-partial rule then turns each `apply` into a direct call. This would help
+every `HasIO`/`Monad`-generic library function specialised to `IO`
+(`modifyIORef`, `when`, `traverse_`, `for_`, ...), not only this one.
