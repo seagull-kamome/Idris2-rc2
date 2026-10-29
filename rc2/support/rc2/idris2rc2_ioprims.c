@@ -120,23 +120,7 @@ IDRIS2RC2_Value *idris2rc2_Data_IOArray_Prims_prim__arraySet(
 
 IDRIS2RC2_String const idris2rc2_osString = {
     IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_STRING),
-#if defined(_WIN32)
-    sizeof("windows") - 1, "windows"
-#elif defined(__APPLE__) || defined(__MACH__)
-    sizeof("macOS") - 1, "macOS"
-#elif defined(__linux__)
-    sizeof("Linux") - 1, "Linux"
-#elif defined(__FreeBSD__)
-    sizeof("FreeBSD") - 1, "FreeBSD"
-#elif defined(__OpenBSD__)
-    sizeof("OpenBSD") - 1, "OpenBSD"
-#elif defined(__NetBSD__)
-    sizeof("NetBSD") - 1, "NetBSD"
-#elif defined(__unix__) || defined(__unix)
-    sizeof("Unix") - 1, "Unix"
-#else
-    sizeof("Other") - 1, "Other"
-#endif
+    sizeof(IDRIS2RC2_OS_NAME) - 1, IDRIS2RC2_OS_NAME
 };
 
 /* Kept in sync by hand with the "rc2" literal

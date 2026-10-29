@@ -762,3 +762,11 @@ codepoint order for UTF-8 and independent of the locale. The compile-time fold
 of two literals gives the same answer (`Test149StrLiteralFold`). A comparison
 by the locale's collation (`strcoll`-like) is a separate function to add; it
 must not be folded, and `==` stays bytewise.
+
+## Performance: `System.Info.isWindows` is still decided at run time
+
+`os` folds to a string literal (`--directive target-os`, `rc2/doc/directives.md`
+section 9) and comparisons and cases on it fold (`doc/const-caf-fold.md`,
+"String literals"), but `isWindows` is `os \`elem\` [...]`: a `loop` over a
+constant list after inlining, which nothing unrolls. Its cost is one `memoize`d
+evaluation of the CAF. A fold of a loop over a constant list would fix it.
