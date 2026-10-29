@@ -754,3 +754,11 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
 - `Network.Async.HTTP.Proxy`の私用クライアント: 転送の厳格な検査(`Transfer-Encoding`の拒否、
   先頭行と`Content-Length`の検査、リダイレクトを追わない、応答の大きさの上限)を保ったまま
   載せ替えられるかを先に確かめる。リダイレクトを追わない設定は`CurlOptions`に無い。
+
+## Locale-aware String comparison
+
+`<`, `<=`, `>`, `>=` on `String` compare bytes (`idris2rc2_strcmp3`), which is
+codepoint order for UTF-8 and independent of the locale. The compile-time fold
+of two literals gives the same answer (`Test149StrLiteralFold`). A comparison
+by the locale's collation (`strcoll`-like) is a separate function to add; it
+must not be folded, and `==` stays bytewise.
