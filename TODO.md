@@ -770,3 +770,28 @@ section 9) and comparisons and cases on it fold (`doc/const-caf-fold.md`,
 "String literals"), but `isWindows` is `os \`elem\` [...]`: a `loop` over a
 constant list after inlining, which nothing unrolls. Its cost is one `memoize`d
 evaluation of the CAF. A fold of a loop over a constant list would fix it.
+
+## Inlining: a small callee that forces a `Lazy` parameter is not inlined (found in llmchat)
+
+`when c act` (42 sites, `TermUI.Program.handleAll`) and `fromMaybe d m` (67)
+allocate a `delay` thunk for the lazy argument, call the function and
+`force` it. Criterion A needs a call-free body, and `NmForce` disqualifies it.
+A body that forces a `Lazy` parameter at most once, in a branch, could take the
+argument expression in place of the force: no thunk, no call. `&&`/`||`-like
+and `maybe`/`either` are the same shape. Needs a design (order of evaluation,
+an argument forced in two branches, a thunk that escapes).
+
+## Inlining: one-line delegating wrappers are still called (found in llmchat)
+
+`List.reverse` (139 sites), `tailRecAppend` (162), `fastUnpack`/`fastPack`
+(132) have bodies of one to four nodes that delegate to another function, so
+they are never call-free. Allow a wrapper whose body is a single saturated
+call with atomic arguments. Small gain: one call per site.
+
+## `Data.Seq.RC2`: `consTree`/`snocTree` take the element size as a closure (found in llmchat)
+
+About 500 call sites pass the same constant closure and the function applies it
+per element. `SpecClosure` cannot clone it: the recursion passes a different
+closure at each depth (nested finger tree), so the clones would not end. A
+version of the library with the size fixed to 1 for plain elements, or a clone
+for the outermost call only, are the options.
