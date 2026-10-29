@@ -9,7 +9,7 @@
 module Main
 
 import Data.List
-import Data.Seq.Unsized
+import Data.Seq.RC2
 import Data.String
 import Text.PrettyPrint.Prettyprinter.Doc
 import Text.PrettyPrint.Prettyprinter.Util
@@ -101,6 +101,14 @@ main = do
   let t1 = run [V.Scroll Sc.ToStart, V.Scroll (Sc.LineDown 6)] tall
   draw "OnBlock: the code block is under the window's top" t1
   draw "OnBlock: a click on its last visible row folds it, and its first row is shown" (run [V.Click 3 5] t1)
+  -- a window as high as the text (the last row must be shown), and one row less
+  let fit = \r => V.addSegment "second segment" (V.addSegment doc (V.empty defaultTheme r 30))
+  draw "exact fit: the last row of 20 is shown" (fit 20)
+  draw "one row short: the last row is shown" (fit 19)
+  -- a click on every row of a text of 20 lines folds the block that is on that row
+  let c3 = V.addSegment doc (V.empty ({ foldClick := OnBlock } defaultTheme) 20 30)
+  let rowsHit = pack (map (\r => if V.lineCount (V.update (V.Click r 5) c3) /= V.lineCount c3 then 'x' else '.') [0 .. 19])
+  putStrLn ("-- rows whose click folds a block (OnBlock, " ++ show (V.lineCount c3) ++ " lines): " ++ rowsHit)
   -- no marks: no gutter, the cursor is the first row in reverse
   let nm = { openMark := "", closedMark := "" } defaultTheme
   let n1 = V.addSegment doc (V.empty ({ foldClick := OnBlock } nm) 14 30)

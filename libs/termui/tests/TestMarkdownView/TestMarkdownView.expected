@@ -408,6 +408,48 @@
 |    end 1          │
 |                   │
 |    end 2          │
+-- exact fit: the last row of 20 is shown (0, (True, 20))
+|[-] # Title
+|
+|    intro text
+|
+|[-]  c
+|     int a;
+|     int b;
+|
+|[-] - x
+|    - y
+|
+|[-] ## Sub
+|
+|    under sub
+|
+|[-] # Next
+|
+|    last
+|
+|    second segment
+-- one row short: the last row is shown (1, (True, 20))
+|                             │
+|    intro text               █
+|                             █
+|[-]  c                       █
+|     int a;                  █
+|     int b;                  █
+|                             █
+|[-] - x                      █
+|    - y                      █
+|                             █
+|[-] ## Sub                   █
+|                             █
+|    under sub                █
+|                             █
+|[-] # Next                   █
+|                             █
+|    last                     █
+|                             █
+|    second segment           █
+-- rows whose click folds a block (OnBlock, 18 lines): x...xxx.xx.x...x....
 -- no marks: no gutter (0, (False, 18))
 |# Title                      █
 |                             █

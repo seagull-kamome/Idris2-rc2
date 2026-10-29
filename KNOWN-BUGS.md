@@ -237,6 +237,22 @@ If one of these stops reproducing, or a fix lands, remove the entry.
   copies the upstream C. Left as is; nothing in rc2 or `libs/` calls
   them (`rc2base` uses plain `send`/`recv`).
 
+- **`Data.Seq.Unsized` of contrib gives wrong answers for some sizes --
+  worked around in `rc2base`.** Two mistakes in `Data/Seq/Internal.idr`:
+  `lookupDigit` (case `Three`, last branch) takes `sa` off the index twice
+  (`(i - sa) - sab` for `i - sab`), so `index` returns the wrong element for
+  some positions of a sequence of 15 or more elements; and `snocTree` (the
+  `One`, `Two` and `Three` cases) adds `size a`, not `size f`, to the cached size
+  of the `Deep` node, which only shows when a `Node` is added a level down (as
+  `(++)` does): `take`, `drop`, `splitAt` and `index` of the result cut in the
+  wrong place while `length` is right. Example: `fromList [1 .. 18] ++
+  fromList [19, 20]` has `take 19` of 18 elements. Chez and rc2 behave the same,
+  so it is the library. `rc2base` has a copy with the two lines fixed,
+  `Data.Seq.RC2` (`Data.Seq.RC2.Internal`), and `termui` uses it; checked
+  against lists by `libs/rc2base/tests/TestSeqRC2`. `Data.Text` still uses
+  contrib's, since it never indexes or splits the tree. Remove the copy, and this
+  entry, when contrib has the fix.
+
 ## `Nat` division and remainder are slow
 
 `div` and `mod` on a `Nat` (`Integral Nat` in `Data.Nat` of the base library) subtract

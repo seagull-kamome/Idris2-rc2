@@ -47,6 +47,7 @@ rc2の汎用サポートライブラリです。上流の`base`/`contrib`に無�
 | --- | --- |
 | `Control.Concurrent.MVar` | Haskellの`MVar`（スレッド安全な`takeMVar`/`putMVar`/`modifyMVar`/...）。`System.Concurrency`の`Mutex`/`Condition`の上に作ってあります |
 | `Data.Text`/`Data.TextBuffer` | UTF-8由来のコードポイントバッファ。後述の「API」を参照 |
+| `Data.Seq.RC2` | contribの`Data.Seq.Unsized`に、欠けている2つの修正を当てたものです。contribでは`index`、`take`、`drop`、`splitAt`、`(++)`が、大きさによって誤った結果を返します（`KNOWN-BUGS.md`を参照）。名前は同じです |
 | `Data.String.FFI` | 上流`Data.String`の`%foreign`の欠落を補います。`TODO.md`を参照 |
 | `Data.String.RC2` | `String`をバイトオフセットで切り出します。範囲がコードポイントの境界に揃わないときに使います。後述 |
 | `Data.Double.RC2` | 上流`Data.Double`の`unitRoundoff`/`epsilon`/`nan`/`inf`を補います。後述 |
