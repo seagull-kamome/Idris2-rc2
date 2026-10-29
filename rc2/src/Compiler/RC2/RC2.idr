@@ -61,6 +61,7 @@ import Compiler.RC2.NullParams
 import Compiler.RC2.CalleeTable
 import Compiler.RC2.Loop
 import Compiler.RC2.Sink
+import Compiler.RC2.TargetOs
 import Compiler.RC2.Types
 import Compiler.RC2.Util
 
@@ -245,7 +246,12 @@ stageDirectiveNames = disableableStageNames ++ optInStageNames
 ||| names are not literals, is dropped earlier, by `normalizeProgram`.)
 toRCDefs : {auto c : Ref Ctxt Defs} -> {auto v : Ref VarId Int} -> List String -> (incremental : Bool) -> (roots : List Name)
         -> (thunks : SortedSet Name) -> List (Name, RCDef) -> Core (List (Name, RCDef))
-toRCDefs directives incremental roots thunks preFolded = do
+toRCDefs directives incremental roots thunks preFolded0 = do
+    let preFolded = case targetOsOf directives of
+                         Just t => if "noconstfold" `elem` directives
+                                      then preFolded0
+                                      else map (\(n, d) => (n, foldTargetOsDef t d)) preFolded0
+                         Nothing => preFolded0
     folded <- if "noconstfold" `elem` directives
                  then pure preFolded
                  else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ foldConstProgram (not ("noknowncon" `elem` directives)) preFolded
@@ -571,6 +577,19 @@ exportSupportedTypesDesc : String
 exportSupportedTypesDesc =
     "scalar (Int/Int8/Int16/Int32/Int64/Bits8/Bits16/Bits32/Bits64/Double/Char), Ptr, GCPtr, Integer, String, or struct (Struct)"
 
+||| The `--directive`/`%cg rc2` directives with `target-os` settled
+||| (`Compiler.RC2.TargetOs.withTargetOs`).
+rc2Directives : {auto c : Ref Ctxt Defs} -> Core (List String)
+rc2Directives = do
+    ds <- getDirectives (Other "rc2")
+    Right settled <- coreLift (withTargetOs ds)
+        | Left msg => throw (UserError ("[rc2] " ++ msg))
+    pure settled
+
+||| The part of the directives `toRCDefs` reads for `target-os`.
+targetOsDirectives : List String -> List String
+targetOsDirectives = filter (isPrefixOf "target-os=")
+
 ||| Phase 1 (lambda lifting and normalisation, `Compiler.RC2.RC`) and
 ||| every later stage, under one `VarId` counter for the whole compile
 ||| (`Compiler.RC2.Util`'s `VarId`; it starts at 1 because
@@ -700,7 +719,7 @@ compileExprWhole c s _ outputDir tm outfile =
      -- rc2/doc/directives.md for the mechanism and full directive list.
      -- Fetched once, up front, since `toRCDefs`'s own stage disabling
      -- needs it before `toRCDefs` runs.
-     directiveList <- getDirectives (Other "rc2")
+     directiveList <- rc2Directives
      let disabledStages = filter (`elem` directiveList) stageDirectiveNames
      -- `nomain`: not a stage disable, only controls whether `Emit.idr`'s
      -- `footer` emits a C `main()` -- see rc2/doc/directives.md and
@@ -732,7 +751,7 @@ compileExprWhole c s _ outputDir tm outfile =
      -- `getFullName`-resolved `n'`) is reused here rather than
      -- re-deriving it a second time from `exported cdata` directly.
      let roots = MN "__mainExpression" 0 :: map (\(n, _, _, _) => n) exportedSigs
-     (defs, liftInfos) <- lowerProgram disabledStages False roots mainR namedR
+     (defs, liftInfos) <- lowerProgram (disabledStages ++ targetOsDirectives directiveList) False roots mainR namedR
 
      -- `dumprcexpr`: dump the final RCExp to a `.rcexpr` file -- see
      -- rc2/doc/reading-the-ir.md for the format, rc2/doc/directives.md
@@ -894,11 +913,11 @@ incCompile c s sourceFile = do
          -- runs (elaboration of this module has already finished).
          coreDefs <- get Ctxt
          let noMain = currentNS coreDefs /= mainNS
-         directiveList <- getDirectives (Other "rc2")
+         directiveList <- rc2Directives
          let disabledStages = nub ("nodeadcode" :: filter (`elem` directiveList) stageDirectiveNames)
          (_, namedInl) <- inlineNamed disabledStages Nothing Nothing (namedDefs cdata)
          (_, namedIn) <- raiseNamed disabledStages Nothing namedInl
-         (defs, _) <- lowerProgram disabledStages True [] Nothing namedIn
+         (defs, _) <- lowerProgram (disabledStages ++ targetOsDirectives directiveList) True [] Nothing namedIn
          -- `Main.main`'s compiled arity is 0 or 1 (a CAF still waiting for the
          -- world, vs. a function taking it), so the entry call is built from
          -- the real `MkRCFun` arity, never hardcoded. Arity 0 must go through
