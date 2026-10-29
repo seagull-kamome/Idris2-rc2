@@ -804,24 +804,3 @@ per element. `SpecClosure` cannot clone it: the recursion passes a different
 closure at each depth (nested finger tree), so the clones would not end. A
 version of the library with the size fixed to 1 for plain elements, or a clone
 for the outermost call only, are the options.
-
-## IO: `modifyIORef` costs ~150 ns, 20 times `readIORef` + `writeIORef` (found in an IO loop benchmark)
-
-100M calls: `modifyIORef r (+ 1)` 14.95 s; the hand-written read then write
-0.2 s for a third of the iterations (about 7 ns per pair). callgrind: 1,397
-instructions per call, 7 `malloc`/`free`, 5 `mkClosure`, and the generic
-`trampoline`/`applyClosure`/`dispatchFn` machinery for about a third of them.
-
-Cause: `modifyIORef : HasIO io => ...` is specialised to `IO` but its `>>=` is a
-call to the lifted `Monad IO` bind (`{csegen:13}:3`, a 3-line worker: `let v =
-apply m [w]; apply k [v, w]`) with two freshly built capturing `partial`s as
-`m` and `k`. The bind is not inlined (`LateInline` takes only single-caller
-callees; `SpecClosure` clones only for constant closures), so both closures are
-allocated and applied through the generic path.
-
-Fix to try: an `RCExp`-level inline of a tiny non-recursive callee at a call
-site where an argument is a locally built `partial` or constant closure that
-the callee applies (the gate keeps it from growing code); `ConstFold`'s
-known-partial rule then turns each `apply` into a direct call. This would help
-every `HasIO`/`Monad`-generic library function specialised to `IO`
-(`modifyIORef`, `when`, `traverse_`, `for_`, ...), not only this one.

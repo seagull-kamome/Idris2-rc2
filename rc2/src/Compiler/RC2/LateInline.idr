@@ -68,6 +68,10 @@ record Analysis where
   ||| cycle does not disqualify one; `callsBack` checks at each splice
   ||| (`rc2/doc/inlining.md`, "Safe despite being part of a larger cycle").
   eligible : SortedSet Name
+  ||| Criterion C: callees of a few nodes that are not in `eligible`. A call
+  ||| to one is spliced only where an argument is a closure built in the
+  ||| caller (`inlineInto`), which is what makes a tiny callee worth it.
+  tinyOnly : SortedSet Name
   ||| Callees before callers where the call graph orders them
   ||| (`tarjanSCCs`), so a chain of single-caller callees collapses in one
   ||| round.
@@ -102,9 +106,9 @@ record Carried where
 ||| removes names), so its cached `info` entry is exact and only a
 ||| `dirty` or unseen name is walked again. `defs` only shrinks, so a name
 ||| present now was cached in the previous round.
-analyse : (early : Maybe (SortedSet Name)) -> (seed : CalleeInfo) -> (prev : Maybe Carried) -> (dirty : SortedSet Name) -> (refs : RefCache)
+analyse : (tiny : Nat) -> (early : Maybe (SortedSet Name)) -> (seed : CalleeInfo) -> (prev : Maybe Carried) -> (dirty : SortedSet Name) -> (refs : RefCache)
        -> (defOf : SortedMap Name RCDef) -> List (Name, RCDef) -> (Analysis, Carried)
-analyse early seed prev dirty refs defOf defs =
+analyse tiny early seed prev dirty refs defOf defs =
     let oldInfo : CalleeInfo = maybe seed (.info) prev
         -- Third component: recomputed this round; only those are written back.
         classified : List (Name, SortedMap Name Nat, Bool) =
@@ -128,7 +132,11 @@ analyse early seed prev dirty refs defOf defs =
         eligible : SortedSet Name = SortedSet.fromList $ mapMaybe
               (\(n, cnt) => if cnt == 1 && isFun defOf n && not (maybe False (contains n) early) then Just n else Nothing)
               (SortedMap.toList counts')
-    in (MkAnalysis eligible order', MkCarried info' counts' order' (map fst defs) refs)
+        tinyOnly : SortedSet Name = SortedSet.fromList $ mapMaybe
+              (\(n, cnt) => if isJust early && tiny > 0 && cnt > 1 && isTiny defOf n && isFun defOf n && not (maybe False (contains n) early)
+                              then Just n else Nothing)
+              (SortedMap.toList counts')
+    in (MkAnalysis eligible tinyOnly order', MkCarried info' counts' order' (map fst defs) refs)
   where
     -- No CAF in the early run: `insertMemoize` hasn't wrapped it yet, so
     -- splicing its body would evaluate it once per run of the caller
@@ -137,6 +145,20 @@ analyse early seed prev dirty refs defOf defs =
     isFun defOf n = case lookup n defOf of
                          Just (MkRCFun args _ _ _) => isNothing early || not (null args)
                          _ => False
+
+    -- Criterion C (early run only): a callee so small that splicing it costs
+    -- about what its call does, whatever the number of call sites.
+    hasLoop : RCExp -> Bool
+    hasLoop (RLoop {}) = True
+    hasLoop e = any hasLoop (children e)
+
+    sizeOfRC : RCExp -> Nat
+    sizeOfRC e = S (sum (map sizeOfRC (children e)))
+
+    isTiny : SortedMap Name RCDef -> Name -> Bool
+    isTiny defOf n = case lookup n defOf of
+                          Just (MkRCFun _ _ _ body) => sizeOfRC body <= tiny && not (hasLoop body)
+                          _ => False
 
     callsIn : CalleeInfo -> Name -> List (Name, Nat)
     callsIn ci n = maybe [] SortedMap.toList (lookup n ci)
@@ -441,21 +463,57 @@ spliceCall _ _ d _ = pure $ RCrash EmptyFC "[rc2] internal: LateInline target wa
 -- Whole-tree rewrite: replace every eligible call site
 ------------------------------------------------------------------------
 
+||| Criterion C: a callee of at most this many nodes is spliced at every call
+||| site, as small as the call it replaces (`rc2/doc/inlining.md`, "Criterion
+||| C: tiny callees"); a bigger one, up to the `tiny` size given to
+||| `applyLateInlineWith`, only where an argument is a closure the caller built.
+tinyAlwaysSize : Nat
+tinyAlwaysSize = 2
+
+nodeCount : RCExp -> Nat
+nodeCount e = S (sum (map nodeCount (children e)))
+
 ||| Rewrites every call to an `eligible` callee in the body of `self` into
 ||| its spliced body, walking every wrapper node `annotate` and `Loop` can
 ||| have produced. `reps` (each local's declared `Rep`, extended at
 ||| `RLet`/`RLoop`) is what `buildSplice` binds arguments by, not the
 ||| callee's declared param `Rep`. A callee that calls `self` back is
 ||| refused (`callsBack`).
-inlineInto : {auto v : Ref VarId Int} -> SortedMap Name RCDef -> SortedSet Name -> (self : Name) -> RCExp -> Core RCExp
-inlineInto defOf eligible self = go empty []
+inlineInto : {auto v : Ref VarId Int} -> SortedMap Name RCDef -> SortedSet Name -> SortedSet Name -> (self : Name) -> RCExp -> Core RCExp
+inlineInto defOf eligible tinyOnly self = go empty empty []
   where
+    smallBody : Name -> Bool
+    smallBody n = case lookup n defOf of
+                       Just (MkRCFun _ _ _ b) => nodeCount b <= tinyAlwaysSize
+                       _ => False
+
+    -- A call is spliced when its callee is `eligible`, or `tinyOnly` and an
+    -- argument is a closure the caller built (`closures`: the locals bound to a
+    -- `partial`) or a constant closure.
+    splices : SortedSet Int -> Name -> List RCLocal -> Bool
+    splices closures n args =
+        not (callsBack defOf self n)
+          && (contains n eligible || (contains n tinyOnly && (any (isClosure closures) args || smallBody n)))
+      where
+        isClosure : SortedSet Int -> RCLocal -> Bool
+        isClosure cl (RCLoc i) = contains i cl
+        isClosure _ (RCConstClosure {}) = True
+        isClosure _ _ = False
+
+    -- Whether the value of an `RLet` is such a closure: a `partial`, possibly
+    -- behind a `let` that only returns it, or another such local.
+    isPartialValue : SortedSet Int -> RCExp -> Bool
+    isPartialValue _ (RUnderApp {}) = True
+    isPartialValue cl (RLet _ _ _ _ body) = isPartialValue cl body
+    isPartialValue cl (RV _ (RCLoc i)) = contains i cl
+    isPartialValue _ _ = False
+
     -- `loopSlots`: the nearest enclosing `RLoop`'s params (`[]` outside a
     -- loop), kept apart from `reps` because it must reflect the loop already
     -- walked through ("Criterion B, revisited", Layer 3).
-    go : SortedMap Int Rep -> List (Int, Rep) -> RCExp -> Core RCExp
-    go reps loopSlots (RAppName fc lazy n args) =
-        if contains n eligible && not (callsBack defOf self n)
+    go : SortedSet Int -> SortedMap Int Rep -> List (Int, Rep) -> RCExp -> Core RCExp
+    go cl reps loopSlots (RAppName fc lazy n args) =
+        if splices cl n args
            then case lookup n defOf of
                      Just d => spliceCall fc reps d args
                      Nothing => pure (RAppName fc lazy n args)
@@ -463,22 +521,24 @@ inlineInto defOf eligible self = go empty []
     -- The call is an `RLet`'s still-`RBoxed` value: `promotableNativeLetRep`
     -- decides whether `var` can become native (the return-side twin of
     -- `buildSplice`'s argument promotion).
-    go reps loopSlots (RLet fc var RBoxed value@(RAppName vfc lazy n args) body) =
-        if contains n eligible && not (callsBack defOf self n)
+    go cl reps loopSlots (RLet fc var RBoxed value@(RAppName vfc lazy n args) body) =
+        if splices cl n args
            then case lookup n defOf of
                      Just d => do
                          splicedValue <- spliceCall vfc reps d args
                          case promotableNativeLetRep loopSlots var splicedValue body of
                               Just ty => do
-                                  body' <- go (insert var (RNative (TPrim ty)) reps) loopSlots body
+                                  body' <- go cl (insert var (RNative (TPrim ty)) reps) loopSlots body
                                   pure $ RLet fc var (RNative (TPrim ty)) splicedValue (stripOwnership (SortedSet.singleton var) body')
-                              Nothing => RLet fc var RBoxed splicedValue <$> go reps loopSlots body
-                     Nothing => RLet fc var RBoxed value <$> go reps loopSlots body
-           else RLet fc var RBoxed value <$> go reps loopSlots body
-    go reps loopSlots (RLet fc var rep value body) = RLet fc var rep <$> go reps loopSlots value <*> go (insert var rep reps) loopSlots body
-    go reps loopSlots (RLoop fc loopParams initial prologueDrop body) =
-        RLoop fc loopParams initial prologueDrop <$> go (foldl (\m, (i, r) => insert i r m) reps loopParams) loopParams body
-    go reps loopSlots e = traverseChildren @{Applicative.CORE} (go reps loopSlots) e
+                              Nothing => RLet fc var RBoxed splicedValue <$> go (if isPartialValue cl splicedValue then insert var cl else cl) reps loopSlots body
+                     Nothing => RLet fc var RBoxed value <$> go cl reps loopSlots body
+           else RLet fc var RBoxed value <$> go cl reps loopSlots body
+    go cl reps loopSlots (RLet fc var rep value body) =
+        RLet fc var rep <$> go cl reps loopSlots value
+                        <*> go (if isPartialValue cl value then insert var cl else cl) (insert var rep reps) loopSlots body
+    go cl reps loopSlots (RLoop fc loopParams initial prologueDrop body) =
+        RLoop fc loopParams initial prologueDrop <$> go cl (foldl (\m, (i, r) => insert i r m) reps loopParams) loopParams body
+    go cl reps loopSlots e = traverseChildren @{Applicative.CORE} (go cl reps loopSlots) e
 
 ------------------------------------------------------------------------
 -- Whole-program entry point
@@ -493,14 +553,15 @@ inlineInto defOf eligible self = go empty []
 |||
 ||| The `logTime`s wrap `pure $ <computation>`, not a `let`: a `let` runs
 ||| before the timer starts and reports nothing.
-applyLateInlineOnce : {auto v : Ref VarId Int} -> {auto c : Ref Ctxt Defs} -> (early : Maybe (SortedSet Name)) -> (seed : CalleeInfo) -> (roots : List Name) -> Maybe Carried -> SortedSet Name -> List (Name, RCDef) -> Core (Bool, List (Name, RCDef), Carried, SortedSet Name)
-applyLateInlineOnce early seed roots prev dirty defs0 = do
+applyLateInlineOnce : {auto v : Ref VarId Int} -> {auto c : Ref Ctxt Defs} -> (tiny : Nat) -> (early : Maybe (SortedSet Name)) -> (seed : CalleeInfo) -> (roots : List Name) -> Maybe Carried -> SortedSet Name -> List (Name, RCDef) -> Core (Bool, List (Name, RCDef), Carried, SortedSet Name)
+applyLateInlineOnce tiny early seed roots prev dirty defs0 = do
     (defs, refs') <- logTime 3 "rc2: LI prune" $
               pure $ pruneDeadDefsCached (maybe empty (.refs) prev) dirty roots defs0
     -- Shared with `goOrder`: `analyse` and the splice walk both need it.
     defOf <- logTime 3 "rc2: LI defOf" $ pure $ SortedMap.fromList defs
-    (an, carried) <- logTime 3 "rc2: LI analyse" $ pure $ analyse early seed prev dirty refs' defOf defs
-    case leftMost an.eligible of
+    (an, carried) <- logTime 3 "rc2: LI analyse" $ pure $ analyse tiny early seed prev dirty refs' defOf defs
+    let allEligible : SortedSet Name = foldl (flip insert) an.eligible (Prelude.toList an.tinyOnly)
+    case leftMost allEligible of
          Nothing => pure (False, defs, carried, empty)
          Just _ => do
              -- Only names with a callee `inlineInto` would actually splice (`eligible`
@@ -520,26 +581,26 @@ applyLateInlineOnce early seed roots prev dirty defs0 = do
                  splicesInto n =
                      isJust (lookup n defOf) &&
                      (case lookup n carried.info of
-                           Just cs => any (\c => contains c an.eligible && not (callsBackCached n c))
+                           Just cs => any (\c => contains c allEligible && not (callsBackCached n c))
                                           (keys cs)
                            Nothing => False)
              let toProcess = filter splicesInto an.processOrder
-             final <- goOrder an.eligible toProcess defOf
+             final <- goOrder an.eligible an.tinyOnly toProcess defOf
              pure (not (isNil toProcess),
                    map (\(n, d) => (n, fromMaybe d (lookup n final))) defs, carried, SortedSet.fromList toProcess)
   where
-    goOrder : SortedSet Name -> List Name -> SortedMap Name RCDef -> Core (SortedMap Name RCDef)
-    goOrder eligible [] defOf = pure defOf
-    goOrder eligible (n :: rest) defOf = do
+    goOrder : SortedSet Name -> SortedSet Name -> List Name -> SortedMap Name RCDef -> Core (SortedMap Name RCDef)
+    goOrder eligible tinyOnly [] defOf = pure defOf
+    goOrder eligible tinyOnly (n :: rest) defOf = do
         defOf' <- case lookup n defOf of
                        Just (MkRCFun args retRep isWorker body) => do
-                           body' <- inlineInto defOf eligible n body
+                           body' <- inlineInto defOf eligible tinyOnly n body
                            pure (insert n (MkRCFun args retRep isWorker body') defOf)
                        Just (MkRCError body) => do
-                           body' <- inlineInto defOf eligible n body
+                           body' <- inlineInto defOf eligible tinyOnly n body
                            pure (insert n (MkRCError body') defOf)
                        _ => pure defOf
-        goOrder eligible rest defOf'
+        goOrder eligible tinyOnly rest defOf'
 
 ||| Iteration cap for `applyLateInline`. Only a guard: the loop stops by
 ||| itself once a round splices nothing.
@@ -552,11 +613,15 @@ maxLateInlineIterations = 8
 ||| are the entry points `pruneDeadDefs` is called with. Each round is
 ||| `logTime`d at `--timing 3`, labelled with how many definitions the
 ||| previous round spliced into, which tells a converging tail from real
-||| work.
+||| work. The `Bool` says whether anything was spliced at all.
+|||
+||| `tiny`: the early run (`early`) also splices a callee of at most that many
+||| nodes at every call site, not only the one with a single caller; `0` is
+||| off. See `rc2/doc/inlining.md`, "Criterion C: tiny callees".
 export
-applyLateInline : {auto v : Ref VarId Int} -> {auto c : Ref Ctxt Defs} -> (label : String) -> (early : Bool)
-               -> (roots : List Name) -> List (Name, RCDef) -> Core (List (Name, RCDef))
-applyLateInline label early roots defs0 =
+applyLateInlineWith : {auto v : Ref VarId Int} -> {auto c : Ref Ctxt Defs} -> (tiny : Nat) -> (label : String) -> (early : Bool)
+                   -> (roots : List Name) -> List (Name, RCDef) -> Core (Bool, List (Name, RCDef))
+applyLateInlineWith tiny label early roots defs0 =
     -- The early run skips every callee in a call cycle: splicing one would
     -- turn the cycle into a direct call back to the caller, which the later
     -- run then refuses (constructor-escape-analysis.md, "Early inline").
@@ -564,15 +629,21 @@ applyLateInline label early roots defs0 =
     -- (constant-constructor-specialization.md, "The `where`-clause trap").
     do seed <- logTime 3 "rc2: \{label} (call counts)" $ pure $ SortedMap.fromList (map (\(n, d) => (n, callCountsOf d)) defs0)
        excluded <- if early then logTime 3 "rc2: \{label} (call cycles)" $ pure $ Just (cyclicNames seed) else pure Nothing
-       go seed excluded 1 maxLateInlineIterations Nothing empty defs0
+       go seed excluded 1 maxLateInlineIterations False Nothing empty defs0
   where
-    go : CalleeInfo -> Maybe (SortedSet Name) -> Nat -> Nat -> Maybe Carried -> SortedSet Name -> List (Name, RCDef) -> Core (List (Name, RCDef))
-    go _ _ round Z prev dirty defs = pure defs
-    go seed excluded round (S fuel) prev dirty defs = do
+    go : CalleeInfo -> Maybe (SortedSet Name) -> Nat -> Nat -> (any : Bool) -> Maybe Carried -> SortedSet Name -> List (Name, RCDef) -> Core (Bool, List (Name, RCDef))
+    go _ _ round Z any prev dirty defs = pure (any, defs)
+    go seed excluded round (S fuel) any prev dirty defs = do
         let carriedNote = if round == 1
                              then "first pass"
                              else "\{show (length (Prelude.toList dirty))} spliced last round"
         (changed, defs', carried, dirty') <-
             logTime 3 "rc2: \{label} (round \{show round}/\{show maxLateInlineIterations}, \{carriedNote})" $
-              applyLateInlineOnce excluded seed roots prev dirty defs
-        if changed then go seed excluded (S round) fuel (Just carried) dirty' defs' else pure defs'
+              applyLateInlineOnce tiny excluded seed roots prev dirty defs
+        if changed then go seed excluded (S round) fuel True (Just carried) dirty' defs' else pure (any, defs')
+
+||| `applyLateInlineWith` without the tiny-callee criterion, for the late run.
+export
+applyLateInline : {auto v : Ref VarId Int} -> {auto c : Ref Ctxt Defs} -> (label : String) -> (early : Bool)
+               -> (roots : List Name) -> List (Name, RCDef) -> Core (List (Name, RCDef))
+applyLateInline label early roots defs0 = snd <$> applyLateInlineWith 0 label early roots defs0

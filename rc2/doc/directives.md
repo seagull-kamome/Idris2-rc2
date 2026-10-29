@@ -59,6 +59,7 @@ fine-grained per-function/per-node control.
 | `nomutualloop` | `Compiler.RC2.MutualLoop`'s mutual-tail-recursion merge. |
 | `noloop` | `Compiler.RC2.Loop`'s self-tail-call -> `goto` conversion, plus native-shadow/loop-invariant promotion (`doc/loop-conversion.md`). |
 | `noearlyinline` | The early run of `Compiler.RC2.LateInline`'s single-caller splicing, right after SpecConstCon and before RC annotation, followed by a ConstFold/PushCon refold of the result (`doc/constructor-escape-analysis.md`, "The shapes `LateInline` creates"). It never splices a CAF. Implied by `nolateinline` and `noconstfold`. |
+| `notinyinline` | Only the tiny-callee criterion of the early inline (`doc/inlining.md`, "Criterion C: tiny callees"): callees of at most 2 `RCExp` nodes are no longer spliced at every call site, nor those of at most 8 where an argument is a closure the caller built, and the early inline runs one round as before. Implied by `noearlyinline`, `nolateinline` and `noconstfold`. |
 | `nolateinline` | `Compiler.RC2.LateInline`'s whole-program single-caller inlining, run after Loop/MutualLoop conversion (`doc/inlining.md`'s "Criterion B, revisited"). |
 | `nosink` | `Compiler.RC2.Sink`'s branch-local sinking (`doc/branch-sinking.md`). |
 | `nocmpmerge` | `Compiler.RC2.CmpMerge`: two nested comparisons of the same operands (`<`/`==`, `>`/`==`) whose `then` branches are equal become one `<=`/`>=` node, and a comparison with equal branches is dropped (`doc/native-type-inference.md`, "Merging nested comparisons"). |

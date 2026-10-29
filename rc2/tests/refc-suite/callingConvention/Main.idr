@@ -10,6 +10,12 @@ module Main
 -- Stage 4/Stage 4b), and Compiler.RC2.Loop's goto conversion
 -- (rc2/doc/loop-conversion.md).
 
+-- `tailAbs` below is a 2-node wrapper, which the early inline splices into its
+-- callers (rc2/doc/inlining.md, "Criterion C: tiny callees") and so leaves no
+-- worker for the tail-call section to pin down; this test is about the shapes
+-- DualABI produces for such a function, so it asks for them.
+%cg rc2 notinyinline
+
 %foreign "C:labs,libc,stdlib.h"
 prim__abs : Int -> Int
 
