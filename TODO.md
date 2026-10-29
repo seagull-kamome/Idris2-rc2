@@ -781,6 +781,15 @@ argument expression in place of the force: no thunk, no call. `&&`/`||`-like
 and `maybe`/`either` are the same shape. Needs a design (order of evaluation,
 an argument forced in two branches, a thunk that escapes).
 
+Measured (100M iterations, 2026-10-29): `when c act` in `IO` costs about 18 ns
+more per call than the hand-written `if c then act else pure ()` (8.45 s against
+6.65 s); `fromMaybe d m` about 1.2 ns more than the `case` (1.83 s against
+1.70 s). So `fromMaybe`-like callees are not worth a change to Criterion A, and
+`when` is better done at the `RCExp` level on the specialised clone
+(`rc2_specConst_Prelude_Interfaces_when_*`), whose body is a case with one
+`force Lazy` of a parameter. Low priority: the 42 `when` sites in llmchat run
+a few times per event.
+
 ## Inlining: one-line delegating wrappers are still called (found in llmchat)
 
 `List.reverse` (139 sites), `tailRecAppend` (162), `fastUnpack`/`fastPack`
@@ -795,3 +804,24 @@ per element. `SpecClosure` cannot clone it: the recursion passes a different
 closure at each depth (nested finger tree), so the clones would not end. A
 version of the library with the size fixed to 1 for plain elements, or a clone
 for the outermost call only, are the options.
+
+## IO: `modifyIORef` costs ~150 ns, 20 times `readIORef` + `writeIORef` (found in an IO loop benchmark)
+
+100M calls: `modifyIORef r (+ 1)` 14.95 s; the hand-written read then write
+0.2 s for a third of the iterations (about 7 ns per pair). callgrind: 1,397
+instructions per call, 7 `malloc`/`free`, 5 `mkClosure`, and the generic
+`trampoline`/`applyClosure`/`dispatchFn` machinery for about a third of them.
+
+Cause: `modifyIORef : HasIO io => ...` is specialised to `IO` but its `>>=` is a
+call to the lifted `Monad IO` bind (`{csegen:13}:3`, a 3-line worker: `let v =
+apply m [w]; apply k [v, w]`) with two freshly built capturing `partial`s as
+`m` and `k`. The bind is not inlined (`LateInline` takes only single-caller
+callees; `SpecClosure` clones only for constant closures), so both closures are
+allocated and applied through the generic path.
+
+Fix to try: an `RCExp`-level inline of a tiny non-recursive callee at a call
+site where an argument is a locally built `partial` or constant closure that
+the callee applies (the gate keeps it from growing code); `ConstFold`'s
+known-partial rule then turns each `apply` into a direct call. This would help
+every `HasIO`/`Monad`-generic library function specialised to `IO`
+(`modifyIORef`, `when`, `traverse_`, `for_`, ...), not only this one.
