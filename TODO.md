@@ -755,16 +755,18 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
   先頭行と`Content-Length`の検査、リダイレクトを追わない、応答の大きさの上限)を保ったまま
   載せ替えられるかを先に確かめる。リダイレクトを追わない設定は`CurlOptions`に無い。
 
-## Performance: string literals are not propagated by `ConstFold`
+## Locale-aware String comparison
 
-`--directive target-os` (`rc2/doc/directives.md`, section 9) folds `prim__os`
-to a literal, but `System.Info.isWindows` and a `case os of` in user code are
-still decided at run time. `ConstFold` splices only native-eligible constants
-into other nodes; a `Str` keeps its `let` so `annotate` keeps tracking its
-ownership (`doc/const-con-fold.md`, Bug #2). `isWindows` is also an `elem`
-over a constant list, which is a `loop` after inlining.
+`<`, `<=`, `>`, `>=` on `String` compare bytes (`idris2rc2_strcmp3`), which is
+codepoint order for UTF-8 and independent of the locale. The compile-time fold
+of two literals gives the same answer (`Test149StrLiteralFold`). A comparison
+by the locale's collation (`strcoll`-like) is a separate function to add; it
+must not be folded, and `==` stays bytewise.
 
-What is missing: treat a `Str` literal as an immortal constant that needs no
-ownership (like `RCConstCon`), fold `==String` of two such constants, and a
-case on a known string. The loop over a constant list would still need
-unrolling. The cost today is one `memoize`d evaluation of each such CAF.
+## Performance: `System.Info.isWindows` is still decided at run time
+
+`os` folds to a string literal (`--directive target-os`, `rc2/doc/directives.md`
+section 9) and comparisons and cases on it fold (`doc/const-caf-fold.md`,
+"String literals"), but `isWindows` is `os \`elem\` [...]`: a `loop` over a
+constant list after inlining, which nothing unrolls. Its cost is one `memoize`d
+evaluation of the CAF. A fold of a loop over a constant list would fix it.

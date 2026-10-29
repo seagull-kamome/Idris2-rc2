@@ -288,6 +288,34 @@ rather than needing valgrind or output diffing to catch). Confirmed
 fixed by rebuilding with the three added intercepts and re-running the
 same repro plus the full `rc2/tests/verify.sh` regression suite.
 
+## String literals
+
+A `Str` constant is an immortal static (`genConstant` in `Emit/Util.idr`:
+a file-scope `IDRIS2RC2_String` with `IDRIS2RC2_STOCKVAL`), so no ownership
+is tracked for it and `ConstFold` substitutes it like a native constant. Only
+`BI` keeps its `RCLoc` (`const-con-fold.md`, Bug #2). Three places:
+
+- A `let` bound to a string literal, or to a bare `RCConst (Str _)`, is
+  recorded in `Env.consts`; uses are replaced and the `let` goes if nothing
+  reads it. A string that is used more than once becomes one static per use.
+- A 0-argument CAF whose body is a string literal (`cafValueOf`) enters
+  `CafTable`, so a call `c` is replaced by the literal. This catches
+  `System.Info.codegen`, whose body is a string only after the fold of
+  `prim__codegen`, and the `target-os` fold of `prim__os`. `Inline` does not
+  splice these: it ran before the fold produced them. The definition stays
+  and `DeadCode` drops it when nothing calls it any more.
+- Once both operands are literals, the existing `ROp`/`RCmpCase` folding
+  evaluates `==String` and `++`, and `RConstCase` picks the alt for a known
+  scrutinee. No new rule was needed.
+
+Comparisons fold with the runtime's own meaning: `==` and the order operators
+compare bytes (`idris2rc2_strcmp3`, codepoint order for UTF-8), never the
+locale, so the compile-time result is the run-time one under any `LC_ALL`.
+
+A numeric CAF is not matched in `cafValueOf`: `Inline` already splices it.
+`Test149StrLiteralFold` covers it, including a string case and a comparison
+that must stay because one side is read at run time.
+
 ## The `noconstfold` directive
 
 `--directive noconstfold` / `%cg rc2 noconstfold` disables the whole

@@ -9,3 +9,4 @@ main : IO ()
 main = do
   putStrLn os
   putStrLn (if isWindows then "windows" else "not windows")
+  putStrLn (if os == "Linux" then "os is Linux" else "os is other")

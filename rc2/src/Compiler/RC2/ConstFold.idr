@@ -281,10 +281,11 @@ foldConst caf env (RLet fc var rep value body) =
     in case value' of
             -- Only a native-eligible constant (`litRep`) is safe to
             -- splice into `env`/other nodes' `args` in place of the
-            -- `RCLoc` -- a non-native-eligible one (`BI`/`Str`) must
-            -- keep its real `RCLoc` so `annotate` keeps tracking its
-            -- ownership. See rc2/doc/const-con-fold.md's Bug #2: this
-            -- guard is what fixes a confirmed `BI` memory leak.
+            -- `RCLoc` -- a `BI` must keep its real `RCLoc` so `annotate`
+            -- keeps tracking its ownership. See rc2/doc/const-con-fold.md's
+            -- Bug #2: this guard is what fixes a confirmed `BI` memory leak.
+            -- A `Str` literal is an immortal static, so it splices like a
+            -- native one (rc2/doc/const-caf-fold.md, "String literals").
             RPrimVal _ c =>
                 case litRep c of
                      Just _ =>
@@ -298,6 +299,11 @@ foldConst caf env (RLet fc var rep value body) =
                      Nothing => case c of
                          BI _ =>
                              let body' = foldConst caf ({ bigLits $= insert var c } env) body
+                             in if mentionsLocal (RCLoc var) body'
+                                   then RLet fc var rep value' body'
+                                   else body'
+                         Str _ =>
+                             let body' = foldConst caf (insertConst var (Element (RCConst c) ItIsConst2) env) body
                              in if mentionsLocal (RCLoc var) body'
                                    then RLet fc var rep value' body'
                                    else body'
@@ -316,6 +322,13 @@ foldConst caf env (RLet fc var rep value body) =
             -- an already-folded closure didn't propagate".
             RV _ cval@(RCConstClosure {}) =>
                 let body' = foldConst caf (insertConst var (Element cval ItIsConstClosure2) env) body
+                in if mentionsLocal (RCLoc var) body'
+                      then RLet fc var rep value' body'
+                      else body'
+            -- The same for a string a CAF substitution (`cafValueOf`) or an
+            -- inlined CAF left as a bare `RCConst`.
+            RV _ cval@(RCConst (Str _)) =>
+                let body' = foldConst caf (insertConst var (Element cval ItIsConst2) env) body
                 in if mentionsLocal (RCLoc var) body'
                       then RLet fc var rep value' body'
                       else body'
@@ -587,15 +600,16 @@ foldConst _ _ e = e
 ||| A 0-arg CAF whose body has folded to a bare `RV fc cval` -- the
 ||| shape `Compiler.RC2.RC2`'s own whole-program fixpoint loop looks
 ||| for after each `foldConstDef` pass to grow `CafTable`. A bare
-||| `RPrimVal` body is deliberately not matched: by this point it's
-||| already been spliced into every call site by `Compiler.RC2.Inline`'s
-||| own `isCallFree`, before `ConstFold` ever runs -- only the
-||| `RCConstCon`/`RCConstClosure` shapes `Inline` can't reach still need
-||| this route. See `rc2/doc/const-caf-fold.md`'s "Design" for the
+||| `RPrimVal` body is matched only for a `Str`: a numeric one is already
+||| spliced into every call site by `Compiler.RC2.Inline`'s own
+||| `isCallFree`, before `ConstFold` ever runs, but a string a fold itself
+||| produced (`prim__codegen`, `target-os`) is not -- along with the
+||| `RCConstCon`/`RCConstClosure` shapes `Inline` can't reach. See `rc2/doc/const-caf-fold.md`'s "Design" for the
 ||| fixpoint algorithm this feeds.
 export
 cafValueOf : RCDef -> Maybe (Subset RCLocal IsAnyConstLocal)
 cafValueOf (MkRCFun [] _ _ (RV _ cval)) = (\prf => Element cval prf) <$> isConstLocalProof cval
+cafValueOf (MkRCFun [] _ _ (RPrimVal _ c@(Str _))) = Just (Element (RCConst c) ItIsConst2)
 cafValueOf _ = Nothing
 
 ||| `knownCons`: see `emptyEnv`.

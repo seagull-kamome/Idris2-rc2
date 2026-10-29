@@ -28,6 +28,14 @@ else
     fail "default: prim__os left in $dump"
 fi
 
+# The comparison with a literal folds with it (rc2/doc/const-caf-fold.md,
+# "String literals"); under dynamic it has to stay.
+if [ "$(grep -c 'cmp ==String \[.*#"Linux"' "$dump" || true)" = "0" ]; then
+    pass "default: os == \"Linux\" folded"
+else
+    fail "default: os == \"Linux\" left in $dump"
+fi
+
 compile dynamic --directive target-os=dynamic
 if [ "$(grep -c prim__os "$TMP/${name}_dynamic.rcexpr" || true)" != "0" ] \
    && [ "$("$TMP/${name}_dynamic")" = "$(cat "$here/$name.expected")" ]; then
