@@ -805,28 +805,6 @@ closure at each depth (nested finger tree), so the clones would not end. A
 version of the library with the size fixed to 1 for plain elements, or a clone
 for the outermost call only, are the options.
 
-## Native: a `let` whose value simplifies to an `ROp` keeps its `Boxed` rep, so `Int` `mod`/`div` by a constant costs ~16 ns (found in an IO loop benchmark, 2026-10-29)
-
-`n `mod` 3` on `Int` compiles to `Boxed` boxing round trips: `mkInt64`,
-`idris2rc2_mod_Int64`, `to_i64`, `drop`. A loop with `n < 3` runs 100M
-iterations in 0.04 s; with `n `mod` 3 == 0` (or `div` 3) in 1.6-1.8 s, about
-16 ns more per operation, and `mod`/`div` are everywhere (indices, hashes,
-digits).
-
-Cause: `Prelude.Num.mod` is `case y == 0 of 0 => %Int x y; _ => crash`. The
-`RLet` that binds its value gets its `Rep` from `Types.repOf` when
-`Compiler.RC2.RC` builds it, and the value is still a case, so `repOf` says
-`Boxed`. After inlining with `y = 3`, `ConstFold` folds the case and leaves a
-bare `op %Int [v, #3]` in a `let v : Boxed`. Nothing revisits the rep. The
-`Add`/`Sub` lets are native because their value is an `ROp` from the start.
-
-Fix to try: after `ConstFold` (before Phase 2 annotation), give an `RBoxed`
-`RLet` whose value is now an `ROp`/`RPrimVal` with a native result type
-(`repOf`) that rep, as Phase 1 would have. Check with `--directive
-dumprcexpr` that `op %Int` is `Native Int`, and with the loops in
-`rc2/tests/bench.sh` style (`f1` above). Probably also helps other values
-that only become ops after folding.
-
 ## IO: `modifyIORef` costs ~150 ns, 20 times `readIORef` + `writeIORef` (found in an IO loop benchmark)
 
 100M calls: `modifyIORef r (+ 1)` 14.95 s; the hand-written read then write
