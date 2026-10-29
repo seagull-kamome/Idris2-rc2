@@ -771,32 +771,6 @@ section 9) and comparisons and cases on it fold (`doc/const-caf-fold.md`,
 constant list after inlining, which nothing unrolls. Its cost is one `memoize`d
 evaluation of the CAF. A fold of a loop over a constant list would fix it.
 
-## Inlining: case on a literal is not reduced, so `compare` on `Integer`/`Nat` stays a call (found in llmchat, 2026-10-29)
-
-`n < m` on `Nat` becomes `case compare n m of LT => True; _ => False`, and
-`compare` on `Integer` stays a call: 59 + 37 + 30 + 23 worker calls in
-`llmchat`, where an `Integer` `<` is one `cmp <Integer`. It folds to one
-comparison only when `compare` has a single caller (`LateInline`); with two
-callers (`--directive nolateinline` shows it on a one-caller program too) the
-3-way `compare` remains.
-
-Cause (traced in `InlineCExp.rewriteAll`): after its own rewrite
-`Prelude.EqOrd.compare` is call-free but has size 34, over
-`delegatingThreshold` (20), so it is not Criterion A eligible. The collapse
-of `case (intToBool (<Integer x y)) of ...` copies the outer alts into the
-inner branches, which leaves cases on a literal that nothing reduces:
-
-```
-(%case (<Integer [x, y]) [(%constcase 0 (%case 0 [(%constcase 1 0), (%constcase 0 ...)])) ...
-```
-
-`collapse` has no case-of-known-constant (`NmConstCase`/`NmConCase` on an
-`NmPrimVal`/`NmCon`); `ConstFold` reduces them, but after the size gate.
-Reducing them gives about 14 nodes, under the limit, and every `Nat`
-comparison and anything else built on `compare` fuses early. Check with
-`--directive dumprcexpr` that `lt_Ord_Nat` is one `cmp <Integer` in a program
-where `compare` has several callers.
-
 ## Inlining: a small callee that forces a `Lazy` parameter is not inlined (found in llmchat)
 
 `when c act` (42 sites, `TermUI.Program.handleAll`) and `fromMaybe d m` (67)
