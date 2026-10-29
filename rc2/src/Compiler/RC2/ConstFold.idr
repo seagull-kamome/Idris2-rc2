@@ -612,11 +612,23 @@ cafValueOf (MkRCFun [] _ _ (RV _ cval)) = (\prf => Element cval prf) <$> isConst
 cafValueOf (MkRCFun [] _ _ (RPrimVal _ c@(Str _))) = Just (Element (RCConst c) ItIsConst2)
 cafValueOf _ = Nothing
 
+||| A `Boxed` `let` whose value has become an `ROp`/`RPrimVal` with a native
+||| result gets the rep Phase 1 would have given it. Phase 1 saw the value
+||| before inlining and folding: `mod` on `Int` is a `case y == 0 of ...`
+||| there, and `repOf` of a case is `Nothing`. See `rc2/doc/native-type-
+||| inference.md`, "Refreshing a rep after folding".
+refreshReps : RCExp -> RCExp
+refreshReps e =
+    case mapChildren refreshReps e of
+         RLet fc var RBoxed value body =>
+             RLet fc var (maybe RBoxed (RNative . TPrim) (repOf value)) value body
+         e' => e'
+
 ||| `knownCons`: see `emptyEnv`.
 export
 foldConstDef : (knownCons : Bool) -> CafTable -> RCDef -> RCDef
-foldConstDef kc caf (MkRCFun args retRep isWorker body) = MkRCFun args retRep isWorker (foldConst caf (emptyEnv kc body) body)
-foldConstDef kc caf (MkRCError body) = MkRCError (foldConst caf (emptyEnv kc body) body)
+foldConstDef kc caf (MkRCFun args retRep isWorker body) = MkRCFun args retRep isWorker (refreshReps (foldConst caf (emptyEnv kc body) body))
+foldConstDef kc caf (MkRCError body) = MkRCError (refreshReps (foldConst caf (emptyEnv kc body) body))
 foldConstDef _ _ d@(MkRCCon _ _ _) = d
 foldConstDef _ _ d@(MkRCForeign _ _ _) = d
 
@@ -638,8 +650,8 @@ export
 foldConstDefWith : CafTable -> List (Int, RCLocal) -> RCDef -> RCDef
 foldConstDefWith caf seed d =
     case d of
-         MkRCFun args retRep isWorker body => MkRCFun args retRep isWorker (foldConst caf (seeded body) body)
-         MkRCError body => MkRCError (foldConst caf (seeded body) body)
+         MkRCFun args retRep isWorker body => MkRCFun args retRep isWorker (refreshReps (foldConst caf (seeded body) body))
+         MkRCError body => MkRCError (refreshReps (foldConst caf (seeded body) body))
          d'@(MkRCCon _ _ _) => d'
          d'@(MkRCForeign _ _ _) => d'
   where
