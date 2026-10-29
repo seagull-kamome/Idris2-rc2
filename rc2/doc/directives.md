@@ -50,7 +50,7 @@ fine-grained per-function/per-node control.
 | Directive | Disables |
 |---|---|
 | `noinline` | `Compiler.RC2.InlineCExp`'s whole-program inlining, before lambda lifting, both criteria: small call-free callees at every call site, and loop-free callees at their only call site, and the case-of-case collapse after it (`doc/inlining.md`). |
-| `noconstfold` | `Compiler.RC2.ConstFold`'s whole-program fixpoint fold -- arithmetic/comparison/constructor/closure/CAF folding *and* the constant `ExtPrim` fold (`prim__codegen`), which since the `Compiler.RC2.ConstExtPrim` pass was merged in is also gated by this directive. |
+| `noconstfold` | `Compiler.RC2.ConstFold`'s whole-program fixpoint fold -- arithmetic/comparison/constructor/closure/CAF folding *and* the constant `ExtPrim` fold (`prim__codegen`, and `prim__os` unless `target-os=dynamic`, section 9), which since the `Compiler.RC2.ConstExtPrim` pass was merged in is also gated by this directive. |
 | `noknowncon` | Only `Compiler.RC2.ConstFold`'s known-constructor fold -- resolving a `case` on a non-escaping constructor built in the same function, which drops the construction (`doc/constructor-escape-analysis.md`, "Rewrite A") -- and its closure analogue, turning each saturating `apply` of a non-escaping partial application into a direct call. The rest of `ConstFold` still runs; implied by `noconstfold`. The refolds `Compiler.RC2.PushCon` (the definitions it changed) and `Compiler.RC2.SpecClosure` (its clones) run keep the fold: they rely on it to finish. |
 | `nopushcon` | `Compiler.RC2.PushCon`, which pushes a `case` into the tails of the value it scrutinises so each constructor-building tail meets only its own alt and is folded away (`doc/constructor-escape-analysis.md`, "Rewrite B"). Implied by `noconstfold`, since the push relies on ConstFold to finish. |
 | `nospecclosure` | `Compiler.RC2.SpecClosure`'s speculative, profitability-gated closure-argument specialization -- cloning a function per distinct closure target observed at its call sites and resolving `apply` to a direct `call` (`doc/speculative-closure-specialization.md`). |
@@ -332,6 +332,41 @@ collecting the keys, building and folding the clones (`buildAll`,
 a half is the accepting, the table updates and the counting. Each round
 also prints one `SpecRound N` summary line: the clones kept by each half,
 the definition count (and how many are new) and the total node count.
+
+## 9. Target OS (`target-os=<name>`)
+
+`System.Info.os` is `prim__os`. By default rc2 folds it at compile time to
+the name of the OS the compiler runs on, and the generated C starts with a
+check that the C compiler targets that OS:
+
+```c
+#ifndef IDRIS2RC2_OS_IS_LINUX
+#error "rc2: prim__os was folded to \"Linux\" (target-os), ..."
+#endif
+```
+
+So a cross build that forgot the directive stops at the C compiler instead of
+running with the wrong name.
+
+| Value | Meaning |
+|---|---|
+| none, or `host` | The OS of the compiler. The Chez backend only says `unix` for every Unix but macOS, so rc2 asks `uname -s`. Left dynamic when that fails. |
+| `windows`, `macOS`, `Linux`, `FreeBSD`, `OpenBSD`, `NetBSD`, `Unix`, `Other` | That OS, for a cross build. Case-insensitive; `darwin`, `mingw32` and `cygwin32` are accepted too. |
+| `dynamic` | Not folded: `prim__os` reads `idris2rc2_osString`, which the C compiler decides (`support/rc2/idris2rc2_ioprims.h`). No check is emitted. |
+
+The folded value is the string the runtime itself returns on that OS, so the
+two modes agree. They differ from the strings the compiler's own Chez
+backend returns (`unix`, `darwin`); a program that compares against those is
+already wrong under rc2.
+
+Different values in one build (`%cg` pragmas and `--directive` together) and
+unknown names are errors. `noconstfold` turns the fold and the check off.
+`Test148TargetOs` covers each case.
+
+The folded `os` is a string literal in a CAF, and `ConstFold` does not
+propagate string literals (a `let`-bound `Str` keeps its `RCLoc` so that
+ownership stays tracked), so `isWindows` and `case os of` are still decided at
+run time, once. See `TODO.md`.
 
 ## Files
 

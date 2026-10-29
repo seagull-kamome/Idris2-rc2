@@ -49,6 +49,7 @@ module Compiler.RC2.Emit
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
+import Compiler.RC2.TargetOs
 
 import Compiler.CompileExpr
 import Compiler.Generated
@@ -1371,8 +1372,12 @@ header directiveList = do
     structDefs <- get StructDefs
     externStructs <- get ExternStructs
     injectedRuntime <- get InjectedRuntime
+    let osGuard = case targetOsOf directiveList of
+                       Just t => if "noconstfold" `elem` directiveList then [] else map (++ "\n") (guardLines t)
+                       Nothing => []
     pure $
         [initLines] ++
+        osGuard ++
         map (\h => "#include <\{h}>\n") headerFiles ++
         (if injectedRuntime == ""
             then []

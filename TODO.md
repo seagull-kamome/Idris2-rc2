@@ -754,3 +754,17 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
 - `Network.Async.HTTP.Proxy`の私用クライアント: 転送の厳格な検査(`Transfer-Encoding`の拒否、
   先頭行と`Content-Length`の検査、リダイレクトを追わない、応答の大きさの上限)を保ったまま
   載せ替えられるかを先に確かめる。リダイレクトを追わない設定は`CurlOptions`に無い。
+
+## Performance: string literals are not propagated by `ConstFold`
+
+`--directive target-os` (`rc2/doc/directives.md`, section 9) folds `prim__os`
+to a literal, but `System.Info.isWindows` and a `case os of` in user code are
+still decided at run time. `ConstFold` splices only native-eligible constants
+into other nodes; a `Str` keeps its `let` so `annotate` keeps tracking its
+ownership (`doc/const-con-fold.md`, Bug #2). `isWindows` is also an `elem`
+over a constant list, which is a `loop` after inlining.
+
+What is missing: treat a `Str` literal as an immortal constant that needs no
+ownership (like `RCConstCon`), fold `==String` of two such constants, and a
+case on a known string. The loop over a constant list would still need
+unrolling. The cost today is one `memoize`d evaluation of each such CAF.
