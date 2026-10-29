@@ -45,8 +45,9 @@ fi
 # (called once each, so one site each) give 3 `<=` and 3 `>=` nodes, plus
 # one more `<=` on Int for the alpha-equivalent let branches; the shapes
 # with differing branches or operands must add none, hence exact counts.
-# The `compare`-based `<=`/`>=` are inlined or not by size, so they are
-# not counted here (their output is diffed against RefC).
+# The `compare`-based `<=` (`compare x y /= GT`, Nat `<=`) is inlined since
+# `compare` on Integer fits the Criterion A size limit (doc/inlining.md,
+# "Case of a literal"), and its merged nodes add to the `<=` counts below.
 rc2dir="$(cd "$(dirname "$0")/../.." && pwd)"
 (cd "$rc2dir/tests" && "$rc2dir/build/exec/idris2-rc2" --cg rc2 --directive dumprcexpr --directive nocmpmerge \
     "$name/$name.idr" -o "$TMP/${name}_nocmpmerge" > "$TMP/${name}_nocmpmerge.log" 2>&1)
@@ -57,7 +58,12 @@ else
     cnt() { grep -cE "^ *cmp $1$2 " "$3" || true; }
     bad=""
     for ty in Int Integer String Char Double; do
-        wantLE=3; [ "$ty" = "Int" ] && wantLE=4
+        case "$ty" in
+            Int) wantLE=5 ;;
+            Integer) wantLE=11 ;;
+            String) wantLE=5 ;;
+            *) wantLE=4 ;;
+        esac
         dLE=$(( $(cnt '<=' "$ty" "$dump") - $(cnt '<=' "$ty" "$off") ))
         dGE=$(( $(cnt '>=' "$ty" "$dump") - $(cnt '>=' "$ty" "$off") ))
         dEQ=$(( $(cnt '==' "$ty" "$off") - $(cnt '==' "$ty" "$dump") ))
@@ -66,6 +72,6 @@ else
     if [ -z "$bad" ]; then
         pass "nested comparison merge -- Int/Integer/String/Char/Double each gain the merged <=/>= nodes (--directive nocmpmerge is the comparison)"
     else
-        fail "nested comparison merge, unexpected node-count change vs nocmpmerge:$bad (want <=:+3 (Int +4), >=:+3, ==:-6 or more)"
+        fail "nested comparison merge, unexpected node-count change vs nocmpmerge:$bad (want <=:+5 Int, +11 Integer, +5 String, +4 Char/Double, >=:+3, ==:-6 or more)"
     fi
 fi

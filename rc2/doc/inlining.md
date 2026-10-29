@@ -238,6 +238,30 @@ fires when the inner case's own alternatives are all constructor-headed
 (or there's exactly one, with no default) -- identical restriction to
 upstream's own `canCaseOfCase`.
 
+### Case of a literal
+
+A collapse copies the outer `alts`/`def` into each branch of the inner case.
+When that branch is a literal (the usual `intToBool (prim__lt_Integer x y)`
+shape, whose branches are `0` and `1`), the copy is a `case <literal> of ...`
+that can only take one alternative. `enterConstCase` takes it at once: the
+alternative whose key is the literal, else the default; a literal no
+alternative matches and without a default stays a case. The same reduction
+applies to a `NmConstCase` whose scrutinee is a literal to begin with. The size
+recorded for the collapse is that of the reduced branches, so the budget below
+counts what is left.
+
+This matters for the Criterion A size gate, not for the final code
+(`ConstFold` reduces such a case anyway, but after the gate). `compare` on
+`Integer`, which every `Nat` comparison is built on, was 34 nodes with the
+literal cases still in it, over `delegatingThreshold`, and so was called
+instead of spliced; reduced it is about 14. Callers with a single caller got
+it from `LateInline`, which hid the gap in small programs. `llmchat`: the 59 +
+37 + 30 + 23 worker calls from `Nat` comparisons and the `compare` worker are
+gone, 17 fewer definitions. `Test150NatCompareInline`.
+
+A case of a *constructor* (`NmConCase` over `NmCon`) is not reduced the same
+way: the alternative binds the fields, so it needs a `let` per field.
+
 ### Size budget
 
 The shape restriction above bounds *what* gets collapsed, not *how

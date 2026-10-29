@@ -285,6 +285,16 @@ record Collapse where
 caseOfCaseSizeBudget : Nat
 caseOfCaseSizeBudget = 200
 
+-- `case b of alts; _ => def`, with the alternative taken when `b` is a
+-- literal. A literal no alternative matches and without a default stays a case.
+-- `inlining.md`, "Case of a literal".
+enterConstCase : FC -> NamedCExp -> List NamedConstAlt -> Maybe NamedCExp -> NamedCExp
+enterConstCase fc b@(NmPrimVal _ c) alts def =
+    case find (\(MkNConstAlt k _) => k == c) alts of
+         Just (MkNConstAlt _ r) => r
+         Nothing => fromMaybe (NmConstCase fc b alts def) def
+enterConstCase fc b alts def = NmConstCase fc b alts def
+
 tryCaseOfCase : Collapse -> Maybe Collapse
 tryCaseOfCase (MkCollapse _ outerSize (NmConCase fc (NmConCase fc' x xalts xdef) alts def)) =
     let copies : Nat = length xalts + maybe 0 (const 1) xdef in
@@ -305,10 +315,10 @@ tryCaseOfCase (MkCollapse _ outerSize (NmConCase fc (NmConCase fc' x xalts xdef)
 tryCaseOfCase (MkCollapse _ outerSize (NmConstCase fc (NmConstCase fc' x xalts xdef) alts def)) =
     let copies : Nat = length xalts + maybe 0 (const 1) xdef in
     if canCollapse xalts xdef && copies * outerSize <= caseOfCaseSizeBudget
-       then let nb : Nat = constAltsSize xalts + maybe 0 treeSize xdef + copies * (1 + outerSize)
-            in Just (MkCollapse (1 + treeSize x + nb) nb
-                       (NmConstCase fc' x (map (\(MkNConstAlt c b) => MkNConstAlt c (NmConstCase fc b alts def)) xalts)
-                                          (map (\b => NmConstCase fc b alts def) xdef)))
+       then let xalts' = map (\(MkNConstAlt c b) => MkNConstAlt c (enterConstCase fc b alts def)) xalts
+                xdef' = map (\b => enterConstCase fc b alts def) xdef
+                nb : Nat = constAltsSize xalts' + maybe 0 treeSize xdef'
+            in Just (MkCollapse (1 + treeSize x + nb) nb (NmConstCase fc' x xalts' xdef'))
        else Nothing
   where
     isConst : NamedCExp -> Bool
@@ -362,7 +372,10 @@ collapse (NmConstCase fc sc alts def) =
         outer = sum (map fst alts') + maybe 0 szOf def'
         final = caseOfCaseHere (MkCollapse (1 + szOf sc' + outer) outer
                                   (NmConstCase fc (valOf sc') (map snd alts') (map valOf def')))
-    in MkSized (totalSize final) (tree final)
+    in case valOf sc' of
+            NmPrimVal {} => let r = enterConstCase fc (valOf sc') (map snd alts') (map valOf def')
+                            in MkSized (treeSize r) r
+            _ => MkSized (totalSize final) (tree final)
 collapse e = MkSized 1 e
 
 -------------------------------------------------------------------------------
