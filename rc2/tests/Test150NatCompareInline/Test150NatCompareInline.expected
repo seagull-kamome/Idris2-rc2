@@ -1,0 +1,4 @@
+[False, False, True, True, True, False]
+[True, False, False, False, True, True]
+[LT, EQ, GT]
+[1, 2, 3, 4, 5]
