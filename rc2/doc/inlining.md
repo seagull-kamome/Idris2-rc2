@@ -504,9 +504,16 @@ folds finish it:
 
 Each round exposes the next tiny callee (the bind, then the wrapper that built
 the continuation, then the read and the write), so the early inline repeats
-(splice, `foldKnownPartials`, refold, `PushCon`) while a round splices
+(splice, `pushApplyDef`, `foldSingleForceDef`, `foldKnownPartials`, refold, `PushCon`) while a round splices
 something or changes the program's node count, up to `maxEarlyInlineRounds`
 (8) after the first, which always runs to its end as before.
+
+A round counts as one that changed something only when a call was spliced
+(`SpliceCount`), not when a definition merely calls a callee that is
+conditionally eligible: the second reading never converged, and the early
+inline ran the full 8 rounds eight times over (`idris2-lsp`: 222 s). A caller
+of a tiny callee that is neither at most `tinyAlwaysSize` nodes nor builds a
+closure (`hasClosure`) is not walked at all.
 
 Why two tiers and not "every callee of at most 8 nodes", measured on
 `modifyIORef` (instructions per call) and `llmchat` (generated C):
@@ -525,6 +532,49 @@ callee at every site is what grows the code, and it also removes the small
 functions that other passes' tests look for (`SpecConstCon` clones, `DualABI`
 workers): that is a reason to want the size, not a reason that was weighed
 first. `Test152TinyInline`.
+
+## Pushing an apply into the tails
+
+Once `when c act` is spliced, what is left is
+
+```
+let v = case c of
+          1 -> force act        -- act = delay (an IO action)
+          0 -> pure ()          -- a partial application
+apply v [world]
+```
+
+The `apply` needs a closure value, so the branches build one and the `apply`
+runs it. `Compiler.RC2.PushApply` moves the `apply` into each tail when the
+`let` is the only reader of `v`: a tail that builds a `partial` or is a
+constant closure is applied at once, which `ConstFold` turns into a call, and
+`force` of a local `delay` becomes a call through `Compiler.RC2.LazyFold`; the
+closure is never built. It runs in each round of the early inline, after the
+splice and before `KnownPartial` and the refold.
+
+Only where it is likely to pay: the value has two to eight tails (each gets a
+copy of the `apply`, whose arguments are locals) and at least one is such a
+closure or a force. A branching value of calls and variables is left alone;
+pushing into a call would only copy the `apply`. `--directive nopushapply`
+turns it off.
+
+`idris2-lsp` (rc2 IR of the whole program, 12-13k definitions after the
+passes), Criterion C and the push separately:
+
+| | definitions | `partial` | `apply` | `call` |
+|---|---|---|---|---|
+| neither (`notinyinline`, `nopushapply`) | 13,403 | 5,359 | 3,248 | 47,460 |
+| Criterion C only (`nopushapply`) | 12,814 | 5,375 | 3,374 | 46,024 |
+| both | 12,614 | 5,110 | 3,286 | 46,226 |
+
+Criterion C removes definitions and calls; the push removes the `partial`s
+(−4.9%). The compile time of the whole pipeline is 71 s without either, 95 s
+with both; the early inline is 16 s against 56 s.
+
+Measured: 100M iterations of `when (n mod 3 == 0) (modifyIORef r (+ n))`
+4.30 s → 0.60 s, the same as the hand-written `if` (0.60 s). In `llmchat` the
+partial applications go from 680 to 639 (−6%), 17 definitions fewer, the
+executable 0.8% smaller, the C 0.1% larger. `Test153PushApply`.
 
 ## Criterion B: loop-free single-caller callees (2026-09-25; on the case trees since 2026-09-29)
 
