@@ -771,12 +771,6 @@ section 9) and comparisons and cases on it fold (`doc/const-caf-fold.md`,
 constant list after inlining, which nothing unrolls. Its cost is one `memoize`d
 evaluation of the CAF. A fold of a loop over a constant list would fix it.
 
-## Inlining: one-line delegating wrappers are still called (found in llmchat)
-
-`List.reverse` (139 sites), `tailRecAppend` (162), `fastUnpack`/`fastPack`
-(132) have bodies of one to four nodes that delegate to another function, so
-they are never call-free. Allow a wrapper whose body is a single saturated
-call with atomic arguments. Small gain: one call per site.
 
 ## `Data.Seq.RC2`: `consTree`/`snocTree` take the element size as a closure (found in llmchat)
 

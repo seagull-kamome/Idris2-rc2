@@ -505,7 +505,7 @@ folds finish it:
 Each round exposes the next tiny callee (the bind, then the wrapper that built
 the continuation, then the read and the write), so the early inline repeats
 (splice, `pushApplyDef`, `foldSingleForceDef`, `foldKnownPartials`, refold, `PushCon`) while a round splices
-something or changes the program's node count, up to `maxEarlyInlineRounds`
+something, pushes into a definition or changes one by a fold, up to `maxEarlyInlineRounds`
 (8) after the first, which always runs to its end as before.
 
 A round counts as one that changed something only when a call was spliced
@@ -514,6 +514,31 @@ conditionally eligible: the second reading never converged, and the early
 inline ran the full 8 rounds eight times over (`idris2-lsp`: 222 s). A caller
 of a tiny callee that is neither at most `tinyAlwaysSize` nodes nor builds a
 closure (`hasClosure`) is not walked at all.
+
+### Rounds are incremental
+
+Each round of the early inline used to start from nothing: count the calls,
+find the call cycles, prune, analyse and walk every definition, then fold and
+push every definition, though a few dozen had changed. Now a round after the
+first keeps what the previous one learned:
+
+- the folds (`pushApplyDef`, `foldSingleForceDef`, `foldKnownPartials`,
+  `foldConstDef`) run on the definitions the previous round changed, spliced
+  into or pushed into (`PushCon.applyPushConNames` reports its own), the ones
+  every other fold left at a fixpoint being skipped;
+- the analysis resumes from the previous call's `Carried` state, told that
+  every definition folded or pushed into has changed whether or not its size
+  did (the pruning and call-count caches are keyed by name, and a fold can
+  change a callee set without changing the size);
+- a site that needs a closure argument is looked for only in the definitions
+  that changed (`focus`). A caller that did not change is not looked at again
+  when its callee shrinks to a tiny one or gains a second caller: that is
+  a splice not made, never a wrong one.
+
+The first round and the second start from nothing (the first has nothing to
+resume from, the second is told that every definition was folded). Measured on idris2-lsp (12.6k definitions, the IR
+unchanged at every step): the early inline 57 s → 27 s, the pipeline 95 s →
+67 s, against 54 s with neither Criterion C nor the push.
 
 Why two tiers and not "every callee of at most 8 nodes", measured on
 `modifyIORef` (instructions per call) and `llmchat` (generated C):
@@ -568,8 +593,8 @@ passes), Criterion C and the push separately:
 | both | 12,614 | 5,110 | 3,286 | 46,226 |
 
 Criterion C removes definitions and calls; the push removes the `partial`s
-(−4.9%). The compile time of the whole pipeline is 71 s without either, 95 s
-with both; the early inline is 16 s against 56 s.
+(−4.9%). The compile time of the whole pipeline is 54 s without either and 67 s
+with both; the early inline is 13 s against 27 s (see "Rounds are incremental").
 
 Measured: 100M iterations of `when (n mod 3 == 0) (modifyIORef r (+ n))`
 4.30 s → 0.60 s, the same as the hand-written `if` (0.60 s). In `llmchat` the
