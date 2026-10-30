@@ -1,5 +1,5 @@
 ||| Offset+length socket IO straight into and out of a `Data.Buffer`,
-||| for `Network.HTTP.Server`'s event loop.
+||| for `Network.Async` and the event loop of `Network.HTTP.Server` (`web`).
 |||
 ||| The standard `network` package only moves bytes through a `String`
 ||| (`send`/`recv` -- truncates at the first NUL, so unusable for binary)
@@ -9,8 +9,7 @@
 ||| here take a `Buffer` plus a byte offset and length, so the loop can
 ||| recv directly at its write cursor and send directly from its send
 ||| cursor with no intermediate copy -- backed by
-||| `System.Posix.Socket` (no C shim). A failure is the `errno`, as
-||| `Network.Socket`'s own `send`/`recv` give it.
+||| `System.Posix.Socket` (no C shim). A failure is the `errno`.
 |||
 ||| Same spirit as `System.Linux.Epoll`: the socket surface an
 ||| event-driven server needs that `network` doesn't expose in a usable
@@ -21,46 +20,57 @@ module Network.RC2
 -- This module was licensed by BSD3.
 
 import Data.Buffer
-import Network.Socket
-import Network.Socket.Data
-import System.Posix.Errno
+import public System.Posix.Errno
 import System.Posix.FileDesc
 import System.Posix.Socket as Posix
 
-||| The descriptor of a `Network.Socket` socket, for `System.Posix.Socket`.
+%default covering
+
+||| True when the call would block on a non-blocking socket (`EAGAIN`).
 export
-fromSocket : Socket -> Maybe FileDesc
-fromSocket sock = mkFileDesc (cast sock.descriptor)
-
-errnoCode : Errno -> SocketError
-errnoCode (MkErrno e) = cast e
-
--- `Posix.send` / `Posix.recv` on the descriptor of the socket, with the
--- error as the `SocketError` that `network` uses.
-viaFd : Socket -> (FileDesc -> IO (Either Errno Int)) -> IO (Either SocketError Int)
-viaFd sock call = case fromSocket sock of
-  Nothing => pure (Left (errnoCode EBADF))
-  Just fd => mapFst errnoCode <$> call fd
-
-||| The non-blocking "no data / can't send right now, try again on the
-||| next epoll wakeup" case -- `EAGAIN` (which is `EWOULDBLOCK` on
-||| Linux). Not a real error.
-export
-isWouldBlock : SocketError -> Bool
+isWouldBlock : Errno -> Bool
 isWouldBlock e = e == EAGAIN
 
-||| `send(sock, buf + off, len)`. `Right n` is the number of bytes
-||| actually sent -- may be less than `len` on a non-blocking socket, in
-||| which case the caller re-arms `EPOLLOUT` and resumes from `off + n`.
-||| `Left e` is `errno`; check `isWouldBlock e` before treating it as
-||| fatal.
+||| Send `buf[off .. off+len)` (`MSG_NOSIGNAL`). `Right n` is the number of
+||| bytes the kernel took; `Left e` is `errno`, check `isWouldBlock e` before
+||| treating it as a failure on a non-blocking socket.
 export
-sendBuf : HasIO io => Socket -> Buffer -> (off, len : Int) -> io (Either SocketError Int)
-sendBuf sock buf off len = liftIO (viaFd sock (\fd => Posix.send fd buf off len MSG_NOSIGNAL))
+sendBuf : HasIO io => FileDesc -> Buffer -> (off, len : Int) -> io (Either Errno Int)
+sendBuf fd buf off len = liftIO (Posix.send fd buf off len MSG_NOSIGNAL)
 
-||| `recv(sock, buf + off, len)`. `Right 0` means the peer closed the
-||| connection; `Right n` (n > 0) is the byte count read into
-||| `buf[off .. off+n)`. `Left e` is `errno` (see `isWouldBlock`).
+||| Receive up to `len` bytes into `buf[off ..)`. `Right 0` is end of stream,
+||| `Right n` the bytes now in `buf[off .. off+n)`. `Left e` is `errno` (see
+||| `isWouldBlock`).
 export
-recvBuf : HasIO io => Socket -> Buffer -> (off, len : Int) -> io (Either SocketError Int)
-recvBuf sock buf off len = liftIO (viaFd sock (\fd => Posix.recv fd buf off len 0))
+recvBuf : HasIO io => FileDesc -> Buffer -> (off, len : Int) -> io (Either Errno Int)
+recvBuf fd buf off len = liftIO (Posix.recv fd buf off len 0)
+
+||| Send a `String` as its UTF-8 bytes, all of it. Blocks on a blocking socket.
+export
+sendString : HasIO io => FileDesc -> String -> io (Either Errno ())
+sendString fd str = liftIO (start (stringByteLength str))
+  where
+    go : Buffer -> Int -> Int -> IO (Either Errno ())
+    go buf size sent =
+      if sent >= size then pure (Right ())
+      else case !(Posix.send fd buf sent (size - sent) MSG_NOSIGNAL) of
+             Left e => pure (Left e)
+             Right n => go buf size (sent + n)
+
+    start : Int -> IO (Either Errno ())
+    start size = do
+      Just buf <- newBuffer size
+        | Nothing => pure (Left ENOMEM)
+      setString buf 0 str
+      go buf size 0
+
+||| Receive at most `max` bytes and read them as a `String`; `""` is end of
+||| stream. Blocks on a blocking socket.
+export
+recvString : HasIO io => FileDesc -> (max : Int) -> io (Either Errno String)
+recvString fd max = liftIO $ do
+  Just buf <- newBuffer max
+    | Nothing => pure (Left ENOMEM)
+  case !(Posix.recv fd buf 0 max 0) of
+    Left e => pure (Left e)
+    Right n => Right <$> getString buf 0 n

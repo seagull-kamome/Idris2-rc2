@@ -4,7 +4,7 @@
 
 rc2の汎用サポートライブラリです。上流の`base`/`contrib`に無い機能や、rc2のネイティブC ABIには不十分な機能を提供します。
 
-最初は、UTF-8由来のコードポイントバッファを包む`Data.Text`型だけでした。その後、小さなイベント駆動型のHTTP/1.1サーバとルータ、URL解析、POSIX正規表現とGMP `Integer`のバインディング、ゼロから書いた2つの乱数生成器、ポインタ・配列・バッファ向けの生のFFIヘルパなどが加わりました。
+最初は、UTF-8由来のコードポイントバッファを包む`Data.Text`型だけでした。その後、URL解析、POSIX正規表現とGMP `Integer`のバインディング、ゼロから書いた2つの乱数生成器、ポインタ・配列・バッファ向けの生のFFIヘルパなどが加わりました。
 
 1つの式で書けないバインディングは、`support/c/`にある少数のCシムが受け持ちます（後述の「FFI: CExprと残ったシム」を参照）。シムはパッケージの`prebuild`フックで、`support/c/libidris2rc2base.a`という1つのライブラリにまとめてリンクされます。`idris2 --install`はこの`.a`とそのヘッダを自分では扱えません。インストール済みのパッケージのどこに置かれるかは、後述の「ネイティブライブラリのインストール先」を参照してください。
 
@@ -53,16 +53,10 @@ rc2の汎用サポートライブラリです。上流の`base`/`contrib`に無�
 | `Data.Double.Convert` | `Double`と`String`の相互変換を速くする、Eisel-Lemire/Grisu2系の任意利用の経路。`cast`を置き換えず、その隣に置いてあります。後述 |
 | `Data.Integer.GMP` | 本物のGMP `mpz_*`関数への直接の`%foreign`バインディング。後述 |
 | `Language.RCExpr.AST`/`Lexer`/`Parser` | rc2自身の`--directive dumprcexpr`の出力を、独立した木に解析します。後述 |
-| `Network.RC2` | `Data.Buffer`に対する、バイナリ安全でオフセットと長さを指定できるソケットIO |
+| `Network.Address` | IPv4の`Address`（`IPv4 127 0 0 1`、`parseAddress`）と、その`SockAddr`。`Network.Async`と`web`は、`network`パッケージの型の代わりにこれを取ります |
+| `Network.RC2` | `FileDesc`に対する、バイナリ安全でオフセットと長さを指定できる`Data.Buffer`へのソケットIOと、`String`の送受信 |
 | `Network.URL` | URLの解析・構築とパーセントエンコード。後述 |
-| `Network.HTTP.Route`/`Router` | `Network.HTTP.Server`の上に作った、型安全なルートテーブル。後述 |
-| `Network.HTTP.Client` | `fetch()`の形をしたクライアントインターフェース`HTTPClient`。`doc/http-client.md`を参照 |
-| `Network.Async.HTTP.Client` | `Task`として使うクライアント`AsyncHTTPClient`。`Network.Async.HTTP.Client.Curl`がlibcurl版（`fetchAsync`、`streamAsync`）。`doc/async-http-client.md`を参照 |
-| `Network.HTTP.Client.Curl.*` | libcurlのクライアント（`Curl`: `curlClient`）、バインディング（`Raw`、`Types`）、`TextBuffer`への取り込み。`doc/http-client.md`を参照 |
-| `Network.HTTP.Client.WebAPI.*` | OpenAI互換のチャットクライアント、OAuth 2.0（PKCE）ログイン。`doc/http-client.md`を参照 |
-| `Network.HTTP.Server` | 最小限のシングルスレッド・`epoll`駆動のHTTP/1.1サーバ。後述 |
-| `Network.HTTP.Message` | `Request`、`Response`、リクエストのパーサ。HTTPサーバ間で共有します |
-| `Network.Async`、`Network.Async.HTTP.Server`/`Router` | `Control.Task`用のノンブロッキングソケットと、Taskで作ったHTTP/1.1サーバおよびルートテーブル（ハンドラは`Task Response`を返します）。`doc/async-http-server.md`を参照 |
+| `Network.Async` | `Control.Task`用のノンブロッキングソケット。これを使うHTTPのサーバとクライアントは、`web`パッケージ(`libs/web`)にあります |
 | `System.Posix.*` | POSIXバインディング。`Errno`、`File`/`FileDesc`（`FileDesc`/`DirDesc`は`Int32`と、それが負でないという消去された証明を持ちます）、`Directory`、`Dl`（`dlopen`/`dlsym`/`dlclose`）、`Path`（`mkdir`、`unlink`、`symlink`、`readlink`、`realpath`、`mkfifo`、`mkstemp`など）、`Stat`（`stat`/`lstat`/`fstat`を`Stat`レコードへ、`access`、`truncate`、`utimensat`）、`Time`（`clock_gettime`、`nanosleep`、`gmtime`/`localtime`/`mktime`/`strftime`）、`Fcntl`（`pipe`、`fcntl`のフラグ、`dupfd`）、`Poll`（`poll`）、`Select`（`select`）、`Socket`（`socket`、`bind`、`listen`、`accept`、`connect`、`Buffer`への`send`/`recv`、ソケットオプション、IPv4・IPv6・Unixドメインを表す`SockAddr`）、`Pwd`（`getpwnam`/`getpwuid`/`getgrnam`/`getgrgid`を`Passwd`/`Group`レコードへ）、`Glob`（`fnmatch`、`glob`）、`Syslog`（`openlog`/`syslog`/`closelog`）、`Mmap`、`Process`（各種ID、プロセスグループ、`exec*`、wait状態の判定、`getrlimit`、`uname`、`sysconf`、`sigqueue`）、`Signal`（番号、シグナル集合、`sigprocmask`、`sigwait`、`sigtimedwait`、`sigsuspend`、`raise`、`alarm`）、`Uio`、CのstdioをまとめたStdio（`File = Ptr RawFile`、errnoは`Left`に入ります。`open_memstream`は`MemStream`）。POSIXの範囲を外れる宣言には、docコメントに「Linux only」「Linux and BSD」などと書いてあります |
 | `Control.Task`、`Control.Task.Scheduler`/`Epoll`/`Source` | 差し替え可能なイベントソースの上に作った、協調型の`Task`モナド（`epoll`とタイマー、そして`System.Linux.Uring`の上の`Control.Task.Uring`による`io_uring`）。spawn/both/raceとキャンセルを備え、複数スレッドで状態を共有するための`Ref`/`MVar`/`Chan`もあります。`doc/task.md`を参照 |
 | `System.Concurrency.RC2` | 本物のpthreadを使った`Mutex`/`Condition`/`Semaphore`/`Barrier`/`Channel`と、joinできる`forkJoin`。設計の全体は、トップレベル`README.md`の「Concurrency」の節を参照 |
@@ -74,7 +68,7 @@ rc2の汎用サポートライブラリです。上流の`base`/`contrib`に無�
 | `System.FFI.C.Sizeof` | スカラー型のCの`sizeof`。バッファの刻み幅やオフセットを手で計算するときに使います |
 | `System.GC.RC2` | rc2自身の`idris2rc2_dup`/`dup_n`/`drop`への直接アクセス。不透明なFFIポインタ経由で持ち出した値に使います |
 | `System.GC.RC2.touch` | `touch x`は、そのアクションまで`x`を生かしておきます（GHCの`touchForeignPtr`）。`unsafeGCDup`/`unsafeGCDrop`と違い、どの値に対しても安全です |
-| `System.Linux.*` | Linux専用のバインディング。`Epoll`（`Network.HTTP.Server`のイベントループを支える薄い`epoll`のFFIラッパ）、`Pipe`（`pipe2`）、`Ppoll`（ナノ秒の待ち時間とシグナルマスクを取れる`poll`）、`Eventfd`、`Memfd`（`memfd_create`とファイルシール）、`Copy`（`sendfile`、`splice`、`copy_file_range`）、`Prctl`、`Statx`（生成時刻とマウントID付きの`statx`）、`Random`（`getrandom`）、`Process`（`gettid`、`pidfd_open`、CPUアフィニティ）、`Timerfd`、`Signalfd`、`Inotify`、`Uring`（liburing経由の`io_uring`、`doc/uring.md`。importするプログラムにはliburingのヘッダとライブラリが必要です）、`Clock`（`CLOCK_BOOTTIME`など）、`Dl`（`dladdr`、追加の`dlopen`フラグ） |
+| `System.Linux.*` | Linux専用のバインディング。`Epoll`（`Network.Async`と`web`のサーバのイベントループを支える薄い`epoll`のFFIラッパ）、`Pipe`（`pipe2`）、`Ppoll`（ナノ秒の待ち時間とシグナルマスクを取れる`poll`）、`Eventfd`、`Memfd`（`memfd_create`とファイルシール）、`Copy`（`sendfile`、`splice`、`copy_file_range`）、`Prctl`、`Statx`（生成時刻とマウントID付きの`statx`）、`Random`（`getrandom`）、`Process`（`gettid`、`pidfd_open`、CPUアフィニティ）、`Timerfd`、`Signalfd`、`Inotify`、`Uring`（liburing経由の`io_uring`、`doc/uring.md`。importするプログラムにはliburingのヘッダとライブラリが必要です）、`Clock`（`CLOCK_BOOTTIME`など）、`Dl`（`dladdr`、追加の`dlopen`フラグ） |
 | `System.Random.Xoroshiro128PlusPlus`/`Xoroshiro64StarStar` | ゼロから移植した2つの乱数生成器。後述 |
 | `Text.Encoding.UTF8` | UTF-8のバイト列とコードポイントの相互変換。純粋な`List`変換です。後述 |
 | `Text.NumberFormat` | すべての固定幅整数型に対する、固定幅・ゼロ詰め・小文字の16進表記（`ToHex`）。後述 |
@@ -129,7 +123,7 @@ source ./env.sh
 
 テストは`verify.sh`の`TESTS`配列（名前、追加の`-p`パッケージ、説明）に明示的に並べます。`tests/*/`のディレクトリが一覧に無いとき、または一覧のテストにディレクトリ・`.idr`・`.expected`が無いときは、スクリプトが失敗します。テストを足すには、その2つのファイルを入れたディレクトリを作り、`TESTS`に1行加えます。
 
-`TestCurl`はlibcurlのヘッダが必要で、`gcc`が`curl/curl.h`を見つけられないときは`SKIP`の行を出して飛ばします。`TestUring*`も同様に、`liburing.h`が無ければ飛ばします。
+`TestUring*`も同様に、`liburing.h`が無ければ飛ばします。
 
 ## ネイティブライブラリのインストール先
 
@@ -368,64 +362,9 @@ GMPは、除数が0、法が0、負数の平方根に対して`SIGFPE`を送り�
 
 そこには、このパーサ自身が持っていた`dup vN xM`の数え違いも含まれます。個数は、2つの別トークンでなく、`x`に貼り付いた1トークンです。これは、`rcexpr-lint`が他は正しいプログラムで誤検出を出したことで発覚しました。
 
-## `Network.HTTP.Server`: 最小限のイベント駆動HTTPサーバ
-
-シングルスレッドの`epoll`駆動HTTP/1.1サーバです。生のイベントループが`System.Linux.Epoll`、バイナリ安全なバッファのソケットIOが`Network.RC2`、その上のHTTPの論理が`Network.HTTP.Server`です。
-
-1回の呼び出しで起動します。各リクエストには、戻り値でなく継続で応答します。そのため`Handler`は、同期的に応答することも、継続を取っておいて後で（別スレッドからでも）応答することも、ループを`stop`することもできます。リクエストとレスポンスのボディは、生の`Data.Buffer`のバイト列で、バイナリ安全です。
-
-`Response.*`のコンストラクタ（`text`/`html`/`json`/`ok`/`notFound`/`bytes`/...）でレスポンスを作ります。そのまま呼ぶか、名前が衝突するときは`Response.`で修飾します。いずれも、先頭に省略可能な暗黙の`headers`を取ります。
-
-```idris2
-import Language.JSON
-import Network.HTTP.Server
-
-handler : Handler
-handler req respond =
-  case req.path of
-    "/hello" => respond !(text 200 "hello\n")
-    "/echo"  => respond (MkResponse 200 [] req.body)          -- 生のバイト列
-    "/img"   => respond (bytes 200 "image/png" pngBuf)
-    "/api"   => respond !(json 200 (JObject [("ok", JBoolean True)]))
-    _        => respond !(notFound "not found\n")
-
-main : IO ()
-main = serve 8080 handler   -- 127.0.0.1:8080にbindし、`stop`されるまで動きます
-```
-
-Linux専用（`epoll`）です。リクエスト行、ヘッダ、`Content-Length`のボディ、チャンク転送のリクエストボディ（復号します）、keep-aliveに対応し、チャンク転送の応答、HTTP/1.0、TLS、パイプライン処理のレスポンス順序には対応しません。読み取りアキュムレータには上限があります（`serve`の`maxRequestBytes`、既定は8 MiB）。大きすぎるリクエストは、応答なしで捨てられます。
-
-完全な設計は`doc/http-server.md`を参照してください。そこには、このモジュール自身のテストプログラムがぶつかった、正しさの落とし穴も書いてあります。トップレベルで`unsafePerformIO`した`IORef`が、`--cg chez`ではメモ化されるのに、`--cg rc2`（上流の`--cg refc`も同様）ではメモ化**されない**ことです。参照のたびに、共有でなく新しい`IORef`が黙って作られます。このパターンで`Handler`をまたいで状態を共有してはいけません。代わりに、`main`で`IORef`を作って渡してください。
-
-## `Network.HTTP.Route`/`Router`: 型安全なルートテーブル
-
-キャプチャが生む型で添字づけたパスのパターンと、その上のExpress風のルートテーブルです。`router`は`List RouteEntry`から素の`Handler`を直接作るので、ほかに何も変えずに`serve`へ差し込めます。
-
-```idris2
-import Network.HTTP.Route
-import Network.HTTP.Router
-import Network.HTTP.Server
-
-usersShow : Route [Int]
-usersShow = "users" // capture "id" Int end
-
-routes : List RouteEntry
-routes = [ get usersShow (\userId, respond => respond (MkResponse 200 [] "user #\{show userId}\n")) ]
-
-main : IO ()
-main = serve 8080 (router notFoundHandler routes)
-```
-
-キャプチャが`n`個あるルートには、型`ty1 -> ... -> tyn -> (Response -> IO ()) -> IO ()`のハンドラが必要で、これはコンパイル時に検査されます。`FromSegment`の解析失敗（またはリテラルのセグメントやメソッドの不一致）は、クラッシュせず、次に登録されたルートへ素通りします。
-
-完全な設計は`doc/http-router.md`を参照してください。そこには、次の2点の理由も書いてあります。
-
-- `capture`が、固定セグメントのように`//`で連ねるのでなく、関数呼び出しとして入れ子になる理由
-- パスの分割が、文字列を1回走査するだけ（`strSubstr`による再走査がない）である理由
-
 ## `Network.URL`: URLの解析・構築とパーセントエンコード
 
-`Network.HTTP.Router`が扱わないものを扱います。クエリ文字列とその下にあるパーセントエンコード、および最善努力のURL分割です。純Idrisで、FFIはありません。
+`web`パッケージのルータ(`Network.HTTP.Router`)が扱わないものを扱います。クエリ文字列とその下にあるパーセントエンコード、および最善努力のURL分割です。純Idrisで、FFIはありません。
 
 ```idris2
 import Network.URL

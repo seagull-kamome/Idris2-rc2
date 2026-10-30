@@ -46,7 +46,7 @@ sees only its own definitions.
 
 An earlier version keyed on the `dumprcexpr` text with the locals
 renumbered. That cannot work: `Pretty` never finished printing a function
-with an inlined FFI call on `libs/rc2base/tests/TestWebAPI` (the same reason
+with an inlined FFI call on `libs/web/tests/TestWebAPI` (the same reason
 `dumprcexpr` runs out of memory on it), and text for every candidate costs
 far more than comparing two trees.
 

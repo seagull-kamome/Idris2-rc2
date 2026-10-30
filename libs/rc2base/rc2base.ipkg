@@ -3,7 +3,7 @@ package rc2base
 version    = 0.1.0
 opts       = "--total"
 sourcedir  = "src"
-depends    = contrib, network
+depends    = contrib
 modules    = Control.Concurrent.MVar,
              Control.Concurrent.Atomic,
              Control.Task, Control.Task.Chan, Control.Task.Epoll, Control.Task.MVar, Control.Task.Pool, Control.Task.Ref, Control.Task.Scheduler, Control.Task.Source, Control.Task.Uring, Control.Task.Waiters,
@@ -16,14 +16,7 @@ modules    = Control.Concurrent.MVar,
              Data.String.FFI, Data.String.RC2,
              Language.RCExpr.AST, Language.RCExpr.Lexer, Language.RCExpr.Parser,
              --
-             Network.HTTP.Client, Network.Async.HTTP.Client, Network.HTTP.Client.Curl, Network.Async.HTTP.Client.Curl, Network.HTTP.Client.Curl.Raw, Network.HTTP.Client.Curl.TextBuffer,
-             Network.HTTP.Client.Curl.Types,
-             Network.HTTP.Client.WebAPI.AI.OpenAI, Network.HTTP.Client.WebAPI.AI.OpenAIStream, Network.HTTP.Client.WebAPI.AI.Providers,
-             Network.HTTP.Client.WebAPI.Auth.OAuth2, Network.HTTP.Client.WebAPI.Auth.PKCE,
-             Network.HTTP.Client.WebAPI.JSON,
-             --
-             Network.HTTP.Message, Network.HTTP.Route, Network.HTTP.Router, Network.HTTP.Server,
-             Network.Async, Network.Async.HTTP.CGI, Network.Async.HTTP.Proxy, Network.Async.HTTP.Rewrite, Network.Async.HTTP.Router, Network.Async.HTTP.Server, Network.Async.HTTP.Static, Network.Async.HTTP.Stream,
+             Network.Address, Network.Async,
              Network.URL,
              --
              Network.RC2,

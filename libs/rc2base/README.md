@@ -6,7 +6,7 @@ rc2's general-purpose support-library package: whatever upstream's own
 `base`/`contrib` either lack entirely or only partially serve for
 rc2's own native-C-ABI needs. Started as just a `Data.Text` type
 wrapping a UTF-8-derived codepoint buffer; has since grown a small
-event-driven HTTP/1.1 server and router, URL parsing, POSIX regex
+URL parsing, POSIX regex
 bindings, GMP `Integer` bindings, two from-scratch PRNGs, raw
 pointer/array/buffer FFI helpers, and more. Whatever is not a one-expression binding is backed by a
 small set of C shims under `support/c/` (see "FFI: CExpr and the remaining
@@ -58,16 +58,10 @@ not compile when the declaration is used.
 | `Data.Double.Convert` | opt-in Eisel-Lemire/Grisu2-style fast path for `Double`<->`String`, next to (not replacing) `cast` -- see below |
 | `Data.Integer.GMP` | direct `%foreign` bindings onto real GMP `mpz_*` functions -- see below |
 | `Language.RCExpr.AST`/`Lexer`/`Parser` | parses rc2's own `--directive dumprcexpr` output into a standalone tree -- see below |
-| `Network.RC2` | binary-safe offset+length socket IO into/out of a `Data.Buffer` |
+| `Network.Address` | IPv4 `Address` (`IPv4 127 0 0 1`, `parseAddress`) and its `SockAddr`; what `Network.Async` and `web` take instead of the `network` package's types |
+| `Network.RC2` | binary-safe offset+length socket IO on a `FileDesc` into/out of a `Data.Buffer`, and `String` send/receive |
 | `Network.URL` | URL parse/build and percent-encoding -- see below |
-| `Network.HTTP.Route`/`Router` | type-safe route table on top of `Network.HTTP.Server` -- see below |
-| `Network.HTTP.Client` | `HTTPClient`, a `fetch()`-shaped client interface -- see `doc/http-client.md` |
-| `Network.Async.HTTP.Client` | `AsyncHTTPClient`, the client as a `Task`; `Network.Async.HTTP.Client.Curl` is the libcurl implementation (`fetchAsync`, `streamAsync`) -- see `doc/async-http-client.md` |
-| `Network.HTTP.Client.Curl.*` | the libcurl client (`Curl`: `curlClient`), bindings (`Raw`, `Types`), `TextBuffer` capture -- see `doc/http-client.md` |
-| `Network.HTTP.Client.WebAPI.*` | OpenAI-compatible chat client, OAuth 2.0 (PKCE) login -- see `doc/http-client.md` |
-| `Network.HTTP.Server` | minimal single-threaded, `epoll`-driven HTTP/1.1 server -- see below |
-| `Network.HTTP.Message` | `Request`, `Response` and the request parser, shared by the HTTP servers |
-| `Network.Async`, `Network.Async.HTTP.Server`/`Router` | non-blocking sockets for `Control.Task`, and an HTTP/1.1 server and route table made of tasks (handlers give a `Task Response`). See `doc/async-http-server.md`; `Network.Async.HTTP.Static`/`CGI`/`Proxy`/`Rewrite` add static files, external CGI programs, a reverse proxy (as `Handler` transformers or as routes of `routerWith`) and a URL rewriter to its router, see `doc/async-http-router.md` |
+| `Network.Async` | non-blocking sockets for `Control.Task`. The HTTP servers and clients built on it live in the `web` package (`libs/web`) |
 | `System.Posix.*` | POSIX bindings: `Errno`, `File`/`FileDesc` (`FileDesc`/`DirDesc` hold an `Int32` and an erased proof that it is not negative), `Directory`, `Dl` (`dlopen`/`dlsym`/`dlclose`), `Path` (`mkdir`, `unlink`, `symlink`, `readlink`, `realpath`, `mkfifo`, `mkstemp`, ...), `Stat` (`stat`/`lstat`/`fstat` into a `Stat` record, `access`, `truncate`, `utimensat`), `Time` (`clock_gettime`, `nanosleep`, `gmtime`/`localtime`/`mktime`/`strftime`), `Fcntl` (`pipe`, `fcntl` flags, `dupfd`), `Poll` (`poll`), `Select` (`select`), `Socket` (`socket`, `bind`, `listen`, `accept`, `connect`, `send`/`recv` on a `Buffer`, socket options, `SockAddr` for IPv4, IPv6 and Unix domain addresses), `Pwd` (`getpwnam`/`getpwuid`/`getgrnam`/`getgrgid` into `Passwd`/`Group` records), `Glob` (`fnmatch`, `glob`), `Syslog` (`openlog`/`syslog`/`closelog`), `Mmap`, `Process` (ids, process groups, `exec*`, wait-status tests, `getrlimit`, `uname`, `sysconf`, `sigqueue`), `Signal` (numbers, signal sets, `sigprocmask`, `sigwait`, `sigtimedwait`, `sigsuspend`, `raise`, `alarm`), `Uio`, and C stdio `Stdio` (`File = Ptr RawFile`, errno in `Left`; `open_memstream` as `MemStream`). Declarations outside POSIX say so ("Linux only", "Linux and BSD") in their doc comment |
 | `Control.Task`, `Control.Task.Scheduler`/`Epoll`/`Source`/`Uring` | cooperative `Task` monad over pluggable event sources (`epoll` and timers, and `io_uring` through `Control.Task.Uring` on `System.Linux.Uring`): spawn/both/race with cancellation, and `Ref`/`MVar`/`Chan` for tasks that share state on several threads -- see `doc/task.md` |
 | `System.Concurrency.RC2` | real pthread-backed `Mutex`/`Condition`/`Semaphore`/`Barrier`/`Channel`/joinable `forkJoin` -- see the top-level `README.md`'s own "Concurrency" section for the full design |
@@ -79,7 +73,7 @@ not compile when the declaration is used.
 | `System.FFI.C.Sizeof` | the C `sizeof` of a scalar type, for hand-rolled buffer strides/offsets |
 | `System.GC.RC2` | raw access to rc2's own `idris2rc2_dup`/`dup_n`/`drop`, for a value smuggled out through an opaque FFI pointer |
 | `System.GC.RC2.touch` | `touch x`: keep `x` alive until that action (GHC `touchForeignPtr`); safe for any value, unlike `unsafeGCDup`/`unsafeGCDrop` |
-| `System.Linux.*` | Linux-only bindings; `Epoll` (a thin `epoll` FFI wrapper backing `Network.HTTP.Server`'s event loop), `Pipe` (`pipe2`), `Ppoll` (`poll` with a nanosecond timeout and a signal mask), `Eventfd`, `Memfd` (`memfd_create` and file seals), `Copy` (`sendfile`, `splice`, `copy_file_range`), `Prctl`, `Statx` (`statx` with the birth time and mount ID), `Random` (`getrandom`), `Process` (`gettid`, `pidfd_open`, CPU affinity), `Timerfd`, `Signalfd`, `Inotify`, `Uring` (`io_uring` via liburing, `doc/uring.md`; needs liburing's headers and library in a program that imports it), `Clock` (`CLOCK_BOOTTIME`, ...) and `Dl` (`dladdr`, more `dlopen` flags) |
+| `System.Linux.*` | Linux-only bindings; `Epoll` (a thin `epoll` FFI wrapper backing the event loops of `Network.Async` and `web`'s servers), `Pipe` (`pipe2`), `Ppoll` (`poll` with a nanosecond timeout and a signal mask), `Eventfd`, `Memfd` (`memfd_create` and file seals), `Copy` (`sendfile`, `splice`, `copy_file_range`), `Prctl`, `Statx` (`statx` with the birth time and mount ID), `Random` (`getrandom`), `Process` (`gettid`, `pidfd_open`, CPU affinity), `Timerfd`, `Signalfd`, `Inotify`, `Uring` (`io_uring` via liburing, `doc/uring.md`; needs liburing's headers and library in a program that imports it), `Clock` (`CLOCK_BOOTTIME`, ...) and `Dl` (`dladdr`, more `dlopen` flags) |
 | `System.Random.Xoroshiro128PlusPlus`/`Xoroshiro64StarStar` | two from-scratch PRNG ports -- see below |
 | `Text.Encoding.UTF8` | UTF-8 bytes <-> codepoints, pure `List` transforms -- see below |
 | `Text.NumberFormat` | fixed-width, zero-padded, lowercase hex (`ToHex`) for every fixed-width integer type -- see below |
@@ -151,8 +145,8 @@ are listed explicitly in the `TESTS` array in `verify.sh` (name, extra
 `-p` packages, description); the script fails if a `tests/*/` directory
 is not listed, or a listed test lacks its directory, `.idr` or
 `.expected`. To add a test: create the directory with those two files
-and add one line to `TESTS`. `TestCurl` needs libcurl's headers and is
-skipped (with a `SKIP` line) when `gcc` cannot find `curl/curl.h`. `TestUring*` are skipped the same way when `liburing.h` is missing.
+and add one line to `TESTS`.
+`TestUring*` are skipped the same way when `liburing.h` is missing.
 
 ## Native library install location
 
@@ -652,83 +646,9 @@ a `dup vN xM` miscount this parser itself had (the count is glued onto
 `x` as one token, not two separate ones) before `rcexpr-lint` caught it
 by producing false positives on otherwise-correct programs.
 
-## `Network.HTTP.Server`: a minimal event-driven HTTP server
-
-A single-threaded, `epoll`-driven HTTP/1.1 server (`System.Linux.Epoll`
-for the raw event loop, `Network.RC2` for binary-safe buffer socket IO,
-`Network.HTTP.Server` for the HTTP logic on top). One call starts it;
-each request answers through a continuation rather than a return value,
-so a `Handler` can respond synchronously, stash the continuation and
-answer later (from another thread, even), or `stop` the loop. Request
-and response bodies are raw `Data.Buffer` bytes -- binary safe. The
-`Response.*` constructors (`text`/`html`/`json`/`ok`/`notFound`/
-`bytes`/... -- call bare, or `Response.`-qualified on a name clash)
-build one; each takes an optional leading implicit `headers`.
-
-```idris2
-import Language.JSON
-import Network.HTTP.Server
-
-handler : Handler
-handler req respond =
-  case req.path of
-    "/hello" => respond !(text 200 "hello\n")
-    "/echo"  => respond (MkResponse 200 [] req.body)          -- raw bytes
-    "/img"   => respond (bytes 200 "image/png" pngBuf)
-    "/api"   => respond !(json 200 (JObject [("ok", JBoolean True)]))
-    _        => respond !(notFound "not found\n")
-
-main : IO ()
-main = serve 8080 handler   -- binds 127.0.0.1:8080, runs until `stop`
-```
-
-Linux-only (`epoll`); supports request-line + headers +
-`Content-Length` body and keep-alive, a chunked request body (decoded) but not a chunked response/HTTP/1.0/TLS/
-pipelining response ordering. The read accumulator is capped
-(`serve`'s `maxRequestBytes`, default 8 MiB); an over-large request is
-dropped without a response. See `doc/http-server.md` for the full
-design and, importantly, a correctness pitfall this module's own test
-program ran into: a top-level `unsafePerformIO`'d `IORef` is **not**
-memoized under `--cg rc2` (nor upstream's own `--cg refc`) the way it
-is under `--cg chez` -- every reference gets its own fresh `IORef`
-instead of sharing one, silently. Never use that pattern to share
-state across a `Handler`; create the `IORef` in `main` and pass it in
-instead.
-
-## `Network.HTTP.Route`/`Router`: a type-safe route table
-
-A path pattern indexed by the types its captures produce, plus an
-Express-style route table on top -- `router` builds a plain `Handler`
-straight from a `List RouteEntry`, so it drops into `serve` with no
-other change:
-
-```idris2
-import Network.HTTP.Route
-import Network.HTTP.Router
-import Network.HTTP.Server
-
-usersShow : Route [Int]
-usersShow = "users" // capture "id" Int end
-
-routes : List RouteEntry
-routes = [ get usersShow (\userId, respond => respond (MkResponse 200 [] "user #\{show userId}\n")) ]
-
-main : IO ()
-main = serve 8080 (router notFoundHandler routes)
-```
-
-A route with `n` captures requires a handler of type `ty1 -> ... ->
-tyn -> (Response -> IO ()) -> IO ()`, checked at compile time; a
-`FromSegment` parse failure (or a literal-segment/method mismatch)
-falls through to the next registered route rather than crashing. See
-`doc/http-router.md` for the full design, including why `capture`
-nests as function calls rather than chaining with `//` the way fixed
-segments do, and why path splitting is a single pass over the string
-(no repeated `strSubstr` rescans).
-
 ## `Network.URL`: URL parse/build and percent-encoding
 
-What `Network.HTTP.Router` leaves out -- query strings and the
+What the router of the `web` package (`Network.HTTP.Router`) leaves out -- query strings and the
 percent-encoding under them -- plus best-effort URL splitting. Pure
 Idris, no FFI.
 

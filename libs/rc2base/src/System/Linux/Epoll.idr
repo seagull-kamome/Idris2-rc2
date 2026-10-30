@@ -2,7 +2,7 @@
 |||
 ||| `Network.HTTP.Server` is built on it: a single-threaded, event-driven
 ||| server needs non-blocking descriptors and one wait over all of them (see
-||| `libs/rc2base/doc/http-server.md`).
+||| `libs/web/doc/http-server.md`).
 |||
 ||| An `EPoll` owns the buffer `epollWait` fills, so any number of them can be in
 ||| use at once; none of them is safe to use from two threads at the same time.

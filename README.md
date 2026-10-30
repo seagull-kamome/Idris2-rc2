@@ -14,7 +14,7 @@ rc2 is developed without modifying the upstream Idris 2 codebase. It lives in it
 
 - [Key Highlights](#key-highlights)
 - [Quick Start](#quick-start) ([Environment](#1-environment-setup) / [Build & Install](#2-building-and-installing-rc2) / [Companion Library](#3-installing-the-support-library-rc2base) / [Compiling Programs](#4-compiling-and-running-programs) / [Profiling](#profiling-build-performance---timing))
-- [Ecosystem and Developer Tools](#ecosystem-and-developer-tools) ([rc2base](#libsrc2base-native-c-abi-toolkit) / [text-re2](#libstext-re2-google-re2-regex-bindings) / [notcurses & termui](#other-bindings-notcurses-termui) / [rcexpr-lint](#toolsrcexpr-lint-ir-static-checker) / [rcexpr-diff](#toolsrcexpr-diff-ir-diff-tool))
+- [Ecosystem and Developer Tools](#ecosystem-and-developer-tools) ([rc2base](#libsrc2base-native-c-abi-toolkit) / [web](#libsweb-http-client-and-servers) / [text-re2](#libstext-re2-google-re2-regex-bindings) / [notcurses & termui](#other-bindings-notcurses-termui) / [rcexpr-lint](#toolsrcexpr-lint-ir-static-checker) / [rcexpr-diff](#toolsrcexpr-diff-ir-diff-tool))
 - [Architecture and Optimization Pipeline](#architecture-and-optimization-pipeline) ([Repository Layout](#repository-layout) / [Compiler Structure](#compiler-structure-rc2) / [Optimization Passes](#ten-key-optimizations))
 - [Deliberate Differences from Upstream RefC](#deliberate-differences-from-upstream-refc) ([Char](#1-full-unicode-scalar-values-for-char) / [String](#2-codepoint-semantics-and-nul-safe-string) / [pthread](#3-real-multithreaded-concurrency-pthread) / [%export](#4-native-c-abi-export-export) / [Lifecycle](#5-process-lifecycle-and-locale-independent-formatting) / [CAF & Lazy Memoization](#6-caf-and-lazy--inf-memoization))
 - [%cg rc2 Directives](#cg-rc2-directives)
@@ -48,7 +48,7 @@ rc2 generates genuine native C ABI wrappers for Idris 2 functions exported via `
 By compiling individual modules into separate object files (`.o`) and reusing them across builds, rc2 dramatically reduces compilation times during iterative development.
 
 ### Rich Native Ecosystem and Tooling
-rc2 bundles an extensive native toolkit, including `libs/rc2base` (featuring an epoll-based HTTP/1.1 server and `MVar`), Google RE2 bindings, and a static IR analyzer (`tools/rcexpr-lint`) to statically detect use-after-free and double-drop bugs before execution.
+rc2 bundles an extensive native toolkit, including `libs/rc2base` (featuring `MVar` and a `Task` scheduler), `libs/web` (an HTTP client and HTTP/1.1 servers), Google RE2 bindings, and a static IR analyzer (`tools/rcexpr-lint`) to statically detect use-after-free and double-drop bugs before execution.
 
 ---
 
@@ -125,25 +125,29 @@ libs/rc2base/
 │                  Data.Text/Data.TextBuffer, Data.String.{FFI,RC2},
 │                  Data.Double.{RC2,Convert}, Data.IORef.RC2, Data.Integer.GMP, Data.Queue,
 │                  Language.RCExpr.{AST,Lexer,Parser},
-│                  Network.{RC2,URL}, Network.HTTP.{Route,Router,Server},
+│                  Network.{Async,RC2,URL},
 │                  System.Concurrency.RC2, System.FFI.C.{Array,Ptr,Sizeof},
 │                  System.GC.RC2, System.Linux.Epoll,
 │                  System.Random.Xoroshiro{128PlusPlus,64StarStar},
 │                  Text.Encoding.UTF8, Text.Regex.POSIX
 ├── src/           Idris2 source for the modules above
 ├── support/c/     C shims (libidris2rc2base.a) built via prebuild/postinstall hooks
-├── doc/           Design notes for major components (http-router.md, http-server.md, regex-posix.md, url.md)
+├── doc/           Design notes for major components (regex-posix.md, task.md, url.md, ...)
 └── tests/         Unit tests per module (verify.sh)
 ```
 
 A foundational companion package designed to supply capabilities missing from or incomplete in upstream `base` and `contrib`:
 
-- **High-Performance Web & Networking**: An event-driven HTTP/1.1 server on `System.Linux.Epoll` (`Network.HTTP.Server`), a type-safe Express-style router (`Network.HTTP.Route` / `Router`), and URL parsing (`Network.URL`).
+- **Networking**: Non-blocking sockets for `Control.Task` (`Network.Async`), socket IO into buffers (`Network.RC2`), and URL parsing (`Network.URL`).
 - **Concurrency & Synchronization**: Haskell-style `MVar` and atomic counters (`Control.Concurrent.*`), native OS threads, and mutexes (`System.Concurrency.RC2`).
 - **Low-Level C Interop & Memory**: POSIX regex (`Text.Regex.POSIX`), GMP integer arithmetic (`Data.Integer.GMP`), memory buffers, raw UTF-8 byte conversions (`Text.Encoding.UTF8`), and explicit reference counting manipulation for opaque FFI values (`System.GC.RC2`).
 - **Compiler Tooling**: Parsers for rc2's dumped IR (`Language.RCExpr.*`).
 
 See [`libs/rc2base/README.md`](libs/rc2base/README.md) for module-by-module design notes.
+
+### `libs/web/`: HTTP Client and Servers
+
+An HTTP/1.1 server on `System.Linux.Epoll` (`Network.HTTP.Server`) with a type-safe Express-style router (`Network.HTTP.Route` / `Router`), a second server made of `Control.Task` tasks with static files, CGI, a reverse proxy and a URL rewriter (`Network.Async.HTTP.*`), and a libcurl client with an OpenAI-compatible chat client and OAuth 2.0 (PKCE) login (`Network.HTTP.Client.*`). It depends on `rc2base` and was split off it. Build it with `libs/web/tests/verify.sh` (after `libs/rc2base/tests/verify.sh`) and compile programs with `-p web -p rc2base -p contrib`. See [`libs/web/README.md`](libs/web/README.md).
 
 ### `libs/text-re2/`: Google RE2 Regex Bindings
 
@@ -205,6 +209,7 @@ Compares two `.rcexpr` IR dumps definition by definition. By normalizing variabl
 ├── idris2-src/      Clone of github.com/idris-lang/Idris2 (reference & bootstrap source; gitignored)
 ├── install/         Local install prefix for self-built toolchain and rc2 (gitignored)
 ├── libs/rc2base/    Companion native C ABI support library
+├── libs/web/        HTTP client and servers (needs rc2base)
 ├── libs/text-re2/   Google RE2 regex bindings
 ├── libs/notcurses/  notcurses bindings (System.Notcurses)
 ├── libs/termui/     terminal UI library (TermUI.*)

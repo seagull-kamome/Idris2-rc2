@@ -316,7 +316,7 @@ On `TestAsyncHTTPServer` the 26 calls of `modifyIORef` and the 11 of
 `newIORef` with the constant `HasIO IO` dictionary all go to clones.
 `rc2/tests/Test131SpecConstConCapture/` is the regression test.
 
-Measured on `libs/rc2base/bench/bench.sh` (2026-10-23): no change outside noise (`GET /hello`, one connection, one thread: 11 600 before, 11 340 after). The dispatch it removes is not where the Task server spends its time.
+Measured on `libs/web/bench/bench.sh` (2026-10-23): no change outside noise (`GET /hello`, one connection, one thread: 11 600 before, 11 340 after). The dispatch it removes is not where the Task server spends its time.
 
 ## Iteration
 
