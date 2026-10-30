@@ -1,0 +1,39 @@
+package web
+
+version    = 0.1.0
+opts       = "--total"
+sourcedir  = "src"
+depends    = contrib, network, rc2base
+modules    = Network.Async.HTTP.CGI,
+             Network.Async.HTTP.Client,
+             Network.Async.HTTP.Client.Curl,
+             Network.Async.HTTP.Proxy,
+             Network.Async.HTTP.Rewrite,
+             Network.Async.HTTP.Router,
+             Network.Async.HTTP.Server,
+             Network.Async.HTTP.Static,
+             Network.Async.HTTP.Stream,
+             Network.HTTP.Client,
+             Network.HTTP.Client.Curl,
+             Network.HTTP.Client.Curl.Raw,
+             Network.HTTP.Client.Curl.TextBuffer,
+             Network.HTTP.Client.Curl.Types,
+             Network.HTTP.Client.WebAPI.AI.OpenAI,
+             Network.HTTP.Client.WebAPI.AI.OpenAIStream,
+             Network.HTTP.Client.WebAPI.AI.Providers,
+             Network.HTTP.Client.WebAPI.Auth.OAuth2,
+             Network.HTTP.Client.WebAPI.Auth.PKCE,
+             Network.HTTP.Client.WebAPI.JSON,
+             Network.HTTP.Message,
+             Network.HTTP.Route,
+             Network.HTTP.Router,
+             Network.HTTP.Server
+
+-- `support/c`'s Makefile builds `libidris2rc2web.a` (the libcurl
+-- initialisation shim) with a plain C toolchain; installing it into the
+-- package's `lib` directory is what lets rc2 find it, the same way
+-- rc2base does (see libs/rc2base/README.md, "Native library install
+-- location").
+prebuild   = "make -C support/c"
+postclean  = "make -C support/c clean"
+postinstall = "make -C support/c install"

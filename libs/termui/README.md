@@ -26,7 +26,7 @@ table), styled text (with a pretty-printer `Doc` as a source), a Markdown reader
 their own and a canvas for painting single cells. Demos: [`examples/Demo.idr`](examples/Demo.idr),
 [`examples/Editor.idr`](examples/Editor.idr),
 [`examples/Chat.idr`](examples/Chat.idr) (a chat log),
-[`examples/LlmChat.idr`](examples/LlmChat.idr) (a chat with a language model that streams its reply, shown as Markdown with blocks that fold).
+[`examples/LlmChat.idr`](examples/LlmChat.idr) (a chat with a language model that streams its reply, shown as Markdown with blocks that fold). It needs the `web` package (`-p web`) for the HTTP client.
 See [`doc/design.md`](doc/design.md).
 
 ## Build & test

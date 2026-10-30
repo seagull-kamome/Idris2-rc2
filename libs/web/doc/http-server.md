@@ -2,7 +2,7 @@
 
 ## Motivation
 
-rc2base needed a way to stand up an HTTP endpoint without pulling in a
+rc2base needed (before `web` was split off) a way to stand up an HTTP endpoint without pulling in a
 thread pool or a full async runtime: something that starts with one
 function call, runs on a single OS thread, and lets each request
 answer either immediately or later (once some other event -- a

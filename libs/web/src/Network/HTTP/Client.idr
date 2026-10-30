@@ -6,7 +6,7 @@ module Network.HTTP.Client
 -- A JS `fetch()`-shaped HTTP client interface: one synchronous request per
 -- call, plain records in and out. `Network.HTTP.Client.Curl` is the
 -- implementation on libcurl; importing it gives a `CurlClient`
--- (rc2base/doc/http-client.md).
+-- (web/doc/http-client.md).
 
 import Data.Buffer
 

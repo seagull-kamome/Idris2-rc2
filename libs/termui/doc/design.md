@@ -410,7 +410,7 @@ after them move), and a change of the width or `FoldAll` all of them.
 ## A chat with a language model
 
 `examples/LlmChat.idr` talks to a server of the OpenAI chat completions API (LM Studio,
-llama-server, Ollama ...) with `rc2base`'s `OpenAIStream`. The question is sent by
+llama-server, Ollama ...) with `web`'s `OpenAIStream`. The question is sent by
 `RunTaskAs "chat"` and the reply is read one piece per message: the task ends with
 `Opened stream`, `update` starts the next task for the next piece, and each piece
 is added to the last segment of a `MarkdownView` (`extendSegment`): every message is a
@@ -427,7 +427,7 @@ left, so both are sized again after every edit and resize (`layoutFor`). The log
 not a focusable: the input is the only one, so typing needs no Tab, and Page Up/Down
 (taken from the editor in its key handler) and the wheel reach the log. The URL and the model are given
 on the command line (`--url`, `--model`, `--system`; `$LLM_URL`, `$LLM_MODEL`,
-`$LLM_API_KEY`), and the URL is `http` or `https` (`endpointUrl` of rc2base).
+`$LLM_API_KEY`), and the URL is `http` or `https` (`endpointUrl` of `web`).
 
 ## Diff output
 

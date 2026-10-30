@@ -6,7 +6,7 @@ module Main
 -- Google OAuth login for Gemini: saves the token to gemini-token.json,
 -- which `WebAPIChat gemini-oauth` then uses and refreshes. Needs
 -- GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, see
--- doc/webapi-getting-started.md (in libs/rc2base).
+-- doc/webapi-getting-started.md (in libs/web).
 
 import Network.HTTP.Client.Curl
 import System

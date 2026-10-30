@@ -1,7 +1,7 @@
 ||| An Express-style route table on top of `Network.HTTP.Route`'s
 ||| type-safe path patterns. `router` turns a `List RouteEntry` into
 ||| a plain `Network.HTTP.Server.Handler`, so it plugs straight into
-||| `serve`. See `libs/rc2base/doc/http-router.md`.
+||| `serve`. See `libs/web/doc/http-router.md`.
 module Network.HTTP.Router
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.

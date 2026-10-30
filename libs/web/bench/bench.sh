@@ -5,7 +5,7 @@
 #   ./bench.sh [seconds]        (default 8)
 #
 # Needs the repository's env.sh to have been sourced, rc2/build/exec/idris2-rc2
-# built, the installed rc2base current (libs/rc2base/tests/verify.sh installs it)
+# built, the installed web and rc2base current (libs/web/tests/verify.sh installs web)
 # and `nix-shell -p wrk` (or wrk on PATH). The servers and wrk share the machine,
 # so the figures compare the servers with each other on this machine only.
 set -euo pipefail
@@ -14,7 +14,7 @@ SECS="${1:-8}"
 export LC_ALL=C.UTF-8
 RC2="../../../rc2/build/exec/idris2-rc2"
 for p in OldServer NewServer; do
-    "$RC2" --cg rc2 -p rc2base -p network -p contrib -o "$p" "$p.idr"
+    "$RC2" --cg rc2 -p web -p rc2base -p network -p contrib -o "$p" "$p.idr"
 done
 
 if command -v wrk >/dev/null; then

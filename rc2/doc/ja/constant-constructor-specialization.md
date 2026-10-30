@@ -171,7 +171,7 @@ partial Data.IORef.{modifyIORef:2} missing= 1 [v3980, v3981, v3982]
 
 `TestAsyncHTTPServer`では、定数の`HasIO IO`辞書を渡す`modifyIORef`の26箇所と`newIORef`の11箇所が、すべて複製に向きます。回帰テストは`rc2/tests/Test131SpecConstConCapture/`です。
 
-`libs/rc2base/bench/bench.sh`で測ると(2026-10-23)、誤差を超える変化はありませんでした(`GET /hello`、接続1、スレッド1で、前が11 600、後が11 340)。除かれる動的ディスパッチは、Taskサーバが時間を使っている場所ではありません。
+`libs/web/bench/bench.sh`で測ると(2026-10-23)、誤差を超える変化はありませんでした(`GET /hello`、接続1、スレッド1で、前が11 600、後が11 340)。除かれる動的ディスパッチは、Taskサーバが時間を使っている場所ではありません。
 
 ## 反復
 

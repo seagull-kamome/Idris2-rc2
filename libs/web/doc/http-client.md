@@ -1,7 +1,7 @@
 # HTTP client: `Network.HTTP.Client.Curl` and `Network.HTTP.Client.WebAPI`
 
 Both families came from the standalone `idris2-curl` package and now
-live in rc2base, so they are rc2-only like the rest of the library.
+live in the `web` package, which needs rc2base, so they are rc2-only.
 `Network.HTTP.Server`/`Router` (see `http-server.md`, `http-router.md`)
 are the server side.
 
@@ -18,7 +18,7 @@ are the server side.
 | `Network.HTTP.Client.WebAPI.AI.OpenAI` / `.Providers` | one OpenAI-compatible chat client; each service (Claude, Gemini, llama.cpp) is only an `Endpoint` |
 | `Network.HTTP.Client.WebAPI.Auth.OAuth2` / `.PKCE` | OAuth 2.0 authorization code flow with PKCE and a loopback redirect, token refresh, token file |
 
-A program using them needs `-p rc2base -p contrib -p network` and
+A program using them needs `-p web -p rc2base -p contrib -p network` and
 libcurl's development files and library on the compiler's search path.
 
 ## Design notes
@@ -77,7 +77,7 @@ whole transfer, a transfer slower than 1 byte per second for 60 s is aborted
 progress), at most 10 redirects. `curlClientWith` takes other
 `CurlOptions` (`totalTimeoutMs`, `lowSpeedBytesPerSec`/`lowSpeedSeconds`, ...).
 `curl_global_init` is called once per process (`curlGlobalInitOnce`, under
-`pthread_once`, in rc2base's own support library) and never cleaned up, since
+`pthread_once`, in the `web` package's own support library) and never cleaned up, since
 neither is safe to run beside a transfer in another thread; requests may be
 made from several threads. The body is a `String` passed as a C string, so a
 NUL in it ends it early.
@@ -112,7 +112,7 @@ flow for native apps (RFC 8252) with PKCE (RFC 7636):
 
 `doc/webapi-getting-started.md` covers building, API keys and the
 Google OAuth setup. `examples/` holds small programs (build each with
-`-p rc2base -p contrib -p network`):
+`-p web -p rc2base -p contrib -p network`):
 
 - `Get`, `GetCapture`, `GetCaptureText`, `GetInfo`, `GetInfoOfft`,
   `GetWithHeaders`, `Header`, `Multi`, `PauseUpkeep`, `ShareAndMime`,

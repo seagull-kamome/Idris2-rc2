@@ -118,9 +118,9 @@ prim__curlGlobalInit : Int -> PrimIO Int
 %foreign "C:curl_global_cleanup,libcurl,curl/curl.h"
 prim__curlGlobalCleanup : PrimIO ()
 
--- idris2rc2_curl_global_init_once is in rc2base's own support library (no
+-- idris2rc2_curl_global_init_once is in the `web` package's own support library (no
 -- curl.h needed to build it; only a program that reaches it links libcurl).
-%foreign "C:idris2rc2_curl_global_init_once,libidris2rc2base,idris2rc2_rc2base_curl_util.h"
+%foreign "C:idris2rc2_curl_global_init_once,libidris2rc2web,idris2rc2_web_curl_util.h"
 prim__curlGlobalInitOnce : PrimIO Int
 
 %foreign "C:curl_easy_init,libcurl,curl/curl.h"

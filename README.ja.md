@@ -14,7 +14,7 @@ rc2は、上流のIdris 2本体を変更せずに開発されています。手�
 
 - [主な特徴とハイライト](#主な特徴とハイライト)
 - [クイックスタート](#クイックスタート)（[環境準備](#1-環境変数の準備) / [ビルド](#2-rc2本体のビルドとインストール) / [ライブラリ導入](#3-サポートライブラリrc2baseのインストール) / [コンパイル実行](#4-プログラムのコンパイルと実行) / [性能計測](#ビルド時の性能計測--timing)）
-- [付属エコシステムと開発ツール](#付属エコシステムと開発ツール)（[rc2base](#libsrc2baseネイティブc-abiツールキット) / [text-re2](#libstext-re2google-re2正規表現バインディング) / [notcurses・termui](#その他のバインディングnotcurses-termui) / [rcexpr-lint](#toolsrcexpr-lintir静的解析バグ検出ツール) / [rcexpr-diff](#toolsrcexpr-diffir差分比較ツール)）
+- [付属エコシステムと開発ツール](#付属エコシステムと開発ツール)（[rc2base](#libsrc2baseネイティブc-abiツールキット) / [web](#libswebhttpクライアントとサーバ) / [text-re2](#libstext-re2google-re2正規表現バインディング) / [notcurses・termui](#その他のバインディングnotcurses-termui) / [rcexpr-lint](#toolsrcexpr-lintir静的解析バグ検出ツール) / [rcexpr-diff](#toolsrcexpr-diffir差分比較ツール)）
 - [アーキテクチャと最適化パイプライン](#アーキテクチャと最適化パイプライン)（[リポジトリ構成](#リポジトリ全体の構成) / [コンパイラ内部構成](#コンパイラ本体rc2の内部構成) / [最適化パス](#主要な最適化パス10の技術的柱)）
 - [上流RefCとの意図的な違い・改善点](#上流refcとの意図的な違い改善点)（[Char](#1-完全なunicodeスカラー値に対応したchar) / [String](#2-コードポイント準拠とnul終端安全なstring) / [pthread](#3-本物のマルチスレッド並行処理pthread) / [%export](#4-ネイティブc-abiとの直接連携export) / [ライフサイクル](#5-プロセスのライフサイクルとロケール非依存な数値書式化) / [CAF・Lazyメモ化](#6-正しい意味論を保証するcafとlazy--infのメモ化)）
 - [%cg rc2ディレクティブによるチューニング](#cg-rc2ディレクティブによるチューニング)
@@ -48,7 +48,7 @@ rc2は、`%export`で公開したIdris 2関数に対して、本物のネイテ�
 rc2はモジュールごとに個別のオブジェクトファイル（`.o`）へコンパイルし、ビルドをまたいで再利用します。反復開発中のコンパイル時間は大幅に短くなります。
 
 ### 充実したネイティブツールキット
-rc2は、広範なネイティブツールキットを同梱しています。Epollベースの高速HTTP/1.1サーバと`MVar`を備えた`libs/rc2base`、Google RE2バインディング、そして静的IR検査ツール`tools/rcexpr-lint`です。`tools/rcexpr-lint`は、use-after-freeやdouble-dropのバグを、実行前に静的に検出します。
+rc2は、広範なネイティブツールキットを同梱しています。`MVar`と`Task`スケジューラを備えた`libs/rc2base`、HTTPクライアントとHTTP/1.1サーバを備えた`libs/web`、Google RE2バインディング、そして静的IR検査ツール`tools/rcexpr-lint`です。`tools/rcexpr-lint`は、use-after-freeやdouble-dropのバグを、実行前に静的に検出します。
 
 ---
 
@@ -125,25 +125,29 @@ libs/rc2base/
 │                  Data.Text/Data.TextBuffer, Data.String.{FFI,RC2},
 │                  Data.Double.{RC2,Convert}, Data.IORef.RC2, Data.Integer.GMP, Data.Queue,
 │                  Language.RCExpr.{AST,Lexer,Parser},
-│                  Network.{RC2,URL}, Network.HTTP.{Route,Router,Server},
+│                  Network.{Async,RC2,URL},
 │                  System.Concurrency.RC2, System.FFI.C.{Array,Ptr,Sizeof},
 │                  System.GC.RC2, System.Linux.Epoll,
 │                  System.Random.Xoroshiro{128PlusPlus,64StarStar},
 │                  Text.Encoding.UTF8, Text.Regex.POSIX
 ├── src/           上記モジュールのIdris2ソース
 ├── support/c/     Cシム（libidris2rc2base.a）。prebuild / postinstallフックでビルド
-├── doc/           主要コンポーネントの設計ノート（http-router.md、http-server.md、regex-posix.md、url.md）
+├── doc/           主要コンポーネントの設計ノート（regex-posix.md、task.md、url.md ほか）
 └── tests/         各モジュールの単体テスト（verify.sh）
 ```
 
 上流の`base`や`contrib`に欠けている、または不十分な機能を補う基盤パッケージです。
 
-- **高速Web・ネットワーク**：`System.Linux.Epoll`を基盤とするイベント駆動型HTTP/1.1サーバ（`Network.HTTP.Server`）、型安全なExpress風ルータ（`Network.HTTP.Route` / `Router`）、URLパーサ（`Network.URL`）。
+- **ネットワーク**：`Control.Task`用のノンブロッキングソケット（`Network.Async`）、バッファへのソケットIO（`Network.RC2`）、URLパーサ（`Network.URL`）。
 - **並行処理・同期プリミティブ**：Haskell風の`MVar`、アトミックカウンタ（`Control.Concurrent.*`）、OSネイティブのスレッドとMutex（`System.Concurrency.RC2`）。
 - **低レベルC連携とメモリ**：POSIX正規表現（`Text.Regex.POSIX`）、GMP整数演算（`Data.Integer.GMP`）、メモリバッファ、生UTF-8バイト列の変換（`Text.Encoding.UTF8`）、不透明なFFI値に対する参照カウントの明示的な操作（`System.GC.RC2`）。
 - **コンパイラ解析基盤**：rc2が出力するIRダンプのパーサ（`Language.RCExpr.*`）。
 
 モジュールごとの設計ノートは[`libs/rc2base/README.ja.md`](libs/rc2base/README.ja.md)を参照してください。
+
+### `libs/web/`：HTTPクライアントとサーバ
+
+`System.Linux.Epoll`上のHTTP/1.1サーバ（`Network.HTTP.Server`）と型安全なExpress風ルータ（`Network.HTTP.Route` / `Router`）、`Control.Task`のタスクで作った2つ目のサーバ（静的ファイル、CGI、リバースプロキシ、URL書き換え付き。`Network.Async.HTTP.*`）、libcurlのクライアントとOpenAI互換のチャットクライアント、OAuth 2.0（PKCE）ログイン（`Network.HTTP.Client.*`）を備えます。`rc2base`に依存し、そこから切り出したパッケージです。`libs/web/tests/verify.sh`（先に`libs/rc2base/tests/verify.sh`）でビルドし、プログラムは`-p web -p rc2base -p contrib -p network`でコンパイルします。[`libs/web/README.ja.md`](libs/web/README.ja.md)を参照してください。
 
 ### `libs/text-re2/`：Google RE2正規表現バインディング
 
@@ -206,6 +210,7 @@ tools/rcexpr-lint/build/exec/rcexpr-lint build/exec/prog.rcexpr
 ├── idris2-src/      github.com/idris-lang/Idris2のクローン（参照用・ブートストラップ用、gitignore対象）
 ├── install/         自前ビルドツールチェーンおよびrc2のローカルインストール先（gitignore対象）
 ├── libs/rc2base/    付属のネイティブC ABIサポートライブラリ
+├── libs/web/        HTTPクライアントとサーバ（rc2baseが必要）
 ├── libs/text-re2/   Google RE2正規表現バインディング
 ├── libs/notcurses/  notcursesバインディング（System.Notcurses）
 ├── tools/           IR検証・差分解析ツール（rcexpr-lint, rcexpr-diff）

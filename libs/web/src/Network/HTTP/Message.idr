@@ -16,7 +16,7 @@ import Data.String
 import Language.JSON
 
 -- The byte-scanning parser helpers loop on an `Int` index rather than
--- structurally -- overrides rc2base.ipkg's package-wide `--total`.
+-- structurally -- overrides web.ipkg's package-wide `--total`.
 %default covering
 
 -------------------------------------------------------------------------------

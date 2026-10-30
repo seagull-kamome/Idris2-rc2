@@ -3,7 +3,7 @@
 ||| captures, an optional trailing wildcard) and, via `tys`, the list
 ||| of types its captures produce -- `HandlerFor tys` then reads off
 ||| exactly the handler signature that shape requires. See
-||| `libs/rc2base/doc/http-router.md` for the design and examples.
+||| `libs/web/doc/http-router.md` for the design and examples.
 module Network.HTTP.Route
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.

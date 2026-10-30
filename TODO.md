@@ -643,7 +643,7 @@ upstreamの`Core/Binary.idr`は、TTCを書くときその時点までに溜ま�
 (`updateForeignImpl`)は重複を除かずに先頭へ足す。そのためimportの段数に対して指数的に増え、
 `Curl/Types.ttc`が137MB、`Curl/TextBuffer.ttc`が315MBになっている(`strings`で`prim__makeMutex`などが
 各51,300回)。rc2base全体のコンパイルで`Fix foreign bindings`が58〜70秒、`TestWebAPI`のコンパイルは
-ピーク約9GBになり、`libs/rc2base/tests/verify.sh`の`ulimit -v 12000000`の下でOOMになることがある。
+ピーク約9GBになり、`libs/web/tests/verify.sh`(分割前は`libs/rc2base/tests/verify.sh`)の`ulimit -v 12000000`の下でOOMになることがある。
 最小の再現(`%foreign_impl`を持つ`M0`と、直前2つをimportする`M1`〜`M12`)では`M12.ttc`が6.2MBになる。
 
 `updateForeignImpl`が既にある組を足さないようにする1箇所の修正で、再現は3.7KBのまま増えず、rc2baseを
@@ -742,7 +742,7 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
 
 ## HTTPクライアントの一本化の残り
 
-`Network.Async.HTTP.Client.Curl`(`libs/rc2base/doc/async-http-client.md`)ができ、
+`Network.Async.HTTP.Client.Curl`(`libs/web/doc/async-http-client.md`)ができ、
 `Network.Async.HTTP.Stream`はその上に載った。`Network.Async.HTTP.Proxy`の私用クライアントは
 自前のソケットのまま残す(載せ替えない)。
 

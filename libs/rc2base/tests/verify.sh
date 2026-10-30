@@ -72,7 +72,6 @@ TESTS=(
     "TestCMemory||System.FFI.C.Memory's <string.h>/<memory.h> bindings"
     "TestQueue||Data.Queue appending keeps both queues' order"
     "TestIntegerGMP||Data.Integer.GMP's direct GMP bindings"
-    "TestHTTPServer|network contrib|Network.HTTP.Server: cross-thread respond + stop, chunked request body"
     "TestRegexPOSIX||Text.Regex.POSIX: libc <regex.h> bindings"
     "TestURL||Network.URL: parse/build + percent codec"
     "TestXterm||System.Console.Xterm: private modes, base64, OSC 52"
@@ -99,16 +98,6 @@ TESTS=(
     "TestTaskPointThen||Control.Task: a chain of liftIO runs on one worker in parallel mode (same results and order everywhere, a long chain, a mixed one, a loop that is given up)"
     "TestTaskHandoff||Control.Task: handoff gives back a value whose task is cancelled; finally and spawnOwning run their action once"
     "TestNetworkAsync|network contrib|Network.Async: serve a connection; a lost race closes the listener and a just-accepted connection; recv/send refuse bad ranges"
-    "TestHTTPMessage|contrib|Network.HTTP.Message: framing, expectation, chunked bodies, connectionClose, responseHead, findHeadEndFrom, parseHead (strict header lines), growBuffer; FromSegment Int"
-    "TestAsyncHTTPServer|network contrib|Network.Async.HTTP.Server: answers, keep-alive, pipelining, split heads, HEAD/204, Connection, chunked bodies, Expect: 100-continue, 400/413/417/431/501, limits, big bodies"
-    "TestAsyncHTTPStream|network contrib|Network.Async.HTTP.Stream: chunk decoder, line and event parsers, events read while the server sends, framings, error status"
-    "TestAsyncHTTPClient|network contrib|Network.Async.HTTP.Client.Curl: the answer as a whole and in pieces, two transfers at once, a transfer given up, refused requests"
-    "TestOpenAIStream|network contrib|Network.HTTP.Client.WebAPI.AI.OpenAIStream: endpoint URL, pieces of a reply, a server that answers like LM Studio, errors"
-    "TestAsyncHTTPStaticCGI|network contrib|Network.Async.HTTP.{Static,CGI} behind the router: files, index, ETag/304, 404 for .., CGI variables and body, Status/Location, 502, 504"
-    "TestAsyncHTTPProxy|network contrib|Network.Async.HTTP.Proxy: path below the prefix, method/body/headers forwarded, hop-by-hop dropped, redirect, HEAD, 502 (unreachable, too large), 504"
-    "TestAsyncHTTPRewrite|network contrib|Network.Async.HTTP.Rewrite: internal rewrites with groups and queries, whole-path match, first rule only, redirects, no //host and no .. out of the groups, rules that cannot be made"
-    "TestAsyncHTTPServerTimeouts|network contrib|Network.Async.HTTP.Server timeouts: idle, stalled and trickling requests (408), idle keep-alive, a client that does not read"
-    "TestAsyncHTTPServerThreads|network contrib|Network.Async.HTTP.Server: the same server on one thread and on eight (runServer); handlers overlap only with several"
     "TestTaskUring||Control.Task.Uring: nop, file round trip, two requests at once, a read woken by a write, a request given up by a race"
     "TestTaskNoUring||Control.Task.Uring imported and not used: builds without liburing, no liburing in the generated C"
     "TestUringNop||System.Linux.Uring: a tagged nop through submit and wait"
@@ -119,20 +108,13 @@ TESTS=(
     "TestTaskMVar||Control.Task.MVar: lock between tasks on four threads, waits, the line, waits and modifications given up"
     "TestTaskRef||Control.Task.Ref: no update lost with actions on four threads, each ticket handed out once"
     "TestPosixTermios||System.Posix.Termios: termios constants, tcgetattr/tcsetattr on a pty, cfmakeraw, tc* calls"
-    "TestWebAPIPure|network contrib|Network.HTTP.Client.WebAPI: SHA-256/base64url/PKCE, JSON, URL/form encoding, token JSON"
-    "TestWebAPI|network contrib|Network.HTTP.Client.WebAPI.{AI,Auth}: endpoint setup, token persistence, response decoding"
-    "TestCurl|network contrib|Network.HTTP.Client.Curl: libcurl bindings, local file:// and HTTP transfers"
     "TestNumberFormat||Text.NumberFormat: the nibble-to-char digit and a ToHex instance per fixed-width integer type"
 )
 
-# Tests that need libcurl's headers (curl/curl.h); skipped, loudly, when
-# the C compiler cannot find them.
-NEEDS_CURL=" TestCurl TestWebAPI TestAsyncHTTPClient "
 # Tests that need liburing's headers (liburing.h); skipped the same way.
 NEEDS_URING=" TestUringNop TestUringFile TestUringSocket TestTaskUring "
 # Tests built with IDRIS2_CFLAGS=-D_GNU_SOURCE (declarations glibc hides otherwise).
-NEEDS_GNU_SOURCE=" TestPosixSpawn TestAsyncHTTPStaticCGI TestPosixTermios TestLinux TestTask TestTaskUring "
-have_curl_h() { echo '#include <curl/curl.h>' | gcc -E -x c - > /dev/null 2>&1; }
+NEEDS_GNU_SOURCE=" TestPosixSpawn TestPosixTermios TestLinux TestTask TestTaskUring "
 # Tests whose generated C must not mention liburing at all.
 NO_LIBURING_C=" TestTaskNoUring "
 have_uring_h() { echo '#include <liburing.h>' | gcc -E -x c - > /dev/null 2>&1; }
@@ -191,10 +173,6 @@ echo "=== Check postinstall copied the native library into lib/ ==="
 # from env.sh's own LD_LIBRARY_PATH, sourced above.
 for entry in "${TESTS[@]}"; do
     IFS='|' read -r t extra desc <<< "$entry"
-    if [[ "$NEEDS_CURL" == *" $t "* ]] && ! have_curl_h; then
-        echo "SKIP  $t -- curl/curl.h not found by gcc (install libcurl's development files)"
-        continue
-    fi
     if [[ "$NEEDS_URING" == *" $t "* ]] && ! have_uring_h; then
         echo "SKIP  $t -- liburing.h not found by gcc (install liburing's development files)"
         continue
@@ -223,9 +201,6 @@ for entry in "${TESTS[@]}"; do
         fail "$t -- exited with status $rc (124 = 20s timeout)"
     fi
 
-    # Mask the random authorization URL (state, PKCE challenge, loopback
-    # port) that Network.HTTP.Client.WebAPI.Auth.OAuth2.login prints.
-    sed -i 's|^http://127\.0\.0\.1:[0-9]*/auth?.*|<authorization url>|' "$TMP/actual.out"
     if diff -u "$TESTS_DIR/$t/$t.expected" "$TMP/actual.out"; then
         echo "PASS  $t"
     else

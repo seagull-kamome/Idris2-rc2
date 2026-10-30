@@ -13,7 +13,7 @@
 ||| Request and response bodies are raw `Data.Buffer` bytes -- binary
 ||| safe, no NUL or encoding assumptions. Read/write buffering is done
 ||| in reused `Buffer`s with offset+length socket IO (`Network.RC2`), no
-||| per-chunk copy. See `libs/rc2base/doc/http-server.md` for the
+||| per-chunk copy. See `libs/web/doc/http-server.md` for the
 ||| design, wire-format subset supported, and known limitations.
 module Network.HTTP.Server
 
@@ -45,7 +45,7 @@ import System.Posix.FileDesc
 import System.Posix.Socket as Posix
 
 -- The event loop itself never terminates by construction (`loop`,
--- `acceptLoop`) -- overrides rc2base.ipkg's package-wide `--total`.
+-- `acceptLoop`) -- overrides web.ipkg's package-wide `--total`.
 %default covering
 
 -------------------------------------------------------------------------------
