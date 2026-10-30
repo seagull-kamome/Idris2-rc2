@@ -71,7 +71,6 @@ TESTS=(
     "TestCMath||System.FFI.C.Math: <math.h> double functions"
     "TestCMemory||System.FFI.C.Memory's <string.h>/<memory.h> bindings"
     "TestQueue||Data.Queue appending keeps both queues' order"
-    "TestSeqRC2||Data.Seq.RC2.append: the result can be cut anywhere, for all small sizes and through mixed operations"
     "TestIntegerGMP||Data.Integer.GMP's direct GMP bindings"
     "TestHTTPServer|network contrib|Network.HTTP.Server: cross-thread respond + stop, chunked request body"
     "TestRegexPOSIX||Text.Regex.POSIX: libc <regex.h> bindings"

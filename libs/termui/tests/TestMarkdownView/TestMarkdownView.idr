@@ -9,7 +9,7 @@
 module Main
 
 import Data.List
-import Data.Seq.RC2
+import Data.Seq.Unsized
 import Data.String
 import Text.PrettyPrint.Prettyprinter.Doc
 import Text.PrettyPrint.Prettyprinter.Util

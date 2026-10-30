@@ -13,7 +13,6 @@ modules    = Control.Concurrent.MVar,
              Data.IORef.RC2,
              Data.Integer.GMP,
              Data.Queue,
-             Data.Seq.RC2, Data.Seq.RC2.Internal,
              Data.String.FFI, Data.String.RC2,
              Language.RCExpr.AST, Language.RCExpr.Lexer, Language.RCExpr.Parser,
              --

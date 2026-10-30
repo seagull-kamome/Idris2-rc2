@@ -18,7 +18,7 @@
 module TermUI.Widget.MarkdownView
 
 import Data.List
-import Data.Seq.RC2 as Q
+import Data.Seq.Unsized as Q
 import TermUI.Input
 import TermUI.Len
 import TermUI.Markdown
