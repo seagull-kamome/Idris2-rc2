@@ -771,25 +771,6 @@ section 9) and comparisons and cases on it fold (`doc/const-caf-fold.md`,
 constant list after inlining, which nothing unrolls. Its cost is one `memoize`d
 evaluation of the CAF. A fold of a loop over a constant list would fix it.
 
-## Inlining: a small callee that forces a `Lazy` parameter is not inlined (found in llmchat)
-
-`when c act` (42 sites, `TermUI.Program.handleAll`) and `fromMaybe d m` (67)
-allocate a `delay` thunk for the lazy argument, call the function and
-`force` it. Criterion A needs a call-free body, and `NmForce` disqualifies it.
-A body that forces a `Lazy` parameter at most once, in a branch, could take the
-argument expression in place of the force: no thunk, no call. `&&`/`||`-like
-and `maybe`/`either` are the same shape. Needs a design (order of evaluation,
-an argument forced in two branches, a thunk that escapes).
-
-Measured (100M iterations, 2026-10-29): `when c act` in `IO` costs about 18 ns
-more per call than the hand-written `if c then act else pure ()` (8.45 s against
-6.65 s); `fromMaybe d m` about 1.2 ns more than the `case` (1.83 s against
-1.70 s). So `fromMaybe`-like callees are not worth a change to Criterion A, and
-`when` is better done at the `RCExp` level on the specialised clone
-(`rc2_specConst_Prelude_Interfaces_when_*`), whose body is a case with one
-`force Lazy` of a parameter. Low priority: the 42 `when` sites in llmchat run
-a few times per event.
-
 ## Inlining: one-line delegating wrappers are still called (found in llmchat)
 
 `List.reverse` (139 sites), `tailRecAppend` (162), `fastUnpack`/`fastPack`

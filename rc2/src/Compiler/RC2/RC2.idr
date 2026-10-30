@@ -43,6 +43,7 @@ import Compiler.RC2.DeadVars
 import Compiler.RC2.DupMerge
 import Compiler.RC2.LeafTail
 import Compiler.RC2.KnownPartial
+import Compiler.RC2.PushApply
 import Compiler.RC2.FunDedup
 import Compiler.RC2.PushDown
 import Compiler.RC2.Emit
@@ -239,7 +240,7 @@ inlineNamed disabled keep main defs =
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "notinyinline", "nosink", "nocmpmerge", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nonullparams", "nostructreturn", "nomutualstruct", "nodeadcode", "nopushdown", "nodupmerge", "nodeadvars", "noleaftail", "nofundedup", "noreusenested", "noreuserecheck"]
+    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "notinyinline", "nopushapply", "nosink", "nocmpmerge", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nonullparams", "nostructreturn", "nomutualstruct", "nodeadcode", "nopushdown", "nodupmerge", "nodeadvars", "noleaftail", "nofundedup", "noreusenested", "noreuserecheck"]
 
 ||| Stages that are off unless asked for with `--directive <name>`. They
 ||| travel to `toRCDefs` in the same list as the disables above.
@@ -319,9 +320,11 @@ toRCDefs directives incremental roots thunks preFolded0 = do
                               let round : List (Name, RCDef) -> Core (Bool, List (Name, RCDef))
                                   round ds = do
                                       (changed, spliced0) <- applyLateInlineWith tiny "Early inline" True roots ds
+                                      pushedApp <- traverse (\(n, d) => (\d' => (n, foldSingleForceDef d')) <$>
+                                                          (if "nopushapply" `elem` directives then pure d else pushApplyDef d)) spliced0
                                       spliced <- traverse (\(n, d) => case d of
                                                       MkRCFun a r w b => (\b' => (n, MkRCFun a r w b')) <$> foldKnownPartials b
-                                                      _ => pure (n, d)) spliced0
+                                                      _ => pure (n, d)) pushedApp
                                       refolded <- logTime 3 "rc2: Early inline (refold)" $ pure $ map (\(n, d) => (n, foldConstDef True empty d)) spliced
                                       pushed <- if "nopushcon" `elem` directives then pure refolded else logTime 3 "rc2: Early inline (PushCon)" $ applyPushCon refolded
                                       pure (changed || programSize pushed /= programSize ds, pushed)
@@ -330,8 +333,8 @@ toRCDefs directives incremental roots thunks preFolded0 = do
                                   rounds (S k) ds = do
                                       (changed, ds') <- round ds
                                       if changed then rounds k ds' else pure ds'
-                              (_, first) <- round dictSpecialized
-                              rounds maxEarlyInlineRounds first
+                              (changed, first) <- round dictSpecialized
+                              if changed then rounds maxEarlyInlineRounds first else pure first
     -- doc/caf-memoization.md: right after ConstFold (and the
     -- specialization pass above, whose own clones are never 0-arg CAFs
     -- regardless) and strictly before Phase 2 (toRCDefPostFold's own

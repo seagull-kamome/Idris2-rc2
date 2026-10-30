@@ -1,7 +1,8 @@
 ||| Whole-program `RCExp` inlining, run after `Loop`/`MutualLoop`: splices
 ||| a callee's body into its call site when that is the only place in the
-||| program that calls it. Named for the pass, not the criterion, so the
-||| criterion can widen. Design, the cycle-exclusion argument and why
+||| program that calls it, and, in the early run, a tiny callee at several
+||| (`rc2/doc/inlining.md`, "Criterion C: tiny callees"). Named for the pass,
+||| not the criterion, so the criterion can widen. Design, the cycle-exclusion argument and why
 ||| every callee id is renamed: `rc2/doc/inlining.md`, "Criterion B,
 ||| revisited". Disable with `--directive nolateinline`.
 |||
@@ -62,16 +63,32 @@ cyclicNames info =
                             _ => foldl (flip insert) acc scc)
           empty (tarjanSCCs (callGraph (SortedMap.toList info)))
 
+||| Criterion C: a callee of at most this many nodes is spliced at every call
+||| site, as small as the call it replaces; a bigger one, up to the `tiny` size
+||| given to `applyLateInlineWith`, only where an argument is a closure the
+||| caller built.
+tinyAlwaysSize : Nat
+tinyAlwaysSize = 2
+
+||| What is left of `budget` after the nodes of `e`, or `Nothing` once `e` has
+||| more nodes than that: a size test that stops counting at the limit.
+fits : Nat -> RCExp -> Maybe Nat
+fits Z _ = Nothing
+fits (S k) e = foldlM fits k (children e)
+
 record Analysis where
   constructor MkAnalysis
   ||| Callees with exactly one call site that are genuine `MkRCFun`s. A
   ||| cycle does not disqualify one; `callsBack` checks at each splice
   ||| (`rc2/doc/inlining.md`, "Safe despite being part of a larger cycle").
   eligible : SortedSet Name
-  ||| Criterion C: callees of a few nodes that are not in `eligible`. A call
-  ||| to one is spliced only where an argument is a closure built in the
-  ||| caller (`inlineInto`), which is what makes a tiny callee worth it.
+  ||| Criterion C: early-run callees of at most `tiny` nodes with several call
+  ||| sites. Where a site is spliced is `inlineInto`'s `splices`.
   tinyOnly : SortedSet Name
+  ||| The members of `tinyOnly` of at most `tinyAlwaysSize` nodes when the round
+  ||| began, for the choice of which definitions to walk; the splice itself
+  ||| looks at the size at that moment (`inlineInto`'s `fitsNow`).
+  smallTiny : SortedSet Name
   ||| Callees before callers where the call graph orders them
   ||| (`tarjanSCCs`), so a chain of single-caller callees collapses in one
   ||| round.
@@ -136,7 +153,11 @@ analyse tiny early seed prev dirty refs defOf defs =
               (\(n, cnt) => if isJust early && tiny > 0 && cnt > 1 && isTiny defOf n && isFun defOf n && not (maybe False (contains n) early)
                               then Just n else Nothing)
               (SortedMap.toList counts')
-    in (MkAnalysis eligible tinyOnly order', MkCarried info' counts' order' (map fst defs) refs)
+        smallTiny : SortedSet Name = SortedSet.fromList $ filter (\n => case lookup n defOf of
+                                                                       Just (MkRCFun _ _ _ b) => isJust (fits tinyAlwaysSize b)
+                                                                       _ => False)
+                                                                (Prelude.toList tinyOnly)
+    in (MkAnalysis eligible tinyOnly smallTiny order', MkCarried info' counts' order' (map fst defs) refs)
   where
     -- No CAF in the early run: `insertMemoize` hasn't wrapped it yet, so
     -- splicing its body would evaluate it once per run of the caller
@@ -146,18 +167,13 @@ analyse tiny early seed prev dirty refs defOf defs =
                          Just (MkRCFun args _ _ _) => isNothing early || not (null args)
                          _ => False
 
-    -- Criterion C (early run only): a callee so small that splicing it costs
-    -- about what its call does, whatever the number of call sites.
     hasLoop : RCExp -> Bool
     hasLoop (RLoop {}) = True
     hasLoop e = any hasLoop (children e)
 
-    sizeOfRC : RCExp -> Nat
-    sizeOfRC e = S (sum (map sizeOfRC (children e)))
-
     isTiny : SortedMap Name RCDef -> Name -> Bool
     isTiny defOf n = case lookup n defOf of
-                          Just (MkRCFun _ _ _ body) => sizeOfRC body <= tiny && not (hasLoop body)
+                          Just (MkRCFun _ _ _ body) => isJust (fits tiny body) && not (hasLoop body)
                           _ => False
 
     callsIn : CalleeInfo -> Name -> List (Name, Nat)
@@ -442,6 +458,10 @@ promotableNativeLetRep loopSlots var value body =
          Just ty => if emitNativeValueCompatible value && not (hasNonNativeUse ty loopSlots var body) then Just ty else Nothing
          Nothing => Nothing
 
+||| Splices made so far in the current round; `goOrder` reads it around each
+||| definition to tell which ones took a splice.
+data SpliceCount : Type where
+
 ||| Replace one fully-saturated call to an eligible callee with its own
 ||| (renamed) body. `reps`: the caller's own current `Rep` environment
 ||| at this exact call site (`inlineInto`'s own walk), consulted by
@@ -455,45 +475,37 @@ spliceCall fc reps (MkRCFun calleeArgs _ _ calleeBody) actualArgs = do
     -- `promoted` ids are purely `RNative` (a value type is not refcounted, so
     -- nothing to reannotate), unlike `ConAltNative`'s shadows.
     pure $ wrap (resolveConstClosureApps ccs (stripOwnership promoted (renameRCExp ren calleeBody)))
--- Defensive only -- `eligible` (built from `isFun` in `analyse`) never
--- names anything but a `MkRCFun`.
+-- Defensive only -- `eligible` and `tinyOnly` (built from `isFun` in
+-- `analyse`) never name anything but a `MkRCFun`.
 spliceCall _ _ d _ = pure $ RCrash EmptyFC "[rc2] internal: LateInline target wasn't a MkRCFun"
 
 ------------------------------------------------------------------------
 -- Whole-tree rewrite: replace every eligible call site
 ------------------------------------------------------------------------
 
-||| Criterion C: a callee of at most this many nodes is spliced at every call
-||| site, as small as the call it replaces (`rc2/doc/inlining.md`, "Criterion
-||| C: tiny callees"); a bigger one, up to the `tiny` size given to
-||| `applyLateInlineWith`, only where an argument is a closure the caller built.
-tinyAlwaysSize : Nat
-tinyAlwaysSize = 2
-
-nodeCount : RCExp -> Nat
-nodeCount e = S (sum (map nodeCount (children e)))
-
-||| Rewrites every call to an `eligible` callee in the body of `self` into
-||| its spliced body, walking every wrapper node `annotate` and `Loop` can
+||| Rewrites every call to an `eligible` callee, and to a `tinyOnly` one where
+||| `splices` says so, in the body of `self` into its spliced body, walking every wrapper node `annotate` and `Loop` can
 ||| have produced. `reps` (each local's declared `Rep`, extended at
 ||| `RLet`/`RLoop`) is what `buildSplice` binds arguments by, not the
 ||| callee's declared param `Rep`. A callee that calls `self` back is
 ||| refused (`callsBack`).
-inlineInto : {auto v : Ref VarId Int} -> SortedMap Name RCDef -> SortedSet Name -> SortedSet Name -> (self : Name) -> RCExp -> Core RCExp
-inlineInto defOf eligible tinyOnly self = go empty empty []
+inlineInto : {auto v : Ref VarId Int} -> {auto sc : Ref SpliceCount Nat} -> (tiny : Nat) -> SortedMap Name RCDef -> SortedSet Name -> SortedSet Name -> (self : Name) -> RCExp -> Core RCExp
+inlineInto tiny defOf eligible tinyOnly self = go empty empty []
   where
-    smallBody : Name -> Bool
-    smallBody n = case lookup n defOf of
-                       Just (MkRCFun _ _ _ b) => nodeCount b <= tinyAlwaysSize
-                       _ => False
+    -- The callee's size now, not when the round began: splicing into it earlier
+    -- in the round may have grown it, and a grown body is not a tiny one.
+    fitsNow : Nat -> Name -> Bool
+    fitsNow limit n = case lookup n defOf of
+                           Just (MkRCFun _ _ _ b) => isJust (fits limit b)
+                           _ => False
 
-    -- A call is spliced when its callee is `eligible`, or `tinyOnly` and an
-    -- argument is a closure the caller built (`closures`: the locals bound to a
-    -- `partial`) or a constant closure.
+    -- A call is spliced when its callee is `eligible`, or `tinyOnly` and either
+    -- of at most `tinyAlwaysSize` nodes, or of at most `tiny` given a closure the
+    -- caller built (`closures`: the locals bound to a `partial`) or a constant closure.
     splices : SortedSet Int -> Name -> List RCLocal -> Bool
     splices closures n args =
         not (callsBack defOf self n)
-          && (contains n eligible || (contains n tinyOnly && (any (isClosure closures) args || smallBody n)))
+          && (contains n eligible || (contains n tinyOnly && (fitsNow tinyAlwaysSize n || (any (isClosure closures) args && fitsNow tiny n))))
       where
         isClosure : SortedSet Int -> RCLocal -> Bool
         isClosure cl (RCLoc i) = contains i cl
@@ -515,7 +527,9 @@ inlineInto defOf eligible tinyOnly self = go empty empty []
     go cl reps loopSlots (RAppName fc lazy n args) =
         if splices cl n args
            then case lookup n defOf of
-                     Just d => spliceCall fc reps d args
+                     Just d => do
+                         update SpliceCount S
+                         spliceCall fc reps d args
                      Nothing => pure (RAppName fc lazy n args)
            else pure (RAppName fc lazy n args)
     -- The call is an `RLet`'s still-`RBoxed` value: `promotableNativeLetRep`
@@ -525,6 +539,7 @@ inlineInto defOf eligible tinyOnly self = go empty empty []
         if splices cl n args
            then case lookup n defOf of
                      Just d => do
+                         update SpliceCount S
                          splicedValue <- spliceCall vfc reps d args
                          case promotableNativeLetRep loopSlots var splicedValue body of
                               Just ty => do
@@ -560,47 +575,69 @@ applyLateInlineOnce tiny early seed roots prev dirty defs0 = do
     -- Shared with `goOrder`: `analyse` and the splice walk both need it.
     defOf <- logTime 3 "rc2: LI defOf" $ pure $ SortedMap.fromList defs
     (an, carried) <- logTime 3 "rc2: LI analyse" $ pure $ analyse tiny early seed prev dirty refs' defOf defs
-    let allEligible : SortedSet Name = foldl (flip insert) an.eligible (Prelude.toList an.tinyOnly)
-    case leftMost allEligible of
-         Nothing => pure (False, defs, carried, empty)
-         Just _ => do
-             -- Only names with a callee `inlineInto` would actually splice (`eligible`
-             -- and not calling back, nearly the test of its `RAppName` cases) are walked.
-             -- `carried.info` already holds each callee set, so this is a lookup per
-             -- callee; `callsBack` would re-walk the callee's body. The weaker "has an
-             -- eligible callee" test keeps reporting a change and the loop never stops.
+    case (leftMost an.eligible, leftMost an.tinyOnly) of
+         (Nothing, Nothing) => pure (False, defs, carried, empty)
+         _ => do
+             -- Only a definition with a call `inlineInto` would splice is walked, and the
+             -- walk rebuilds its whole body. `carried.info` already holds each callee set,
+             -- so `callsBackCached` is a lookup where `callsBack` would re-walk the callee.
+             -- A `tinyOnly` callee counts when it is small or the caller builds a closure.
+             -- `processOrder` still names pruned definitions; the `defOf` test drops them.
              let callsBackCached : Name -> Name -> Bool
                  callsBackCached caller callee =
                      case lookup callee carried.info of
                           Just cs => isJust (lookup caller cs)
                           Nothing => False
-             -- The `defOf` test is needed: `carried.info` and `processOrder` still name
-             -- definitions already pruned, and such a name would re-qualify every
-             -- round, so the loop would never converge.
+             let buildsClosure : Name -> Bool
+                 buildsClosure n = case lookup n defOf of
+                                        Just (MkRCFun _ _ _ b) => hasClosure b
+                                        Just (MkRCError b) => hasClosure b
+                                        _ => False
              let splicesInto : Name -> Bool
                  splicesInto n =
                      isJust (lookup n defOf) &&
                      (case lookup n carried.info of
-                           Just cs => any (\c => contains c allEligible && not (callsBackCached n c))
-                                          (keys cs)
+                           Just cs =>
+                               let callees = filter (not . callsBackCached n) (keys cs)
+                               in any (\c => contains c an.eligible || contains c an.smallTiny) callees
+                                    || (any (\c => contains c an.tinyOnly) callees && buildsClosure n)
                            Nothing => False)
              let toProcess = filter splicesInto an.processOrder
-             final <- goOrder an.eligible an.tinyOnly toProcess defOf
-             pure (not (isNil toProcess),
-                   map (\(n, d) => (n, fromMaybe d (lookup n final))) defs, carried, SortedSet.fromList toProcess)
+             _ <- newRef SpliceCount (the Nat 0)
+             (final, changed) <- goOrder an.eligible an.tinyOnly toProcess defOf []
+             pure (not (isNil changed),
+                   map (\(n, d) => (n, fromMaybe d (lookup n final))) defs, carried, SortedSet.fromList changed)
   where
-    goOrder : SortedSet Name -> SortedSet Name -> List Name -> SortedMap Name RCDef -> Core (SortedMap Name RCDef)
-    goOrder eligible tinyOnly [] defOf = pure defOf
-    goOrder eligible tinyOnly (n :: rest) defOf = do
+    -- Whether `e` builds a closure anywhere: a `partial` or a constant closure
+    -- among the values it reads. A scan, not a rebuild of the tree.
+    hasClosure : RCExp -> Bool
+    hasClosure e = isPartial e || any isConstClosure (directReads e) || any hasClosure (children e)
+      where
+        isPartial : RCExp -> Bool
+        isPartial (RUnderApp {}) = True
+        isPartial _ = False
+
+        isConstClosure : RCLocal -> Bool
+        isConstClosure (RCConstClosure {}) = True
+        isConstClosure _ = False
+
+    -- `acc`: the names whose body took a splice, which the next round's `analyse`
+    -- walks again.
+    goOrder : {auto sc : Ref SpliceCount Nat} -> SortedSet Name -> SortedSet Name -> List Name
+           -> SortedMap Name RCDef -> (acc : List Name) -> Core (SortedMap Name RCDef, List Name)
+    goOrder eligible tinyOnly [] defOf acc = pure (defOf, acc)
+    goOrder eligible tinyOnly (n :: rest) defOf acc = do
+        before <- get SpliceCount
         defOf' <- case lookup n defOf of
                        Just (MkRCFun args retRep isWorker body) => do
-                           body' <- inlineInto defOf eligible tinyOnly n body
+                           body' <- inlineInto tiny defOf eligible tinyOnly n body
                            pure (insert n (MkRCFun args retRep isWorker body') defOf)
                        Just (MkRCError body) => do
-                           body' <- inlineInto defOf eligible tinyOnly n body
+                           body' <- inlineInto tiny defOf eligible tinyOnly n body
                            pure (insert n (MkRCError body') defOf)
                        _ => pure defOf
-        goOrder eligible tinyOnly rest defOf'
+        after <- get SpliceCount
+        goOrder eligible tinyOnly rest defOf' (if after > before then n :: acc else acc)
 
 ||| Iteration cap for `applyLateInline`. Only a guard: the loop stops by
 ||| itself once a round splices nothing.
@@ -608,8 +645,8 @@ maxLateInlineIterations : Nat
 maxLateInlineIterations = 8
 
 ||| Runs `applyLateInlineOnce` until a round splices nothing or
-||| `maxLateInlineIterations` is reached, threading `Carried` and the
-||| previous round's `toProcess` (as `dirty`) from round to round. `roots`
+||| `maxLateInlineIterations` is reached, threading `Carried` and the names
+||| that took a splice (as `dirty`) from round to round. `roots`
 ||| are the entry points `pruneDeadDefs` is called with. Each round is
 ||| `logTime`d at `--timing 3`, labelled with how many definitions the
 ||| previous round spliced into, which tells a converging tail from real
