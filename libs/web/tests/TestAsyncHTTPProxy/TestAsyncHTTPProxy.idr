@@ -25,6 +25,7 @@ import Network.Async.HTTP.Proxy
 import Network.Async.HTTP.Router
 import Network.HTTP.Route
 import Network.HTTP.Router
+import Network.Address
 import Network.Async.HTTP.Server
 import Network.Socket
 import Network.Socket.Data
@@ -60,8 +61,8 @@ upstream req = case fst (break (== '?') req.path) of
                              , header "x-forwarded-for" req, header "forwarded" req, header "x-real-ip" req, header "x-forwarded-proto" req
                              , header "connection" req, header "content-length" req, body] ++ "\n"))
 
-localhost : SocketAddress
-localhost = IPv4Addr 127 0 0 1
+localhost : Address
+localhost = IPv4 127 0 0 1
 
 -- A server that says the same thing to everyone who connects, and closes without
 -- reading what they send (the system then resets the connection).
@@ -127,7 +128,7 @@ session : String -> IO String
 session request = do
   Right sock <- socket AF_INET Stream 0
     | Left e => pure ("socket " ++ show e)
-  0 <- connect sock localhost proxyPort
+  0 <- connect sock (IPv4Addr 127 0 0 1) proxyPort
     | e => close sock *> pure ("connect " ++ show e)
   Right _ <- Network.Socket.send sock request
     | Left e => pure ("send " ++ show e)

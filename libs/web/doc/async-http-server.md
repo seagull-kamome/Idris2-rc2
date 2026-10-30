@@ -16,9 +16,9 @@ waits for the descriptor on the scheduler's epoll (`awaitReadable`,
 
 | | |
 | --- | --- |
-| `listen : Port -> IO (Either Errno Sock)` | bind (loopback unless `bindAddr` is given) and listen, with `SO_REUSEADDR` |
+| `listen : Int -> IO (Either Errno Sock)` | bind (loopback unless `bindAddr` is given) and listen, with `SO_REUSEADDR` |
 | `accept : Sock -> Task (Either Errno Sock)` | the next connection, non-blocking |
-| `connect : SocketAddress -> Port -> Task (Either Errno Sock)` | connect to an IPv4 address and wait until it is made; a host name or IPv6 is `EAFNOSUPPORT` (the lookup would block); the socket is handed over like `accept`'s, and closed if the connect is given up |
+| `connect : Address -> Int -> Task (Either Errno Sock)` | connect to an IPv4 address and wait until it is made; an `Address` is IPv4 only (a host name lookup would block); the socket is handed over like `accept`'s, and closed if the connect is given up |
 | `recv : Sock -> Buffer -> (off, len : Int) -> Task (Either Errno Int)` | into `buf[off ..]`; `Right 0` is end of input |
 | `send`, `sendAll` | `send` writes some bytes, `sendAll` all of them |
 | `shutdownWrite`, `discard` | `shutdown(SHUT_WR)`, and reading and throwing away what the peer sends (until it closes, an error or a byte limit; the time limit is the caller's, with `timeoutAt`): with `close`, a lingering close |

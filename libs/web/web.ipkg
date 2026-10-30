@@ -3,7 +3,7 @@ package web
 version    = 0.1.0
 opts       = "--total"
 sourcedir  = "src"
-depends    = contrib, network, rc2base
+depends    = contrib, rc2base
 modules    = Network.Async.HTTP.CGI,
              Network.Async.HTTP.Client,
              Network.Async.HTTP.Client.Curl,

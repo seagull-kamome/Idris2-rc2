@@ -22,7 +22,7 @@
 |||   --system  a system prompt
 ||| The key, if the server wants one, is in $LLM_API_KEY.
 |||
-||| Build: idris2-rc2 --cg rc2 -p termui -p web -p rc2base -p contrib -p network -o llmchat LlmChat.idr
+||| Build: idris2-rc2 --cg rc2 -p termui -p web -p rc2base -p contrib -o llmchat LlmChat.idr
 |||
 ||| Copyright 2026, Hattori,Hiroki. All rights reserved.
 ||| This module was licensed by BSD3. see LICENSE file for detail.
@@ -35,7 +35,6 @@ import Data.Maybe
 import Data.String
 import Network.HTTP.Client.WebAPI.AI.OpenAI
 import Network.HTTP.Client.WebAPI.AI.OpenAIStream
-import Network.Socket.Data
 import System
 import System.File
 import System.Posix.Errno

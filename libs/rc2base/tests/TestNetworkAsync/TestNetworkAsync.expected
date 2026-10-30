@@ -4,5 +4,4 @@ dropped accept: Just "closed by the server"
 bounds: Just ["Left Errno:22", "Left Errno:22", "Left Errno:22", "Left Errno:22", "Left Errno:22", "Left Errno:22", "Left Errno:22", "Left Errno:22", "Left Errno:22"]
 connect: Just ("served ping", "echo:ping")
 refused: Just "Errno:111"
-host name: Just "Errno:97"
 deadline: Just ["Just (Right ())", "Just (Right 2)", "Nothing", "Just (Right 2)", "True"]

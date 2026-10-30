@@ -14,7 +14,7 @@ SECS="${1:-8}"
 export LC_ALL=C.UTF-8
 RC2="../../../rc2/build/exec/idris2-rc2"
 for p in OldServer NewServer; do
-    "$RC2" --cg rc2 -p web -p rc2base -p network -p contrib -o "$p" "$p.idr"
+    "$RC2" --cg rc2 -p web -p rc2base -p contrib -o "$p" "$p.idr"
 done
 
 if command -v wrk >/dev/null; then

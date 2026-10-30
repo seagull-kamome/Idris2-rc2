@@ -19,7 +19,7 @@ import Data.IORef
 import Data.String
 import Data.Either
 import Network.Async
-import public Network.Socket.Data
+import public Network.Address
 import System.Posix.Errno
 
 %default covering
@@ -317,9 +317,9 @@ serveOn {limits} listener handler = do
 ||| Listen on `port` (loopback by default) and serve until given up. The result
 ||| is the `Errno` that stopped it.
 export
-serve : {default (IPv4Addr 127 0 0 1) bindAddr : SocketAddress}
+serve : {default loopbackAddress bindAddr : Address}
      -> {default defaultLimits limits : Limits}
-     -> Port -> Handler -> Task (Either Errno ())
+     -> (port : Int) -> Handler -> Task (Either Errno ())
 serve {bindAddr} {limits} port handler = do
   Right listener <- handoff (\_, done => (listen {bindAddr} port >>= done) *> pure noCancel)
                             (either (\_ => pure ()) close)

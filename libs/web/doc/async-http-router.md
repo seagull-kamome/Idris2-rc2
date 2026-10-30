@@ -16,7 +16,7 @@ handler =
   urlRewrite rules
     (static "/static" "public"
       (cgi "/cgi-bin" "cgi"
-        (proxy "/api" (IPv4Addr 127 0 0 1) 9000
+        (proxy "/api" (IPv4 127 0 0 1) 9000
           (router notFoundHandler routes))))
 ```
 
@@ -39,7 +39,7 @@ routes : List RouteEntryWith
 routes =
   [ get  ("assets" // splat)  (serveStatic "public")
   , post ("scripts" // splat) (runCGI "/scripts" "cgi")
-  , get  ("api" // splat)     (forwardTo (IPv4Addr 127 0 0 1) 9000)
+  , get  ("api" // splat)     (forwardTo (IPv4 127 0 0 1) 9000)
   , get  ("users" // capture "id" Int end) (\id, req => ...)    -- an ordinary route beside them
   ]
 

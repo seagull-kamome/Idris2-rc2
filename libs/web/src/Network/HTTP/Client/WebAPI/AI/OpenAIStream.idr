@@ -20,7 +20,6 @@ import Control.Task
 import Network.Async.HTTP.Stream
 import Network.HTTP.Client.WebAPI.AI.OpenAI
 import Network.HTTP.Client.WebAPI.JSON
-import Network.Socket.Data
 import Network.URL as U
 
 %default covering

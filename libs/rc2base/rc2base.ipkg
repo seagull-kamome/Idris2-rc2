@@ -3,7 +3,7 @@ package rc2base
 version    = 0.1.0
 opts       = "--total"
 sourcedir  = "src"
-depends    = contrib, network
+depends    = contrib
 modules    = Control.Concurrent.MVar,
              Control.Concurrent.Atomic,
              Control.Task, Control.Task.Chan, Control.Task.Epoll, Control.Task.MVar, Control.Task.Pool, Control.Task.Ref, Control.Task.Scheduler, Control.Task.Source, Control.Task.Uring, Control.Task.Waiters,
@@ -16,7 +16,7 @@ modules    = Control.Concurrent.MVar,
              Data.String.FFI, Data.String.RC2,
              Language.RCExpr.AST, Language.RCExpr.Lexer, Language.RCExpr.Parser,
              --
-             Network.Async,
+             Network.Address, Network.Async,
              Network.URL,
              --
              Network.RC2,

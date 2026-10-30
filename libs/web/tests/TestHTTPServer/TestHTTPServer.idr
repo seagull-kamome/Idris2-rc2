@@ -18,10 +18,13 @@ module Main
 
 import Language.JSON
 
+import Network.Address
 import Network.HTTP.Server
 import Network.RC2
-import Network.Socket
-import Network.Socket.Data
+
+import System.Posix.Errno
+import System.Posix.FileDesc as FD
+import System.Posix.Socket as Posix
 
 import System.Concurrency
 import System.Concurrency.RC2
@@ -30,7 +33,7 @@ import Data.Buffer
 import Data.IORef
 import Data.String
 
-testPort : Port
+testPort : Int
 testPort = 18723
 
 napMs : Int -> IO ()
@@ -109,16 +112,16 @@ bodyStart b n = go 0
                         cast {to=Int} d == 13 && cast {to=Int} e == 10
                        then pure (i + 4) else go (i + 1)
 
-connectRetry : Nat -> IO (Maybe Socket)
+connectRetry : Nat -> IO (Maybe FD.FileDesc)
 connectRetry Z     = pure Nothing
 connectRetry (S k) = do
-  Right sock <- socket AF_INET Stream 0
+  Right sock <- Posix.socket AF_INET SOCK_STREAM 0
     | Left _ => pure Nothing
-  0 <- connect sock (IPv4Addr 127 0 0 1) testPort
-    | _ => do close sock; napMs 20; connectRetry k
+  Right () <- Posix.connect sock (toSockAddr loopbackAddress testPort)
+    | _ => do ignore (FD.close sock); napMs 20; connectRetry k
   pure (Just sock)
 
-sendAll : Socket -> Buffer -> (len : Int) -> IO ()
+sendAll : FD.FileDesc -> Buffer -> (len : Int) -> IO ()
 sendAll sock buf len = go 0
   where
     go : Int -> IO ()
@@ -127,7 +130,7 @@ sendAll sock buf len = go 0
                          | Left _ => pure ()
                        if n <= 0 then pure () else go (off + n)
 
-recvAllBuf : Socket -> IO (Buffer, Int)
+recvAllBuf : FD.FileDesc -> IO (Buffer, Int)
 recvAllBuf sock = do
   b <- mkbuf 4096
   go b 0
@@ -153,7 +156,7 @@ exchange reqHead body bodyLen = do
   sendAll sock h (byteLength h)
   when (bodyLen > 0) $ sendAll sock body bodyLen
   (buf, n) <- recvAllBuf sock
-  close sock
+  ignore (FD.close sock)
   bs <- bodyStart buf n
   if bs < 0 then pure "<no-header-end>" else getString buf bs (n - bs)
 
@@ -169,7 +172,7 @@ chunked pieces = do
     sendAll sock b (byteLength b)
     napMs 50
   (buf, n) <- recvAllBuf sock
-  close sock
+  ignore (FD.close sock)
   bs <- bodyStart buf n
   if bs < 0 then pure "<no-header-end>" else getString buf bs (n - bs)
 
@@ -192,7 +195,7 @@ getBytes path = do
   h <- fromString "GET \{path} HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n"
   sendAll sock h (byteLength h)
   (buf, n) <- recvAllBuf sock
-  close sock
+  ignore (FD.close sock)
   bs <- bodyStart buf n
   if bs < 0 then pure []
     else for [bs .. n - 1] (\i => cast {to=Int} <$> getBits8 buf i)
@@ -201,7 +204,7 @@ getBytes path = do
 
 round : (label : String) -> (stopPath : String) -> (binary : Bool) -> IO ()
 round label stopPath binary = do
-  srv <- forkJoin {a = ()} $ serve {bindAddr = IPv4Addr 127 0 0 1} testPort handler
+  srv <- forkJoin {a = ()} $ serve {bindAddr = IPv4 127 0 0 1} testPort handler
   putStrLn (label ++ " sync: " ++ !(get "/sync"))
   putStrLn (label ++ " async: " ++ !(get "/async"))
   putStrLn (label ++ " json: " ++ !(get "/json"))

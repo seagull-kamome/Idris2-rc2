@@ -147,7 +147,7 @@ libs/rc2base/
 
 ### `libs/web/`：HTTPクライアントとサーバ
 
-`System.Linux.Epoll`上のHTTP/1.1サーバ（`Network.HTTP.Server`）と型安全なExpress風ルータ（`Network.HTTP.Route` / `Router`）、`Control.Task`のタスクで作った2つ目のサーバ（静的ファイル、CGI、リバースプロキシ、URL書き換え付き。`Network.Async.HTTP.*`）、libcurlのクライアントとOpenAI互換のチャットクライアント、OAuth 2.0（PKCE）ログイン（`Network.HTTP.Client.*`）を備えます。`rc2base`に依存し、そこから切り出したパッケージです。`libs/web/tests/verify.sh`（先に`libs/rc2base/tests/verify.sh`）でビルドし、プログラムは`-p web -p rc2base -p contrib -p network`でコンパイルします。[`libs/web/README.ja.md`](libs/web/README.ja.md)を参照してください。
+`System.Linux.Epoll`上のHTTP/1.1サーバ（`Network.HTTP.Server`）と型安全なExpress風ルータ（`Network.HTTP.Route` / `Router`）、`Control.Task`のタスクで作った2つ目のサーバ（静的ファイル、CGI、リバースプロキシ、URL書き換え付き。`Network.Async.HTTP.*`）、libcurlのクライアントとOpenAI互換のチャットクライアント、OAuth 2.0（PKCE）ログイン（`Network.HTTP.Client.*`）を備えます。`rc2base`に依存し、そこから切り出したパッケージです。`libs/web/tests/verify.sh`（先に`libs/rc2base/tests/verify.sh`）でビルドし、プログラムは`-p web -p rc2base -p contrib`でコンパイルします。[`libs/web/README.ja.md`](libs/web/README.ja.md)を参照してください。
 
 ### `libs/text-re2/`：Google RE2正規表現バインディング
 

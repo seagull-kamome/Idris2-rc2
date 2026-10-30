@@ -23,7 +23,7 @@ import Network.HTTP.Client
 import Network.Async.HTTP.Client
 import Network.Async.HTTP.Client.Curl
 import Network.HTTP.Client.Curl
-import Network.Socket.Data
+import Network.Address
 import Text.Encoding.UTF8
 
 %default covering
@@ -318,12 +318,8 @@ streamPostUrl url headers body =
 ||| `streamPostUrl` for the server at `addr`:`port` (`http`), with `Host` as `host`
 ||| says.
 export
-streamPost : SocketAddress -> Port -> (host : String) -> (path : String)
+streamPost : Address -> (port : Int) -> (host : String) -> (path : String)
           -> (headers : List (String, String)) -> (body : String)
           -> Task (Either StreamError (Head, Stream))
 streamPost addr port host path headers body =
-  streamPostUrl ("http://" ++ rendered addr ++ ":" ++ show port ++ path) (("Host", host) :: headers) body
-  where
-    rendered : SocketAddress -> String
-    rendered (IPv4Addr a b c d) = show a ++ "." ++ show b ++ "." ++ show c ++ "." ++ show d
-    rendered _ = "0.0.0.0"
+  streamPostUrl ("http://" ++ show addr ++ ":" ++ show port ++ path) (("Host", host) :: headers) body

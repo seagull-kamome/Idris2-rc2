@@ -12,9 +12,7 @@ import Data.Bits
 import Data.Buffer
 import Data.IORef
 import Data.String.FFI
-import Network.RC2
-import Network.Socket
-import Network.Socket.Data
+import public Network.Address
 import System.FFI
 import System.Linux.Epoll
 import System.Posix.Errno
@@ -94,38 +92,33 @@ adopt = adoptFrom Nothing
 
 ||| A socket listening on `bindAddr` (loopback by default) and `port`.
 export
-listen : {default (IPv4Addr 127 0 0 1) bindAddr : SocketAddress}
-      -> Port -> IO (Either Errno Sock)
-listen {bindAddr} port = do
-  Right sock <- socket AF_INET Stream 0
-    | Left e => pure (Left (MkErrno (cast e)))
-  r <- prepare sock
-  case (r, fromSocket sock) of
-    (Right (), Just fd) => adopt fd
-    (Left e, _) => Network.Socket.close sock *> pure (Left e)
-    (_, Nothing) => Network.Socket.close sock *> pure (Left EBADF)
+listen : {default loopbackAddress bindAddr : Address}
+      -> (port : Int) -> IO (Either Errno Sock)
+listen {bindAddr} port = if not (validPort port) then pure (Left EINVAL) else do
+  Right fd <- Posix.socket AF_INET SOCK_STREAM 0
+    | Left e => pure (Left e)
+  r <- prepare fd
+  case r of
+    Right () => adopt fd
+    Left e => ignore (System.Posix.FileDesc.close fd) *> pure (Left e)
   where
-    prepare : Socket -> IO (Either Errno ())
-    prepare sock = do
-      Just fd <- pure (fromSocket sock)
-        | Nothing => pure (Left EBADF)
+    prepare : FileDesc -> IO (Either Errno ())
+    prepare fd = do
       Right () <- setSockOptInt fd SOL_SOCKET SO_REUSEADDR 1
         | Left e => pure (Left e)
-      0 <- bind sock (Just bindAddr) port
-        | e => pure (Left (MkErrno (cast e)))
-      listened <- Network.Socket.listen sock
-      pure (if listened == 0 then Right () else Left (MkErrno (cast listened)))
+      Right () <- Posix.bind fd (toSockAddr bindAddr port)
+        | Left e => pure (Left e)
+      Posix.listen fd 128
 
-||| Connect to an IPv4 address and wait until the connection is made. Anything
-||| else (a host name would need a blocking lookup, IPv6 is not supported) is
-||| `EAFNOSUPPORT`. Like `accept`, the socket is handed over with `handoff`; a
+||| Connect to an IPv4 address and wait until the connection is made (a host
+||| name would need a blocking lookup, so it is not accepted). Like `accept`, the socket is handed over with `handoff`; a
 ||| connect that is given up while it is under way closes its socket.
 export
-connect : SocketAddress -> Port -> Task (Either Errno Sock)
-connect (IPv4Addr a b c d) port = handoff start (either (\_ => pure ()) close)
+connect : Address -> (port : Int) -> Task (Either Errno Sock)
+connect addr port = handoff start (either (\_ => pure ()) close)
   where
     target : SockAddr
-    target = SockAddrIn (cast a * 16777216 + cast b * 65536 + cast c * 256 + cast d) (cast port)
+    target = toSockAddr addr port
 
     -- A connection under way is done when the descriptor is writable; how it
     -- went is the pending error of the socket.
@@ -148,7 +141,7 @@ connect (IPv4Addr a b c d) port = handoff start (either (\_ => pure ()) close)
       pure (MkCancel (giveUp s settled watching))
 
     start : Env -> Completion (Either Errno Sock) -> IO Cancel
-    start env done = do
+    start env done = if not (validPort port) then noCancel <$ done (Left EINVAL) else do
       opened <- Posix.socket AF_INET SOCK_STREAM 0
       case opened of
         Left e => noCancel <$ done (Left e)
@@ -163,7 +156,6 @@ connect (IPv4Addr a b c d) port = handoff start (either (\_ => pure ()) close)
                 Left e =>
                   if elem e [EINPROGRESS, EINTR] then waiting env s done
                   else close s *> (noCancel <$ done (Left e))
-connect _ _ = pure (Left EAFNOSUPPORT)
 
 ||| One attempt at a system call that answers -1 and sets `errno` on failure.
 export

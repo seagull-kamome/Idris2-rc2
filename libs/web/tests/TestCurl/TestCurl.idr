@@ -13,6 +13,7 @@ module Main
 --     HttpError for a missing path.
 -- Needs libcurl's headers and library (verify.sh skips it otherwise).
 
+import Network.Address
 import Data.Buffer
 import Data.String
 import Data.TextBuffer
@@ -25,12 +26,11 @@ import Network.HTTP.Client.Curl.Raw
 import Network.HTTP.Client.Curl.TextBuffer
 import Network.HTTP.Client.Curl.Types
 import Network.HTTP.Server
-import Network.Socket.Data
 
 import System.Concurrency
 import System.Concurrency.RC2
 
-testPort : Port
+testPort : Int
 testPort = 18724
 
 napMs : Int -> IO ()
@@ -300,7 +300,7 @@ main = do
     testMulti path
     testCapture path
     testCaptureText path
-    srv <- forkJoin {a = ()} $ serve {bindAddr = IPv4Addr 127 0 0 1} testPort handler
+    srv <- forkJoin {a = ()} $ serve {bindAddr = IPv4 127 0 0 1} testPort handler
     let base = "http://127.0.0.1:" ++ show testPort
     waitServer base 100
     testHttp base

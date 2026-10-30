@@ -8,7 +8,6 @@ module Main
 
 import Data.Buffer
 import Network.HTTP.Server
-import Network.Socket.Data
 import System
 
 %default covering

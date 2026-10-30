@@ -20,12 +20,11 @@ import Network.Async
 import Network.HTTP.Client.WebAPI.AI.OpenAI
 import Network.HTTP.Client.WebAPI.AI.OpenAIStream
 import Network.HTTP.Message
-import Network.Socket.Data
 import System.Posix.Errno
 
 %default covering
 
-port : Port
+port : Int
 port = 18765
 
 -------------------------------------------------------------------------------

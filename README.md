@@ -147,7 +147,7 @@ See [`libs/rc2base/README.md`](libs/rc2base/README.md) for module-by-module desi
 
 ### `libs/web/`: HTTP Client and Servers
 
-An HTTP/1.1 server on `System.Linux.Epoll` (`Network.HTTP.Server`) with a type-safe Express-style router (`Network.HTTP.Route` / `Router`), a second server made of `Control.Task` tasks with static files, CGI, a reverse proxy and a URL rewriter (`Network.Async.HTTP.*`), and a libcurl client with an OpenAI-compatible chat client and OAuth 2.0 (PKCE) login (`Network.HTTP.Client.*`). It depends on `rc2base` and was split off it. Build it with `libs/web/tests/verify.sh` (after `libs/rc2base/tests/verify.sh`) and compile programs with `-p web -p rc2base -p contrib -p network`. See [`libs/web/README.md`](libs/web/README.md).
+An HTTP/1.1 server on `System.Linux.Epoll` (`Network.HTTP.Server`) with a type-safe Express-style router (`Network.HTTP.Route` / `Router`), a second server made of `Control.Task` tasks with static files, CGI, a reverse proxy and a URL rewriter (`Network.Async.HTTP.*`), and a libcurl client with an OpenAI-compatible chat client and OAuth 2.0 (PKCE) login (`Network.HTTP.Client.*`). It depends on `rc2base` and was split off it. Build it with `libs/web/tests/verify.sh` (after `libs/rc2base/tests/verify.sh`) and compile programs with `-p web -p rc2base -p contrib`. See [`libs/web/README.md`](libs/web/README.md).
 
 ### `libs/text-re2/`: Google RE2 Regex Bindings
 

@@ -17,7 +17,7 @@ import Data.String
 import Network.Async
 import Network.Async.HTTP.Server
 import Network.HTTP.Route
-import Network.Socket.Data
+import Network.Address
 import System.Posix.Errno
 
 %default covering
@@ -59,11 +59,6 @@ hopByHop = [ "connection", "keep-alive", "proxy-authenticate", "proxy-authorizat
 forwardedBy : List String
 forwardedBy = [ "forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto"
               , "x-forwarded-port", "x-real-ip" ]
-
--- `a.b.c.d`; nothing for an address `connect` cannot use anyway.
-render : SocketAddress -> String
-render (IPv4Addr a b c d) = show a ++ "." ++ show b ++ "." ++ show c ++ "." ++ show d
-render _ = ""
 
 -- Why an exchange did not give an answer.
 data Failed = TimedOut | Bad String
@@ -112,7 +107,7 @@ passedOn besides hdrs =
 ||| `100-continue`, no streaming: the answer is held whole.
 export
 forwardTo : {default defaultProxy options : ProxyOptions}
-         -> (upstream : SocketAddress) -> (port : Port) -> (rest : String) -> Request -> Task Response
+         -> (upstream : Address) -> (port : Int) -> (rest : String) -> Request -> Task Response
 forwardTo {options} upstream port rest req =
     if not acceptable then liftIO (text 400 "bad request\n")
     else if not (fieldSafe hostValue) then liftIO (text 500 "bad proxy configuration\n")
@@ -135,7 +130,7 @@ forwardTo {options} upstream port rest req =
       && not (hasDotSegment req.path)
 
     hostValue : String
-    hostValue = fromMaybe (render upstream ++ ":" ++ show port) options.hostHeader
+    hostValue = fromMaybe (show upstream ++ ":" ++ show port) options.hostHeader
 
     -- The target of the forwarded request: the segments as they stand in the request.
     upstreamPath : (below : List String) -> String
@@ -250,7 +245,7 @@ forwardTo {options} upstream port rest req =
 ||| every other request to `next`.
 export
 proxy : {default defaultProxy options : ProxyOptions}
-     -> (mountAt : String) -> (upstream : SocketAddress) -> (port : Port) -> (next : Handler) -> Handler
+     -> (mountAt : String) -> (upstream : Address) -> (port : Int) -> (next : Handler) -> Handler
 proxy {options} mountAt upstream port next req = case segmentsUnder mountAt req.path of
   Nothing => next req
   Just below => forwardTo {options} upstream port (joinBy "/" below) req

@@ -53,7 +53,8 @@ rc2の汎用サポートライブラリです。上流の`base`/`contrib`に無�
 | `Data.Double.Convert` | `Double`と`String`の相互変換を速くする、Eisel-Lemire/Grisu2系の任意利用の経路。`cast`を置き換えず、その隣に置いてあります。後述 |
 | `Data.Integer.GMP` | 本物のGMP `mpz_*`関数への直接の`%foreign`バインディング。後述 |
 | `Language.RCExpr.AST`/`Lexer`/`Parser` | rc2自身の`--directive dumprcexpr`の出力を、独立した木に解析します。後述 |
-| `Network.RC2` | `Data.Buffer`に対する、バイナリ安全でオフセットと長さを指定できるソケットIO |
+| `Network.Address` | IPv4の`Address`（`IPv4 127 0 0 1`、`parseAddress`）と、その`SockAddr`。`Network.Async`と`web`は、`network`パッケージの型の代わりにこれを取ります |
+| `Network.RC2` | `FileDesc`に対する、バイナリ安全でオフセットと長さを指定できる`Data.Buffer`へのソケットIOと、`String`の送受信 |
 | `Network.URL` | URLの解析・構築とパーセントエンコード。後述 |
 | `Network.Async` | `Control.Task`用のノンブロッキングソケット。これを使うHTTPのサーバとクライアントは、`web`パッケージ(`libs/web`)にあります |
 | `System.Posix.*` | POSIXバインディング。`Errno`、`File`/`FileDesc`（`FileDesc`/`DirDesc`は`Int32`と、それが負でないという消去された証明を持ちます）、`Directory`、`Dl`（`dlopen`/`dlsym`/`dlclose`）、`Path`（`mkdir`、`unlink`、`symlink`、`readlink`、`realpath`、`mkfifo`、`mkstemp`など）、`Stat`（`stat`/`lstat`/`fstat`を`Stat`レコードへ、`access`、`truncate`、`utimensat`）、`Time`（`clock_gettime`、`nanosleep`、`gmtime`/`localtime`/`mktime`/`strftime`）、`Fcntl`（`pipe`、`fcntl`のフラグ、`dupfd`）、`Poll`（`poll`）、`Select`（`select`）、`Socket`（`socket`、`bind`、`listen`、`accept`、`connect`、`Buffer`への`send`/`recv`、ソケットオプション、IPv4・IPv6・Unixドメインを表す`SockAddr`）、`Pwd`（`getpwnam`/`getpwuid`/`getgrnam`/`getgrgid`を`Passwd`/`Group`レコードへ）、`Glob`（`fnmatch`、`glob`）、`Syslog`（`openlog`/`syslog`/`closelog`）、`Mmap`、`Process`（各種ID、プロセスグループ、`exec*`、wait状態の判定、`getrlimit`、`uname`、`sysconf`、`sigqueue`）、`Signal`（番号、シグナル集合、`sigprocmask`、`sigwait`、`sigtimedwait`、`sigsuspend`、`raise`、`alarm`）、`Uio`、CのstdioをまとめたStdio（`File = Ptr RawFile`、errnoは`Left`に入ります。`open_memstream`は`MemStream`）。POSIXの範囲を外れる宣言には、docコメントに「Linux only」「Linux and BSD」などと書いてあります |

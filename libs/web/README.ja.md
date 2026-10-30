@@ -4,7 +4,7 @@
 
 rc2向けのHTTPです。libcurlのクライアント、OpenAI互換のチャットクライアントとOAuth 2.0（PKCE）ログイン、2種類のHTTP/1.1サーバとルータ（`epoll`のイベントループ版と、`Control.Task`のタスクで作った版）が入っています。タスク版のサーバには、静的ファイル、CGI、リバースプロキシ、URLの書き換えも付きます。`rc2base`から切り出したパッケージで、土台になる汎用の部品（`Network.Async`、`Network.RC2`、`Network.URL`、`Control.Task`、`System.Linux.Epoll`など）は`rc2base`に残っています。`rc2base`と同じくrc2専用です（`%foreign`のバインディングがCだけのためです）。
 
-使うプログラムは`-p web -p rc2base -p contrib -p network`を付けてビルドします。クライアントには、libcurlの開発用ファイルとライブラリがコンパイラの検索パスに必要です。`web`にはCのシムが1つだけあります。`support/c/idris2rc2_web_curl_util.c`が`curl_global_init`をプロセスにつき1回呼び、`libidris2rc2web.a`にまとめられます。`rc2base`と同じように、パッケージの`lib`ディレクトリへインストールされます（`libs/rc2base/README.ja.md`の「ネイティブライブラリのインストール先」を参照）。
+使うプログラムは`-p web -p rc2base -p contrib`を付けてビルドします。`web`も`rc2base`も`network`パッケージは要りません（アドレスはrc2baseの`Network.Address.Address`、ソケットは`System.Posix.Socket`のファイル記述子です）。クライアントには、libcurlの開発用ファイルとライブラリがコンパイラの検索パスに必要です。`web`にはCのシムが1つだけあります。`support/c/idris2rc2_web_curl_util.c`が`curl_global_init`をプロセスにつき1回呼び、`libidris2rc2web.a`にまとめられます。`rc2base`と同じように、パッケージの`lib`ディレクトリへインストールされます（`libs/rc2base/README.ja.md`の「ネイティブライブラリのインストール先」を参照）。
 
 ## モジュール
 

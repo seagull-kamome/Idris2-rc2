@@ -43,8 +43,8 @@ Three modules, layered:
   (`epollCreate`, `epollAdd`/`epollMod`/`epollDel`, `epollWait`,
   `epollClose`), taking `FileDesc` and returning `Either Errno`. An
   `EPoll` owns the buffer `epollWait` fills, so several can be in use at
-  once. The server does the rest itself: the socket options the
-  standard `network` package doesn't expose (non-blocking mode through
+  once. The server does the rest itself: the socket options
+  (non-blocking mode through
   `System.Posix.Fcntl`, and `SO_REUSEADDR` so a restarted server can
   rebind immediately), and a `System.Linux.Eventfd` that the loop
   registers alongside its sockets so any thread can break it out of
@@ -55,10 +55,10 @@ Three modules, layered:
   (`send`/`recv` -- truncates at the first NUL) or a `List Bits8`
   (`sendBytes`/`recvBytes` -- one cons cell per byte); neither is
   usable for a server shuffling binary payloads through a reused
-  accumulator. Its two `%foreign` bindings are `"CExpr:"` templates over plain
-  `send`/`recv` that add `data + off` (no C shim); `errno` on a failed
-  call is read with `Network.Socket.Data.getErrno` (what `network`'s
-  own `send`/`recv` use).
+  accumulator. `sendBuf`/`recvBuf` call `System.Posix.Socket`'s `send`/`recv`
+  (with `MSG_NOSIGNAL` for `send`) at `data + off`, with no C shim; a failed
+  call is returned as `Left errno` (`Network.RC2` works on a `FileDesc`
+  and gives an `Errno`).
 - `Network.HTTP.Server` -- the HTTP logic itself: request/response
   types, a byte-scanning HTTP/1.1 parser, per-connection read/write
   buffering, and the event loop that ties it all to `System.Linux.Epoll`
@@ -302,7 +302,7 @@ To cap request size differently, pass `maxRequestBytes`:
 `serve {maxRequestBytes = 65536} 8080 handler`.
 
 To bind somewhere other than `localhost`, pass `bindAddr` explicitly:
-`serve {bindAddr = IPv4Addr 0 0 0 0} 8080 handler` listens on every
+`serve {bindAddr = anyAddress} 8080 handler` listens on every
 interface.
 
 Verified end-to-end under `--cg rc2` (`tests/TestHTTPServer/TestHTTPServer.idr`, in

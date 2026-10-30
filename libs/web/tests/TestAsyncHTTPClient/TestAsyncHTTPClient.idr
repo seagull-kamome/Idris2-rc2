@@ -22,18 +22,17 @@ import Network.HTTP.Client
 import Network.Async.HTTP.Client
 import Network.Async.HTTP.Client.Curl
 import Network.HTTP.Message
-import Network.Socket.Data
 import System.Posix.Errno
 
 %default covering
 
-port : Port
+port : Int
 port = 18771
 
-port2 : Port
+port2 : Int
 port2 = 18772
 
-url : Port -> String -> String
+url : Int -> String -> String
 url p path = "http://127.0.0.1:" ++ show p ++ path
 
 client : CurlClient

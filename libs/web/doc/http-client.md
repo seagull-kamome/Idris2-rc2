@@ -18,7 +18,7 @@ are the server side.
 | `Network.HTTP.Client.WebAPI.AI.OpenAI` / `.Providers` | one OpenAI-compatible chat client; each service (Claude, Gemini, llama.cpp) is only an `Endpoint` |
 | `Network.HTTP.Client.WebAPI.Auth.OAuth2` / `.PKCE` | OAuth 2.0 authorization code flow with PKCE and a loopback redirect, token refresh, token file |
 
-A program using them needs `-p web -p rc2base -p contrib -p network` and
+A program using them needs `-p web -p rc2base -p contrib` and
 libcurl's development files and library on the compiler's search path.
 
 ## Design notes
@@ -112,7 +112,7 @@ flow for native apps (RFC 8252) with PKCE (RFC 7636):
 
 `doc/webapi-getting-started.md` covers building, API keys and the
 Google OAuth setup. `examples/` holds small programs (build each with
-`-p web -p rc2base -p contrib -p network`):
+`-p web -p rc2base -p contrib`):
 
 - `Get`, `GetCapture`, `GetCaptureText`, `GetInfo`, `GetInfoOfft`,
   `GetWithHeaders`, `Header`, `Multi`, `PauseUpkeep`, `ShareAndMime`,

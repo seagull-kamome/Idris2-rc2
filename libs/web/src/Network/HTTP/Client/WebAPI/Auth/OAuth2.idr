@@ -21,10 +21,12 @@ import System.Posix.FileDesc as FD
 import System.Posix.Errno
 import System.Posix.Poll
 
-import Network.Socket
+import Network.Address
 import Network.HTTP.Client
 import Network.HTTP.Client.WebAPI.JSON
 import Network.HTTP.Client.WebAPI.Auth.PKCE
+import Network.RC2
+import System.Posix.Socket as Posix
 
 %default total
 
@@ -231,25 +233,23 @@ randomBytes n = do
 
 -- Tries a few ports from `port` on; Nothing when no socket can listen
 -- (e.g. a sandbox without networking), and the paste fallback is left.
-listenLoopback : Int -> IO (Maybe (Socket, Int))
+listenLoopback : Int -> IO (Maybe (FD.FileDesc, Int))
 listenLoopback port = go port (the Nat 5)
   where
-    go : Int -> Nat -> IO (Maybe (Socket, Int))
+    go : Int -> Nat -> IO (Maybe (FD.FileDesc, Int))
     go _ Z     = pure Nothing
-    go p (S k) = do
-        Right s <- socket AF_INET Stream 0
+    go p (S k) = if not (validPort p) then pure Nothing else do
+        Right s <- Posix.socket AF_INET SOCK_STREAM 0
             | Left _ => pure Nothing
-        0 <- bind s (Just (IPv4Addr 127 0 0 1)) p
-            | _ => close s >> go (p + 1) k
-        0 <- listen s
-            | _ => close s >> go (p + 1) k
+        Right () <- Posix.bind s (toSockAddr loopbackAddress p)
+            | _ => ignore (FD.close s) >> go (p + 1) k
+        Right () <- Posix.listen s 128
+            | _ => ignore (FD.close s) >> go (p + 1) k
         pure (Just (s, p))
 
 -- True when the socket is readable, False when stdin is.
-waitEither : Int -> IO (Either String Bool)
-waitEither fd = do
-    Just sock <- pure (mkFileDesc (cast fd))
-        | Nothing => pure (Left "bad socket")
+waitEither : FD.FileDesc -> IO (Either String Bool)
+waitEither sock = do
     Right [r0, _] <- poll [(sock, POLLIN), (MkFileDesc 0, POLLIN)] (-1)
         | _ => pure (Left "poll failed")
     pure (Right (r0 /= 0))
@@ -274,20 +274,20 @@ readPasted = do
             pure (Left "stdin closed before a redirect URL was pasted")
 
 covering
-serveOnce : Socket -> IO (Maybe (List (String, String)))
+serveOnce : FD.FileDesc -> IO (Maybe (List (String, String)))
 serveOnce s = do
-    Right (c, _) <- accept s
+    Right (c, _) <- Posix.accept s
         | Left _ => pure Nothing
-    Right (req, _) <- recv c 8192
-        | Left _ => close c >> pure Nothing
+    Right req <- recvString c 8192
+        | Left _ => ignore (FD.close c) >> pure Nothing
     let target = fromMaybe "" (head' (drop 1 (words (fst (break (== '\r') req)))))
         ps     = queryParams target
     if isRedirect ps
-        then do ignore $ send c (response "200 OK" "Authorization received. You can close this tab.")
-                close c
+        then do ignore $ sendString c (response "200 OK" "Authorization received. You can close this tab.")
+                ignore (FD.close c)
                 pure (Just ps)
-        else do ignore $ send c (response "404 Not Found" "Not found.")
-                close c
+        else do ignore $ sendString c (response "404 Not Found" "Not found.")
+                ignore (FD.close c)
                 pure Nothing
   where
     response : String -> String -> String
@@ -296,7 +296,7 @@ serveOnce s = do
         ++ "Content-Length: " ++ show (length body) ++ "\r\nConnection: close\r\n\r\n" ++ body
 
 covering
-waitRedirect : Maybe (Socket, Int) -> IO (Either String (List (String, String)))
+waitRedirect : Maybe (FD.FileDesc, Int) -> IO (Either String (List (String, String)))
 waitRedirect Nothing       = readPasted
 waitRedirect (Just (s, _)) = do
     loop
@@ -304,7 +304,7 @@ waitRedirect (Just (s, _)) = do
     covering
     loop : IO (Either String (List (String, String)))
     loop = do
-        Right sockReady <- waitEither (descriptor s)
+        Right sockReady <- waitEither s
             | Left e => pure (Left e)
         if sockReady
             then maybe loop (pure . Right) !(serveOnce s)

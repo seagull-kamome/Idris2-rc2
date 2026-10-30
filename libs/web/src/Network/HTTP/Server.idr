@@ -30,9 +30,8 @@ import Data.String
 
 
 import public Network.HTTP.Message
+import public Network.Address
 import Network.RC2
-import Network.Socket
-import Network.Socket.Data
 
 import System.Concurrency
 import System.Concurrency.RC2
@@ -144,7 +143,6 @@ BoundHandler = Request -> (Response -> IO ()) -> IO ()
 
 record Conn where
   constructor MkConn
-  sock        : Socket
   fd          : FileDesc
   ||| Read accumulator: live bytes are `readBuf[0 .. readLen)`.
   readBuf     : IORef Buffer
@@ -162,7 +160,6 @@ record ServerState where
   constructor MkServerState
   ctx        : ServerCtx
   epoll      : EPoll
-  listenSock : Socket
   listenFd   : FileDesc
   ||| The listener is not watched while `accept` fails for lack of descriptors;
   ||| the next closed connection watches it again.
@@ -200,16 +197,14 @@ setNonBlocking fd = do
   pure True
 
 -- `accept` ran out of descriptors (the process or the system).
-isFdExhausted : SocketError -> Bool
-isFdExhausted e = let MkErrno m = EMFILE
-                      MkErrno n = ENFILE
-                  in e == cast m || e == cast n
+isFdExhausted : Errno -> Bool
+isFdExhausted e = e == EMFILE || e == ENFILE
 
 closeConn : ServerState -> Conn -> IO ()
 closeConn st conn = do
   ignore $ epollDel st.epoll conn.fd
-  close conn.sock
-  modifyIORef st.conns (delete conn.sock.descriptor)
+  ignore $ close conn.fd
+  modifyIORef st.conns (delete (cast conn.fd.rawfd))
   paused <- readIORef st.listenPaused
   when paused $ do
     writeIORef st.listenPaused False
@@ -236,7 +231,7 @@ flushWrite st conn = do
             finishWrite st conn
     else do
       wbuf <- readIORef conn.writeBuf
-      case !(sendBuf conn.sock wbuf wsent (min ioChunk left)) of
+      case !(sendBuf conn.fd wbuf wsent (min ioChunk left)) of
         Right n =>
           if n >= left
             then do writeIORef conn.writeLen 0
@@ -275,7 +270,7 @@ appendResponse conn resp = do
 deliver : ServerState -> Conn -> Response -> IO ()
 deliver st conn resp = do
   conns <- readIORef st.conns
-  when (isJust (lookup conn.sock.descriptor conns)) $ do
+  when (isJust (lookup (cast conn.fd.rawfd) conns)) $ do
     ok <- appendResponse conn resp
     if ok then flushWrite st conn else closeConn st conn
 
@@ -354,7 +349,7 @@ handleReadable st handler conn = do
       True <- grow conn.readBuf (rlen + want) st.maxReq
         | False => closeConn st conn
       rbuf <- readIORef conn.readBuf
-      case !(recvBuf conn.sock rbuf rlen want) of
+      case !(recvBuf conn.fd rbuf rlen want) of
         Right 0 => closeConn st conn
         Right n => do
           writeIORef conn.readLen (rlen + n)
@@ -379,7 +374,7 @@ handleClientEvent st handler ev = do
 -- `wait` calls) -- drain with `accept` until it reports EAGAIN.
 acceptLoop : ServerState -> IO ()
 acceptLoop st =
-  case !(accept st.listenSock) of
+  case !(Posix.accept st.listenFd) of
     Left e =>
       -- Out of descriptors: the pending connection keeps the level-triggered
       -- listener ready, so it would spin. Stop watching it until a
@@ -387,24 +382,21 @@ acceptLoop st =
       when (isFdExhausted e) $ do
         writeIORef st.listenPaused True
         ignore $ epollMod st.epoll st.listenFd 0
-    Right (csock, _) =>
-      case mkFileDesc (cast csock.descriptor) of
-        Nothing => close csock >> acceptLoop st
-        Just cfd => do
-          -- A blocking socket would stall the loop, one the epoll cannot
-          -- watch would never be served: drop either.
-          True <- setNonBlocking cfd
-            | False => close csock >> acceptLoop st
-          rbuf <- newBuf initCap
-          wbuf <- newBuf initCap
-          conn <- MkConn csock cfd
-                    <$> newIORef rbuf <*> newIORef 0
-                    <*> newIORef wbuf <*> newIORef 0 <*> newIORef 0
-                    <*> newIORef False <*> newIORef Nothing
-          modifyIORef st.conns (insert csock.descriptor conn)
-          Right () <- epollAdd st.epoll cfd EPOLLIN
-            | Left _ => closeConn st conn >> acceptLoop st
-          acceptLoop st
+    Right (cfd, _) => do
+      -- A blocking socket would stall the loop, one the epoll cannot
+      -- watch would never be served: drop either.
+      True <- setNonBlocking cfd
+        | False => ignore (close cfd) >> acceptLoop st
+      rbuf <- newBuf initCap
+      wbuf <- newBuf initCap
+      conn <- MkConn cfd
+                <$> newIORef rbuf <*> newIORef 0
+                <*> newIORef wbuf <*> newIORef 0 <*> newIORef 0
+                <*> newIORef False <*> newIORef Nothing
+      modifyIORef st.conns (insert (cast cfd.rawfd) conn)
+      Right () <- epollAdd st.epoll cfd EPOLLIN
+        | Left _ => closeConn st conn >> acceptLoop st
+      acceptLoop st
 
 -- Run everything other threads have queued for us, oldest first
 -- (`enqueue` pushes newest-first). The list is swapped out under the
@@ -426,10 +418,10 @@ shutdown st = do
   conns <- readIORef st.conns
   for_ (values conns) $ \conn => do
     ignore $ epollDel st.epoll conn.fd
-    close conn.sock
+    ignore $ close conn.fd
   writeIORef st.conns empty
   ignore $ epollDel st.epoll st.listenFd
-  close st.listenSock
+  ignore $ close st.listenFd
   withMutex st.ctx.lock $ do
     writeIORef st.ctx.wakeOpen False
     ignore $ close st.ctx.wake
@@ -461,7 +453,7 @@ loop st handler = do
 -------------------------------------------------------------------------------
 
 ||| Listens on `port` (on `bindAddr`, `localhost` unless given
-||| explicitly -- pass e.g. `{bindAddr = IPv4Addr 0 0 0 0}` to listen on
+||| explicitly -- pass e.g. `{bindAddr = anyAddress}` to listen on
 ||| every interface) and runs the event loop, dispatching every
 ||| incoming request to `handler`. `maxRequestBytes` (default 8 MiB)
 ||| caps one connection's accumulated header+body; a request that would
@@ -471,23 +463,23 @@ loop st handler = do
 ||| `serve 8080 myHandler` -- see the doc for embedding it alongside
 ||| other work instead.
 export
-serve : {default (IPv4Addr 127 0 0 1) bindAddr : SocketAddress}
+serve : {default loopbackAddress bindAddr : Address}
      -> {default 8388608 maxRequestBytes : Int}
-     -> Port -> Handler -> IO ()
+     -> (port : Int) -> Handler -> IO ()
 serve {bindAddr} {maxRequestBytes} port handler = do
   Right ep <- epollCreate 64
     | Left e => giveUp [] "epoll_create failed, errno \{show e}"
-  Right lsock <- socket AF_INET Stream 0
+  True <- pure (validPort port)
+    | False => giveUp [ignore (epollClose ep)] "bad port \{show port}"
+  Right lfd <- Posix.socket AF_INET SOCK_STREAM 0
     | Left err => giveUp [ignore (epollClose ep)] "socket() failed, errno \{show err}"
-  let undoSock = [ignore (epollClose ep), close lsock]
-  Just lfd <- pure (mkFileDesc (cast lsock.descriptor))
-    | Nothing => giveUp undoSock "socket() gave a bad descriptor"
+  let undoSock = [ignore (epollClose ep), ignore (close lfd)]
   True <- setReuseAddr lfd
     | False => giveUp undoSock "SO_REUSEADDR failed"
-  0 <- bind lsock (Just bindAddr) port
-    | err => giveUp undoSock "bind() failed, errno \{show err}"
-  0 <- listen lsock
-    | err => giveUp undoSock "listen() failed, errno \{show err}"
+  Right () <- Posix.bind lfd (toSockAddr bindAddr port)
+    | Left err => giveUp undoSock "bind() failed, errno \{show err}"
+  Right () <- Posix.listen lfd 128
+    | Left err => giveUp undoSock "listen() failed, errno \{show err}"
   True <- setNonBlocking lfd
     | False => giveUp undoSock "fcntl(O_NONBLOCK) failed"
   Right () <- epollAdd ep lfd EPOLLIN
@@ -504,7 +496,7 @@ serve {bindAddr} {maxRequestBytes} port handler = do
   wakeOpen <- newIORef True
   let ctx = MkServerCtx lock tasksRef stopRef wake wakeOpen loopTid
   pausedRef <- newIORef False
-  loop (MkServerState ctx ep lsock lfd pausedRef connsRef maxRequestBytes) (handler @{ctx})
+  loop (MkServerState ctx ep lfd pausedRef connsRef maxRequestBytes) (handler @{ctx})
   where
     -- Release what was set up so far, then say why `serve` returns.
     giveUp : List (IO ()) -> String -> IO ()

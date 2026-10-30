@@ -11,6 +11,7 @@ module Main
 -- there. The framing of the body is libcurl's, so the errors for a body that
 -- is cut short or a head that is not one carry libcurl's message.
 
+import Network.Address
 import Control.Task
 import Control.Task.Scheduler
 import Data.Buffer
@@ -20,13 +21,12 @@ import Data.String
 import Network.Async
 import Network.Async.HTTP.Stream
 import Network.HTTP.Message
-import Network.Socket.Data
 import System.Posix.Errno
 import Text.Encoding.UTF8
 
 %default covering
 
-port : Port
+port : Int
 port = 18764
 
 -------------------------------------------------------------------------------
@@ -138,7 +138,7 @@ streamTest title script = do
     | Left e => putStrLn ("listen " ++ show e)
   r <- runTaskWith 2 (do
          server <- fork (serveWith log (script log) listener)
-         answer <- streamPost (IPv4Addr 127 0 0 1) port "localhost" "/v1/chat" [("X-Test", "1")] "{\"hello\":\"world\"}"
+         answer <- streamPost (IPv4 127 0 0 1) port "localhost" "/v1/chat" [("X-Test", "1")] "{\"hello\":\"world\"}"
          got <- case answer of
                   Left e => pure ["failed: " ++ show e]
                   Right (h, s) => do
@@ -221,9 +221,9 @@ main = do
 
   putStrLn "-- a line end in the request is refused before anything is sent"
   refused <- runTaskWith 2 (do
-               a <- streamPost (IPv4Addr 127 0 0 1) port "h\r\nX: y" "/" [] ""
-               b <- streamPost (IPv4Addr 127 0 0 1) port "h" "/ HTTP/1.1\r\n" [] ""
-               c <- streamPost (IPv4Addr 127 0 0 1) port "h" "/" [("A", "b\nc")] ""
+               a <- streamPost (IPv4 127 0 0 1) port "h\r\nX: y" "/" [] ""
+               b <- streamPost (IPv4 127 0 0 1) port "h" "/ HTTP/1.1\r\n" [] ""
+               c <- streamPost (IPv4 127 0 0 1) port "h" "/" [("A", "b\nc")] ""
                pure (map (either show (const "sent")) [a, b, c]))
   putStrLn (show refused)
 
@@ -242,7 +242,7 @@ main = do
                          | Nothing => pure ()
                        r <- recv conn buf 0 16
                        liftIO (note closedLog (case r of Right 0 => "closed by the client"; _ => "other")))
-         gave <- timeoutAt' 100 (streamPost (IPv4Addr 127 0 0 1) port "localhost" "/" [] "{}")
+         gave <- timeoutAt' 100 (streamPost (IPv4 127 0 0 1) port "localhost" "/" [] "{}")
          wait server
          pure gave)
   close closedListener
@@ -250,5 +250,5 @@ main = do
   readIORef closedLog >>= putStrLn . show
 
   putStrLn "-- no server"
-  r <- runTaskWith 2 (streamPost (IPv4Addr 127 0 0 1) port "localhost" "/" [] "")
+  r <- runTaskWith 2 (streamPost (IPv4 127 0 0 1) port "localhost" "/" [] "")
   putStrLn (show (map (either show (const "connected")) r))

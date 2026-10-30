@@ -17,6 +17,7 @@ module Main
 -- `login` polls stdin, so the runner must give it an open, silent stdin
 -- (verify.sh passes a FIFO).
 
+import Network.Address
 import Data.Buffer
 import Data.IORef
 import Data.List
@@ -32,13 +33,12 @@ import Network.HTTP.Client.WebAPI.AI.OpenAI
 import Network.HTTP.Client.WebAPI.AI.Providers
 import Network.HTTP.Client.WebAPI.Auth.OAuth2
 import Network.HTTP.Server
-import Network.Socket.Data
 import Network.URL
 
 import System.Concurrency
 import System.Concurrency.RC2
 
-mockPort : Port
+mockPort : Int
 mockPort = 18726
 
 napMs : Int -> IO ()
@@ -145,7 +145,7 @@ main : IO ()
 main = do
     let base = "http://127.0.0.1:" ++ show mockPort
     challenge <- newIORef Nothing
-    srv <- forkJoin {a = ()} $ serve {bindAddr = IPv4Addr 127 0 0 1} mockPort (mock challenge)
+    srv <- forkJoin {a = ()} $ serve {bindAddr = IPv4 127 0 0 1} mockPort (mock challenge)
     waitServer base 100
 
     putStrLn "--- chat ---"

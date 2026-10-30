@@ -97,6 +97,7 @@ TESTS=(
     "TestTaskIdle||Control.Task.Scheduler.turn: once every task has ended and turn says nothing is left, pollFd is not readable (no busy loop in a program that waits for it)"
     "TestTaskPointThen||Control.Task: a chain of liftIO runs on one worker in parallel mode (same results and order everywhere, a long chain, a mixed one, a loop that is given up)"
     "TestTaskHandoff||Control.Task: handoff gives back a value whose task is cancelled; finally and spawnOwning run their action once"
+    "TestNetworkAddress||Network.Address: dotted decimal in and out, socket addresses; Network.RC2: String and Buffer IO on a socket pair"
     "TestNetworkAsync|network contrib|Network.Async: serve a connection; a lost race closes the listener and a just-accepted connection; recv/send refuse bad ranges"
     "TestTaskUring||Control.Task.Uring: nop, file round trip, two requests at once, a read woken by a write, a request given up by a race"
     "TestTaskNoUring||Control.Task.Uring imported and not used: builds without liburing, no liburing in the generated C"

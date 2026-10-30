@@ -54,20 +54,20 @@ source "$REPO_ROOT/env.sh"
 
 # name|extra -p packages (web and rc2base are always passed)|what the test covers
 TESTS=(
-    "TestHTTPServer|network contrib|Network.HTTP.Server: cross-thread respond + stop, chunked request body"
+    "TestHTTPServer|contrib|Network.HTTP.Server: cross-thread respond + stop, chunked request body"
     "TestHTTPMessage|contrib|Network.HTTP.Message: framing, expectation, chunked bodies, connectionClose, responseHead, findHeadEndFrom, parseHead (strict header lines), growBuffer; FromSegment Int"
     "TestAsyncHTTPServer|network contrib|Network.Async.HTTP.Server: answers, keep-alive, pipelining, split heads, HEAD/204, Connection, chunked bodies, Expect: 100-continue, 400/413/417/431/501, limits, big bodies"
-    "TestAsyncHTTPStream|network contrib|Network.Async.HTTP.Stream: chunk decoder, line and event parsers, events read while the server sends, framings, error status"
-    "TestAsyncHTTPClient|network contrib|Network.Async.HTTP.Client.Curl: the answer as a whole and in pieces, two transfers at once, a transfer given up, refused requests"
-    "TestOpenAIStream|network contrib|Network.HTTP.Client.WebAPI.AI.OpenAIStream: endpoint URL, pieces of a reply, a server that answers like LM Studio, errors"
+    "TestAsyncHTTPStream|contrib|Network.Async.HTTP.Stream: chunk decoder, line and event parsers, events read while the server sends, framings, error status"
+    "TestAsyncHTTPClient|contrib|Network.Async.HTTP.Client.Curl: the answer as a whole and in pieces, two transfers at once, a transfer given up, refused requests"
+    "TestOpenAIStream|contrib|Network.HTTP.Client.WebAPI.AI.OpenAIStream: endpoint URL, pieces of a reply, a server that answers like LM Studio, errors"
     "TestAsyncHTTPStaticCGI|network contrib|Network.Async.HTTP.{Static,CGI} behind the router: files, index, ETag/304, 404 for .., CGI variables and body, Status/Location, 502, 504"
     "TestAsyncHTTPProxy|network contrib|Network.Async.HTTP.Proxy: path below the prefix, method/body/headers forwarded, hop-by-hop dropped, redirect, HEAD, 502 (unreachable, too large), 504"
     "TestAsyncHTTPRewrite|network contrib|Network.Async.HTTP.Rewrite: internal rewrites with groups and queries, whole-path match, first rule only, redirects, no //host and no .. out of the groups, rules that cannot be made"
     "TestAsyncHTTPServerTimeouts|network contrib|Network.Async.HTTP.Server timeouts: idle, stalled and trickling requests (408), idle keep-alive, a client that does not read"
     "TestAsyncHTTPServerThreads|network contrib|Network.Async.HTTP.Server: the same server on one thread and on eight (runServer); handlers overlap only with several"
     "TestWebAPIPure|network contrib|Network.HTTP.Client.WebAPI: SHA-256/base64url/PKCE, JSON, URL/form encoding, token JSON"
-    "TestWebAPI|network contrib|Network.HTTP.Client.WebAPI.{AI,Auth}: endpoint setup, token persistence, response decoding"
-    "TestCurl|network contrib|Network.HTTP.Client.Curl: libcurl bindings, local file:// and HTTP transfers"
+    "TestWebAPI|contrib|Network.HTTP.Client.WebAPI.{AI,Auth}: endpoint setup, token persistence, response decoding"
+    "TestCurl|contrib|Network.HTTP.Client.Curl: libcurl bindings, local file:// and HTTP transfers"
 )
 
 # Tests that need libcurl's headers (curl/curl.h); skipped, loudly, when
