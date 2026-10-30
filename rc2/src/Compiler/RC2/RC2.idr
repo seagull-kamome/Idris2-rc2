@@ -109,17 +109,23 @@ applyReuse _ _ d@(MkRCForeign _ _ _) = d
 tinyCalleeSize : Nat
 tinyCalleeSize = 8
 
-||| Total `RCExp` node count: a round that leaves it as it was has found
-||| nothing more to fold, whether or not it spliced.
-programSize : List (Name, RCDef) -> Nat
-programSize = sum . map (\(_, d) => bodySize d)
+||| Node count of an `RCExp`.
+nodeCount : RCExp -> Nat
+nodeCount e = S (sum (map nodeCount (children e)))
+
+||| Node count of one definition.
+defSize : RCDef -> Nat
+defSize (MkRCFun _ _ _ b) = nodeCount b
+defSize (MkRCError b) = nodeCount b
+defSize _ = 1
+
+||| Among the names `wanted`, those whose definition has a different size in
+||| `after` than in `before` (same names, same order): what a fold changed.
+changedNames : (wanted : Name -> Bool) -> List (Name, RCDef) -> List (Name, RCDef) -> SortedSet Name
+changedNames wanted before after = SortedSet.fromList (catMaybes (zipWith diff before after))
   where
-    nodes : RCExp -> Nat
-    nodes e = S (sum (map nodes (children e)))
-    bodySize : RCDef -> Nat
-    bodySize (MkRCFun _ _ _ b) = nodes b
-    bodySize (MkRCError b) = nodes b
-    bodySize _ = 1
+    diff : (Name, RCDef) -> (Name, RCDef) -> Maybe Name
+    diff (n, d) (_, d') = if wanted n && defSize d /= defSize d' then Just n else Nothing
 
 ||| Cap on the early inline's rounds after the first. Only a guard: it stops by
 ||| itself once a round splices nothing.
@@ -311,30 +317,50 @@ toRCDefs directives incremental roots thunks preFolded0 = do
                        then pure dictSpecialized
                        else logTime 2 "rc2: Early inline" $ do
                               let tiny : Nat = if "notinyinline" `elem` directives then 0 else tinyCalleeSize
-                              -- One splice, then what it exposes: partials the bind
-                              -- left applied, the refold, the push into tails. The
-                              -- first round always runs to the end; another follows
-                              -- while the last one spliced something, since each can
-                              -- expose a tiny callee the one before could not see
-                              -- (rc2/doc/inlining.md, "Criterion C: tiny callees").
-                              let round : List (Name, RCDef) -> Core (Bool, List (Name, RCDef))
-                                  round ds = do
-                                      (changed, spliced0) <- applyLateInlineWith tiny "Early inline" True roots ds
-                                      pushedApp <- traverse (\(n, d) => (\d' => (n, foldSingleForceDef d')) <$>
-                                                          (if "nopushapply" `elem` directives then pure d else pushApplyDef d)) spliced0
-                                      spliced <- traverse (\(n, d) => case d of
-                                                      MkRCFun a r w b => (\b' => (n, MkRCFun a r w b')) <$> foldKnownPartials b
-                                                      _ => pure (n, d)) pushedApp
-                                      refolded <- logTime 3 "rc2: Early inline (refold)" $ pure $ map (\(n, d) => (n, foldConstDef True empty d)) spliced
-                                      pushed <- if "nopushcon" `elem` directives then pure refolded else logTime 3 "rc2: Early inline (PushCon)" $ applyPushCon refolded
-                                      pure (changed || programSize pushed /= programSize ds, pushed)
-                                  rounds : Nat -> List (Name, RCDef) -> Core (List (Name, RCDef))
-                                  rounds Z ds = pure ds
-                                  rounds (S k) ds = do
-                                      (changed, ds') <- round ds
-                                      if changed then rounds k ds' else pure ds'
-                              (changed, first) <- round dictSpecialized
-                              if changed then rounds maxEarlyInlineRounds first else pure first
+                              -- One splice, then what it exposes: partials the bind left applied,
+                              -- the refold, the push into tails. The first round always runs to
+                              -- the end; another follows while the last one changed something,
+                              -- since each can expose a tiny callee the one before could not see.
+                              -- `carry` is what the previous round changed (`Nothing`, the first
+                              -- round: everything), `resume` the analysis state to continue from.
+                              -- rc2/doc/inlining.md, "Rounds are incremental".
+                              let foldOne : RCDef -> Core RCDef
+                                  foldOne d = do
+                                      d1 <- if "nopushapply" `elem` directives then pure d else pushApplyDef d
+                                      d2 <- case foldSingleForceDef d1 of
+                                                 MkRCFun a r w b => (\b' => MkRCFun a r w b') <$> foldKnownPartials b
+                                                 other => pure other
+                                      pure (foldConstDef True empty d2)
+                                  round : Maybe (SortedSet Name) -> Maybe (Carried, SortedSet Name) -> List (Name, RCDef)
+                                       -> Core (Bool, Maybe (SortedSet Name), Maybe (Carried, SortedSet Name), List (Name, RCDef))
+                                  round carry resume ds = do
+                                      (spliced, state, ds0) <- applyLateInlineWith tiny "Early inline" True roots (map snd resume) resume ds
+                                      let wanted : Name -> Bool
+                                          wanted n = case carry of
+                                                          Nothing => True
+                                                          Just cs => contains n cs || contains n spliced
+                                      folded <- logTime 3 "rc2: Early inline (folds)" $
+                                                  traverse (\(n, d) => if wanted n then (\d' => (n, d')) <$> foldOne d else pure (n, d)) ds0
+                                      let foldChanged = changedNames wanted ds0 folded
+                                      (pushed, pushNames) <- if "nopushcon" `elem` directives then pure (folded, SortedSet.empty)
+                                                                else logTime 3 "rc2: Early inline (PushCon)" $ applyPushConNames folded
+                                      -- The next round re-folds what this one changed or spliced into, and
+                                      -- resumes the analysis from this one's state, told that every
+                                      -- definition folded or pushed into here has changed whether or not
+                                      -- its size did.
+                                      let touched = SortedSet.union pushNames spliced
+                                      let rewritten = map (SortedSet.union touched) carry
+                                      pure ( not (null touched) || not (null foldChanged)
+                                           , Just (SortedSet.union foldChanged touched)
+                                           , (,) <$> state <*> rewritten   -- only once a round has a `carry`
+                                           , pushed )
+                                  rounds : Nat -> Maybe (SortedSet Name) -> Maybe (Carried, SortedSet Name) -> List (Name, RCDef) -> Core (List (Name, RCDef))
+                                  rounds Z _ _ ds = pure ds
+                                  rounds (S k) carry resume ds = do
+                                      (changed, carry', resume', ds') <- round carry resume ds
+                                      if changed then rounds k carry' resume' ds' else pure ds'
+                              (changed, carry, resume, first) <- round Nothing Nothing dictSpecialized
+                              if changed then rounds maxEarlyInlineRounds carry resume first else pure first
     -- doc/caf-memoization.md: right after ConstFold (and the
     -- specialization pass above, whose own clones are never 0-arg CAFs
     -- regardless) and strictly before Phase 2 (toRCDefPostFold's own

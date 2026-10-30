@@ -97,6 +97,7 @@ record Analysis where
 ||| Everything `analyse` carries from one `applyLateInline` round into
 ||| the next, so a round only pays for whatever actually changed since
 ||| the last one. `Nothing` on the first round (nothing carried yet).
+export
 record Carried where
   constructor MkCarried
   ||| Per-name callee info (see `CalleeInfo`).
@@ -568,8 +569,8 @@ inlineInto tiny defOf eligible tinyOnly self = go empty empty []
 |||
 ||| The `logTime`s wrap `pure $ <computation>`, not a `let`: a `let` runs
 ||| before the timer starts and reports nothing.
-applyLateInlineOnce : {auto v : Ref VarId Int} -> {auto c : Ref Ctxt Defs} -> (tiny : Nat) -> (early : Maybe (SortedSet Name)) -> (seed : CalleeInfo) -> (roots : List Name) -> Maybe Carried -> SortedSet Name -> List (Name, RCDef) -> Core (Bool, List (Name, RCDef), Carried, SortedSet Name)
-applyLateInlineOnce tiny early seed roots prev dirty defs0 = do
+applyLateInlineOnce : {auto v : Ref VarId Int} -> {auto c : Ref Ctxt Defs} -> (tiny : Nat) -> (early : Maybe (SortedSet Name)) -> (seed : CalleeInfo) -> (roots : List Name) -> (focus : Maybe (SortedSet Name)) -> Maybe Carried -> SortedSet Name -> List (Name, RCDef) -> Core (Bool, List (Name, RCDef), Carried, SortedSet Name)
+applyLateInlineOnce tiny early seed roots focus prev dirty defs0 = do
     (defs, refs') <- logTime 3 "rc2: LI prune" $
               pure $ pruneDeadDefsCached (maybe empty (.refs) prev) dirty roots defs0
     -- Shared with `goOrder`: `analyse` and the splice walk both need it.
@@ -593,6 +594,10 @@ applyLateInlineOnce tiny early seed roots prev dirty defs0 = do
                                         Just (MkRCFun _ _ _ b) => hasClosure b
                                         Just (MkRCError b) => hasClosure b
                                         _ => False
+             -- A site that needs a closure argument can only have appeared in a body
+             -- that changed, so the unchanged definitions are not looked at again.
+             let inFocus : Name -> Bool
+                 inFocus n = maybe True (contains n) focus
              let splicesInto : Name -> Bool
                  splicesInto n =
                      isJust (lookup n defOf) &&
@@ -600,7 +605,7 @@ applyLateInlineOnce tiny early seed roots prev dirty defs0 = do
                            Just cs =>
                                let callees = filter (not . callsBackCached n) (keys cs)
                                in any (\c => contains c an.eligible || contains c an.smallTiny) callees
-                                    || (any (\c => contains c an.tinyOnly) callees && buildsClosure n)
+                                    || (inFocus n && any (\c => contains c an.tinyOnly) callees && buildsClosure n)
                            Nothing => False)
              let toProcess = filter splicesInto an.processOrder
              _ <- newRef SpliceCount (the Nat 0)
@@ -650,15 +655,24 @@ maxLateInlineIterations = 8
 ||| are the entry points `pruneDeadDefs` is called with. Each round is
 ||| `logTime`d at `--timing 3`, labelled with how many definitions the
 ||| previous round spliced into, which tells a converging tail from real
-||| work. The `Bool` says whether anything was spliced at all.
+||| work. The set is every name whose body took a splice in any round.
 |||
 ||| `tiny`: the early run (`early`) also splices a callee of at most that many
 ||| nodes at every call site, not only the one with a single caller; `0` is
 ||| off. See `rc2/doc/inlining.md`, "Criterion C: tiny callees".
+|||
+||| `resume`: the state a previous call returned and the names whose body the
+||| caller has changed since (every one it rewrote, whether or not its size
+||| moved: the caches are keyed by them); `Nothing` starts from nothing.
+|||
+||| `focus`: the names whose body changed since the caller last looked
+||| (`Nothing`: all of them). Only those are examined for a site that needs a
+||| closure argument; the sites that need none are found in every definition.
 export
 applyLateInlineWith : {auto v : Ref VarId Int} -> {auto c : Ref Ctxt Defs} -> (tiny : Nat) -> (label : String) -> (early : Bool)
-                   -> (roots : List Name) -> List (Name, RCDef) -> Core (Bool, List (Name, RCDef))
-applyLateInlineWith tiny label early roots defs0 =
+                   -> (roots : List Name) -> (focus : Maybe (SortedSet Name)) -> (resume : Maybe (Carried, SortedSet Name))
+                   -> List (Name, RCDef) -> Core (SortedSet Name, Maybe Carried, List (Name, RCDef))
+applyLateInlineWith tiny label early roots focus resume defs0 =
     -- The early run skips every callee in a call cycle: splicing one would
     -- turn the cycle into a direct call back to the caller, which the later
     -- run then refuses (constructor-escape-analysis.md, "Early inline").
@@ -666,21 +680,24 @@ applyLateInlineWith tiny label early roots defs0 =
     -- (constant-constructor-specialization.md, "The `where`-clause trap").
     do seed <- logTime 3 "rc2: \{label} (call counts)" $ pure $ SortedMap.fromList (map (\(n, d) => (n, callCountsOf d)) defs0)
        excluded <- if early then logTime 3 "rc2: \{label} (call cycles)" $ pure $ Just (cyclicNames seed) else pure Nothing
-       go seed excluded 1 maxLateInlineIterations False Nothing empty defs0
+       go seed excluded 1 maxLateInlineIterations empty focus (map fst resume) (maybe empty snd resume) defs0
   where
-    go : CalleeInfo -> Maybe (SortedSet Name) -> Nat -> Nat -> (any : Bool) -> Maybe Carried -> SortedSet Name -> List (Name, RCDef) -> Core (Bool, List (Name, RCDef))
-    go _ _ round Z any prev dirty defs = pure (any, defs)
-    go seed excluded round (S fuel) any prev dirty defs = do
+    go : CalleeInfo -> Maybe (SortedSet Name) -> Nat -> Nat -> (spliced : SortedSet Name) -> (focus : Maybe (SortedSet Name))
+      -> Maybe Carried -> SortedSet Name -> List (Name, RCDef) -> Core (SortedSet Name, Maybe Carried, List (Name, RCDef))
+    go _ _ round Z spliced focus prev dirty defs = pure (spliced, prev, defs)
+    go seed excluded round (S fuel) spliced focus prev dirty defs = do
         let carriedNote = if round == 1
                              then "first pass"
                              else "\{show (length (Prelude.toList dirty))} spliced last round"
         (changed, defs', carried, dirty') <-
             logTime 3 "rc2: \{label} (round \{show round}/\{show maxLateInlineIterations}, \{carriedNote})" $
-              applyLateInlineOnce tiny excluded seed roots prev dirty defs
-        if changed then go seed excluded (S round) fuel True (Just carried) dirty' defs' else pure (any, defs')
+              applyLateInlineOnce tiny excluded seed roots focus prev dirty defs
+        if changed
+           then go seed excluded (S round) fuel (SortedSet.union spliced dirty') (Just dirty') (Just carried) dirty' defs'
+           else pure (spliced, Just carried, defs')
 
 ||| `applyLateInlineWith` without the tiny-callee criterion, for the late run.
 export
 applyLateInline : {auto v : Ref VarId Int} -> {auto c : Ref Ctxt Defs} -> (label : String) -> (early : Bool)
                -> (roots : List Name) -> List (Name, RCDef) -> Core (List (Name, RCDef))
-applyLateInline label early roots defs0 = snd <$> applyLateInlineWith 0 label early roots defs0
+applyLateInline label early roots defs0 = (\(_, _, ds) => ds) <$> applyLateInlineWith 0 label early roots Nothing Nothing defs0

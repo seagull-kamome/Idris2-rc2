@@ -249,16 +249,24 @@ pushExp (RConstCase fc sc alts mDef) = do
 pushExp e = pure (e, False)
 
 ||| Every definition, with each changed one refolded so the
-||| single-alt `case`s this leaves on known tails are folded away.
+||| single-alt `case`s this leaves on known tails are folded away; and the
+||| names of the ones it changed.
 export
-applyPushCon : {auto vid : Ref VarId Int} -> List (Name, RCDef) -> Core (List (Name, RCDef))
-applyPushCon = traverse pushDef
+applyPushConNames : {auto vid : Ref VarId Int} -> List (Name, RCDef) -> Core (List (Name, RCDef), SortedSet Name)
+applyPushConNames defs = do
+    out <- traverse pushDef defs
+    pure (map Builtin.fst out, SortedSet.fromList (mapMaybe Builtin.snd out))
   where
-    pushDef : (Name, RCDef) -> Core (Name, RCDef)
+    pushDef : (Name, RCDef) -> Core ((Name, RCDef), Maybe Name)
     pushDef (n, MkRCFun args retRep isWorker body) = do
         (body', changed) <- pushExp body
-        pure (n, if changed then foldConstDef True empty (MkRCFun args retRep isWorker body') else MkRCFun args retRep isWorker body)
-    pushDef d = pure d
+        pure ( (n, if changed then foldConstDef True empty (MkRCFun args retRep isWorker body') else MkRCFun args retRep isWorker body)
+             , if changed then Just n else Nothing )
+    pushDef d = pure (d, Nothing)
+
+export
+applyPushCon : {auto vid : Ref VarId Int} -> List (Name, RCDef) -> Core (List (Name, RCDef))
+applyPushCon defs = Builtin.fst <$> applyPushConNames defs
 
 -------------------------------------------------------------------------------
 -- After RC annotation: the same push, with each known tail folded by hand
