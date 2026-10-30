@@ -7,7 +7,7 @@
 module Main
 
 import Data.List
-import Data.Seq.RC2
+import Data.Seq.Unsized
 import TermUI.Frame
 import TermUI.Node
 import TermUI.Style

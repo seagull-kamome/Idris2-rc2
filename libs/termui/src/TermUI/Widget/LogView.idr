@@ -17,7 +17,7 @@
 ||| This module was licensed by BSD3. see LICENSE file for detail.
 module TermUI.Widget.LogView
 
-import Data.Seq.RC2
+import Data.Seq.Unsized
 import TermUI.Input
 import TermUI.Len
 import TermUI.Markdown.Theme
