@@ -770,12 +770,3 @@ section 9) and comparisons and cases on it fold (`doc/const-caf-fold.md`,
 "String literals"), but `isWindows` is `os \`elem\` [...]`: a `loop` over a
 constant list after inlining, which nothing unrolls. Its cost is one `memoize`d
 evaluation of the CAF. A fold of a loop over a constant list would fix it.
-
-
-## `Data.Seq.RC2`: `consTree`/`snocTree` take the element size as a closure (found in llmchat)
-
-About 500 call sites pass the same constant closure and the function applies it
-per element. `SpecClosure` cannot clone it: the recursion passes a different
-closure at each depth (nested finger tree), so the clones would not end. A
-version of the library with the size fixed to 1 for plain elements, or a clone
-for the outermost call only, are the options.
