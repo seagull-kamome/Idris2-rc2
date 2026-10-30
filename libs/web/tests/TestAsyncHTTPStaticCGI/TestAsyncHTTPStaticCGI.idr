@@ -38,7 +38,7 @@ import System.File
 import System.Posix.Errno
 
 -- Network.Address has the same names; the ones of `network` are the clients'.
-%hide Network.Address.Port
+%hide System.Posix.Socket.Port.Port
 %hide Network.Address.SocketAddress
 
 %default covering
@@ -120,7 +120,7 @@ headerOf name answer =
 
 scenario : Port -> (dir : String) -> Task (List String) -> IO ()
 scenario port dir clients = do
-  r <- runTaskWith 3 (race (serve port (handler dir)) clients)
+  r <- runTaskWith 3 (race (serve (cast port) (handler dir)) clients)
   case r of
     Just (Right lines) => traverse_ putStrLn lines
     Just (Left stopped) => putStrLn ("server ended: " ++ show stopped)

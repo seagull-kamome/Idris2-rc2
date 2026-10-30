@@ -38,7 +38,7 @@ import Network.URL
 import System.Concurrency
 import System.Concurrency.RC2
 
-mockPort : Int
+mockPort : Port
 mockPort = 18726
 
 napMs : Int -> IO ()

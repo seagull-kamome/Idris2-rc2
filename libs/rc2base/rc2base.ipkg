@@ -30,7 +30,7 @@ modules    = Control.Concurrent.MVar,
              System.Posix.Directory, System.Posix.Dl, System.Posix.Errno, System.Posix.Fcntl, System.Posix.FileDesc, System.Posix.Poll,
              System.Posix.File, System.Posix.Mmap,
              System.Posix.Process, System.Posix.Signal, System.Posix.Spawn,
-             System.Posix.Pwd, System.Posix.Glob, System.Posix.Select, System.Posix.Socket, System.Posix.Syslog,
+             System.Posix.Pwd, System.Posix.Glob, System.Posix.Select, System.Posix.Socket, System.Posix.Socket.Port, System.Posix.Syslog,
              System.Posix.Path, System.Posix.Stat, System.Posix.Stdio, System.Posix.Time,
              System.Posix.Uio, System.Posix.Termios,
              --

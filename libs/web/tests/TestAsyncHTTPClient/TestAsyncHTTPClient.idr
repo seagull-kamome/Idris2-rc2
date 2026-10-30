@@ -10,6 +10,7 @@ module Main
 -- first, a transfer that is given up (the server sees the connection close), a
 -- server that is not there, and a request that is refused.
 
+import Network.Address
 import Control.Task
 import Control.Task.Scheduler
 import Data.Buffer
@@ -26,13 +27,13 @@ import System.Posix.Errno
 
 %default covering
 
-port : Int
+port : Port
 port = 18771
 
-port2 : Int
+port2 : Port
 port2 = 18772
 
-url : Int -> String -> String
+url : Port -> String -> String
 url p path = "http://127.0.0.1:" ++ show p ++ path
 
 client : CurlClient

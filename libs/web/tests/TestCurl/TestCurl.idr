@@ -30,7 +30,7 @@ import Network.HTTP.Server
 import System.Concurrency
 import System.Concurrency.RC2
 
-testPort : Int
+testPort : Port
 testPort = 18724
 
 napMs : Int -> IO ()

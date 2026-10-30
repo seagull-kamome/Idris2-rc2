@@ -238,7 +238,7 @@ listenLoopback port = go port (the Nat 5)
   where
     go : Int -> Nat -> IO (Maybe (FD.FileDesc, Int))
     go _ Z     = pure Nothing
-    go p (S k) = if not (validPort p) then pure Nothing else do
+    go p (S k) = if p > 65535 then pure Nothing else do
         Right s <- Posix.socket AF_INET SOCK_STREAM 0
             | Left _ => pure Nothing
         Right () <- Posix.bind s (Posix.loopback (cast p))

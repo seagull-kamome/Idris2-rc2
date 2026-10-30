@@ -33,7 +33,7 @@ import System
 import System.Posix.Errno
 
 -- Network.Address has the same names; the ones of `network` are the clients'.
-%hide Network.Address.Port
+%hide System.Posix.Socket.Port.Port
 %hide Network.Address.SocketAddress
 
 %default covering
@@ -160,7 +160,7 @@ bodyOf = pack . go . unpack
 -- Run the server, and the clients until they are done; the server is given up.
 scenario : Port -> Limits -> Task (List String) -> IO ()
 scenario port limits clients = do
-  r <- runTaskWith 3 (race (serve {limits} port handler) clients)
+  r <- runTaskWith 3 (race (serve {limits} (cast port) handler) clients)
   case r of
     Just (Right lines) => traverse_ putStrLn lines
     Just (Left stopped) => putStrLn ("server ended: " ++ show stopped)

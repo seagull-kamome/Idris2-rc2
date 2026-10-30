@@ -26,7 +26,7 @@ import Text.Encoding.UTF8
 
 %default covering
 
-port : Int
+port : Port
 port = 18764
 
 -------------------------------------------------------------------------------

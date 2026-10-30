@@ -31,8 +31,6 @@ main = do
   putStrLn (show (toSockAddr (IPv4Addr 0 0 0 0) 0))
   putStrLn (show (toSockAddr (IPv4Addr 192 168 3 82) 1234))
   putStrLn (show (toSockAddr (IPv4Addr 1 2 3 4) 65535))
-  putStrLn (show (toSockAddr (IPv4Addr 1 2 3 4) 65536))
-  putStrLn (show (toSockAddr (IPv4Addr 1 2 3 4) (-1)))
   putStrLn (show (toSockAddr (IPv4Addr 1 2 3 256) 80))
   putStrLn (show (toSockAddr (Hostname "localhost") 80))
   putStrLn (show (toSockAddr IPv6Addr 80))
