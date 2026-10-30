@@ -300,7 +300,7 @@ main = do
     testMulti path
     testCapture path
     testCaptureText path
-    srv <- forkJoin {a = ()} $ serve {bindAddr = IPv4 127 0 0 1} testPort handler
+    srv <- forkJoin {a = ()} $ serve {bindAddr = IPv4Addr 127 0 0 1} testPort handler
     let base = "http://127.0.0.1:" ++ show testPort
     waitServer base 100
     testHttp base

@@ -29,8 +29,12 @@ import Network.Address
 import Network.Async.HTTP.Server
 import Network.Socket
 import Network.Socket.Data
+
 import System
 import System.Posix.Errno
+
+-- Network.Address has the same names; the ones of `network` are the clients'.
+%hide Network.Address.Port
 
 %default covering
 
@@ -61,8 +65,8 @@ upstream req = case fst (break (== '?') req.path) of
                              , header "x-forwarded-for" req, header "forwarded" req, header "x-real-ip" req, header "x-forwarded-proto" req
                              , header "connection" req, header "content-length" req, body] ++ "\n"))
 
-localhost : Address
-localhost = IPv4 127 0 0 1
+localhost : Network.Address.SocketAddress
+localhost = Network.Address.IPv4Addr 127 0 0 1
 
 -- A server that says the same thing to everyone who connects, and closes without
 -- reading what they send (the system then resets the connection).

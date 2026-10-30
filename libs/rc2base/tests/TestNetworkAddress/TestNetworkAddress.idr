@@ -22,16 +22,21 @@ parseCases =
   , "256.0.0.1", "1.2.3", "1.2.3.4.5", "1..2.3", "a.b.c.d", "", "01.2.3.4", "1.2.3.-4", " 1.2.3.4" ]
 
 showParse : String -> String
-showParse s = show s ++ " -> " ++ maybe "none" show (parseAddress s)
+showParse s = show s ++ " -> " ++ show (parseIPv4 s)
 
 main : IO ()
 main = do
   traverse_ (putStrLn . showParse) parseCases
-  putStrLn (show (toSockAddr loopbackAddress 8080))
-  putStrLn (show (toSockAddr anyAddress 0))
-  putStrLn (show (toSockAddr (IPv4 192 168 3 82) 1234))
-  putStrLn (show (addressWord (IPv4 1 2 3 4)))
-  putStrLn (show (loopbackAddress == IPv4 127 0 0 1) ++ " " ++ show (loopbackAddress == anyAddress))
+  putStrLn (show (toSockAddr (IPv4Addr 127 0 0 1) 8080))
+  putStrLn (show (toSockAddr (IPv4Addr 0 0 0 0) 0))
+  putStrLn (show (toSockAddr (IPv4Addr 192 168 3 82) 1234))
+  putStrLn (show (toSockAddr (IPv4Addr 1 2 3 4) 65535))
+  putStrLn (show (toSockAddr (IPv4Addr 1 2 3 4) 65536))
+  putStrLn (show (toSockAddr (IPv4Addr 1 2 3 4) (-1)))
+  putStrLn (show (toSockAddr (IPv4Addr 1 2 3 256) 80))
+  putStrLn (show (toSockAddr (Hostname "localhost") 80))
+  putStrLn (show (toSockAddr IPv6Addr 80))
+  putStrLn (show (IPv4Addr 127 0 0 1 == parseIPv4 "127.0.0.1") ++ " " ++ show (IPv4Addr 127 0 0 1 == IPv4Addr 0 0 0 0))
   Right (a, b) <- socketpair AF_UNIX SOCK_STREAM 0
     | Left e => putStrLn ("socketpair " ++ show e)
   Right () <- sendString a "hello 日本"

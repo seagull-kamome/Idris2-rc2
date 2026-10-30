@@ -318,7 +318,7 @@ streamPostUrl url headers body =
 ||| `streamPostUrl` for the server at `addr`:`port` (`http`), with `Host` as `host`
 ||| says.
 export
-streamPost : Address -> (port : Int) -> (host : String) -> (path : String)
+streamPost : SocketAddress -> Port -> (host : String) -> (path : String)
           -> (headers : List (String, String)) -> (body : String)
           -> Task (Either StreamError (Head, Stream))
 streamPost addr port host path headers body =

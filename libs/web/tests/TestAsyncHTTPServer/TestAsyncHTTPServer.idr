@@ -28,8 +28,13 @@ import Network.HTTP.Route
 import Network.HTTP.Router
 import Network.Socket
 import Network.Socket.Data
+
 import System
 import System.Posix.Errno
+
+-- Network.Address has the same names; the ones of `network` are the clients'.
+%hide Network.Address.Port
+%hide Network.Address.SocketAddress
 
 %default covering
 

@@ -33,7 +33,7 @@ import Data.Buffer
 import Data.IORef
 import Data.String
 
-testPort : Int
+testPort : Port
 testPort = 18723
 
 napMs : Int -> IO ()
@@ -117,7 +117,7 @@ connectRetry Z     = pure Nothing
 connectRetry (S k) = do
   Right sock <- Posix.socket AF_INET SOCK_STREAM 0
     | Left _ => pure Nothing
-  Right () <- Posix.connect sock (toSockAddr loopbackAddress testPort)
+  Right () <- Posix.connect sock (Posix.loopback (cast testPort))
     | _ => do ignore (FD.close sock); napMs 20; connectRetry k
   pure (Just sock)
 
@@ -204,7 +204,7 @@ getBytes path = do
 
 round : (label : String) -> (stopPath : String) -> (binary : Bool) -> IO ()
 round label stopPath binary = do
-  srv <- forkJoin {a = ()} $ serve {bindAddr = IPv4 127 0 0 1} testPort handler
+  srv <- forkJoin {a = ()} $ serve {bindAddr = IPv4Addr 127 0 0 1} testPort handler
   putStrLn (label ++ " sync: " ++ !(get "/sync"))
   putStrLn (label ++ " async: " ++ !(get "/async"))
   putStrLn (label ++ " json: " ++ !(get "/json"))

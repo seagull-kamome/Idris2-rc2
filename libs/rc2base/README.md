@@ -58,7 +58,7 @@ not compile when the declaration is used.
 | `Data.Double.Convert` | opt-in Eisel-Lemire/Grisu2-style fast path for `Double`<->`String`, next to (not replacing) `cast` -- see below |
 | `Data.Integer.GMP` | direct `%foreign` bindings onto real GMP `mpz_*` functions -- see below |
 | `Language.RCExpr.AST`/`Lexer`/`Parser` | parses rc2's own `--directive dumprcexpr` output into a standalone tree -- see below |
-| `Network.Address` | IPv4 `Address` (`IPv4 127 0 0 1`, `parseAddress`) and its `SockAddr`; what `Network.Async` and `web` take instead of the `network` package's types |
+| `Network.Address` | `SocketAddress` (`IPv4Addr 127 0 0 1`), `Port` and `parseIPv4`, named like the `network` package's but without it; `toSockAddr` makes the `SockAddr` of `System.Posix.Socket`. `Network.Async` and `web` take these |
 | `Network.RC2` | binary-safe offset+length socket IO on a `FileDesc` into/out of a `Data.Buffer`, and `String` send/receive |
 | `Network.URL` | URL parse/build and percent-encoding -- see below |
 | `Network.Async` | non-blocking sockets for `Control.Task`. The HTTP servers and clients built on it live in the `web` package (`libs/web`) |

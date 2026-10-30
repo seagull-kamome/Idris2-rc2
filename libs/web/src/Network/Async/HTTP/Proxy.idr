@@ -107,7 +107,7 @@ passedOn besides hdrs =
 ||| `100-continue`, no streaming: the answer is held whole.
 export
 forwardTo : {default defaultProxy options : ProxyOptions}
-         -> (upstream : Address) -> (port : Int) -> (rest : String) -> Request -> Task Response
+         -> (upstream : SocketAddress) -> (port : Port) -> (rest : String) -> Request -> Task Response
 forwardTo {options} upstream port rest req =
     if not acceptable then liftIO (text 400 "bad request\n")
     else if not (fieldSafe hostValue) then liftIO (text 500 "bad proxy configuration\n")
@@ -245,7 +245,7 @@ forwardTo {options} upstream port rest req =
 ||| every other request to `next`.
 export
 proxy : {default defaultProxy options : ProxyOptions}
-     -> (mountAt : String) -> (upstream : Address) -> (port : Int) -> (next : Handler) -> Handler
+     -> (mountAt : String) -> (upstream : SocketAddress) -> (port : Port) -> (next : Handler) -> Handler
 proxy {options} mountAt upstream port next req = case segmentsUnder mountAt req.path of
   Nothing => next req
   Just below => forwardTo {options} upstream port (joinBy "/" below) req
