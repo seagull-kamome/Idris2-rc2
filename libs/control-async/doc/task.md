@@ -1,8 +1,12 @@
 # `Control.Task`: cooperative tasks on epoll
 
-Status: milestone 1 is implemented (`Control.Task`, `Control.Task.Source`,
-`Control.Task.Epoll`, `Control.Task.Scheduler`; test `TestTask`); milestones 2
-and 3 are design. Where the code differs from a first sketch below it says so.
+Status: all three milestones are implemented (see "Milestones" at the end).
+The single-threaded scheduler with the `epoll` and `io_uring` sources
+(`Control.Task`, `Control.Task.Source`, `Control.Task.Epoll`,
+`Control.Task.Scheduler`, `Control.Task.Uring`), its use from termui (`RunTask`),
+and N:M with `blocking`, the worker pool and the parallel mode, with `Ref`,
+`MVar` and `Chan` for tasks that share state. What is not done is under "Open
+points". Where the code differs from a first sketch below it says so.
 
 ## Motivation
 
@@ -10,7 +14,7 @@ A program that waits for several things at once (a terminal and a socket
 and a timer; a server with many connections) needs more than one logical
 thread of control, and it does not want an OS thread for each. The `Task`
 monad describes such logical threads as ordinary monadic code; a scheduler
-runs many of them on one thread, and later on a few.
+runs many of them on one thread, or on a few threads (N:M).
 
 The model is that of [idris2-coop](https://github.com/buzden/idris2-coop)
 ("concurrency without parallelism"): a computation is a *data structure*
@@ -20,12 +24,12 @@ steps. What differs:
 | | coop | `Control.Task` |
 |---|---|---|
 | substrate | any monad `m` (`Coop m a`) | `IO` (`Task a`) |
-| waiting | `sleepTill` of a model or wall clock | any asynchronous operation (`Async`): `epoll` readiness and timers first, `io_uring` and others later |
+| waiting | `sleepTill` of a model or wall clock | any asynchronous operation (`Async`): `epoll` readiness and timers, `io_uring` and others |
 | join of `zip` | `believe_me` on a pair kept in a map | two `IORef`s, typed |
 | cancel by `race` | removes events of the race's syncs | a scope per race, with cleanups |
-| threads | none | one scheduler thread first, then N:M (milestone 3) |
+| threads | none | one scheduler thread, or N:M with workers (`runTaskWith n`, milestone 3) |
 
-`Task` is fixed to `IO` because the scheduler uses `epoll`, `IORef`s and later
+`Task` is fixed to `IO` because the scheduler uses `epoll`, `IORef`s and
 threads, which an arbitrary `m` cannot give. Letting the substrate be any
 `HasIO m` (a `TaskT m`, with `Task` as `TaskT IO`) is wanted later; nothing in
 the design below should stand in its way: the effects of a task are only
@@ -317,13 +321,14 @@ behind it.
    the call is run on another thread:
 
    ```idris
-   blocking : IO a -> Task a      -- planned, with milestone 3
+   blocking : IO a -> Task a      -- implemented (milestone 3)
    ```
 
    The worker runs the action and calls the `Completion` through the inbox. A
    request that has not started can be cancelled; one that has started runs to
-   its end and its result is dropped. It needs the thread pool of milestone 3,
-   so it is not in milestone 1; until then `liftIO` blocks the scheduler, which
+   its end and its result is dropped. It runs on the thread pool of milestone 3
+   (see "N:M"); with no workers (`n = 0`) the action runs at once on the thread
+   of the scheduler, and `liftIO` blocks the scheduler as it always did, which
    is fine for short calls.
 
 3. **A library with callbacks** (libcurl's multi interface, `c-ares`): implement
@@ -580,8 +585,13 @@ write of another task, a request given up by a race, and an error.
    epoll source and `awaitReadable`.) The `Source` interface is in from the
    start, so that the epoll source is its first user and not a special case.
    The `io_uring` source is `Control.Task.Uring` (see "io_uring").
+   (Implemented.)
 2. `Spawn` in termui's `Cmd`, with `pollFd` in its loop, and cancellation by handle.
-3. N:M: worker threads, the atomic cells, the `eventfd` queue.
+   (Implemented: `RunTask`, `RunTaskAs` and `CancelTask`, see "Using it from
+   termui".)
+3. N:M: worker threads, the atomic cells, the `eventfd` queue. (Implemented:
+   `blocking` and the pool, the parallel mode with `onReactor` and `PointThen`, the
+   inbox on an `eventfd`, and `Ref`, `MVar` and `Chan`; see "N:M".)
 
 ## Decisions
 
