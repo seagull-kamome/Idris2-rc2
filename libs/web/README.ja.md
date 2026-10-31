@@ -2,9 +2,9 @@
 
 *[English](README.md)*
 
-rc2向けのHTTPです。libcurlのクライアント、OpenAI互換のチャットクライアントとOAuth 2.0（PKCE）ログイン、2種類のHTTP/1.1サーバとルータ（`epoll`のイベントループ版と、`Control.Task`のタスクで作った版）が入っています。タスク版のサーバには、静的ファイル、CGI、リバースプロキシ、URLの書き換えも付きます。`rc2base`から切り出したパッケージで、土台になる汎用の部品（`Network.Async`、`Network.RC2`、`Network.URL`、`Control.Task`、`System.Linux.Epoll`など）は`rc2base`に残っています。`rc2base`と同じくrc2専用です（`%foreign`のバインディングがCだけのためです）。
+rc2向けのHTTPです。libcurlのクライアント、OpenAI互換のチャットクライアントとOAuth 2.0（PKCE）ログイン、2種類のHTTP/1.1サーバとルータ（`epoll`のイベントループ版と、`Control.Task`のタスクで作った版）が入っています。タスク版のサーバには、静的ファイル、CGI、リバースプロキシ、URLの書き換えも付きます。`rc2base`から切り出したパッケージで、タスク（`Control.Task`、`Network.Async`）は`control-async`の上で動きます。土台になる汎用の部品（`Network.RC2`、`Network.URL`、`System.Linux.Epoll`など）は`rc2base`に残っています。`rc2base`と同じくrc2専用です（`%foreign`のバインディングがCだけのためです）。
 
-使うプログラムは`-p web -p rc2base -p contrib`を付けてビルドします。`web`も`rc2base`も`network`パッケージは要りません（アドレスはrc2baseの`Network.Address.SocketAddress`（`network`パッケージと同じ名前）、ソケットは`System.Posix.Socket`のファイル記述子です）。クライアントには、libcurlの開発用ファイルとライブラリがコンパイラの検索パスに必要です。`web`にはCのシムが1つだけあります。`support/c/idris2rc2_web_curl_util.c`が`curl_global_init`をプロセスにつき1回呼び、`libidris2rc2web.a`にまとめられます。`rc2base`と同じように、パッケージの`lib`ディレクトリへインストールされます（`libs/rc2base/README.ja.md`の「ネイティブライブラリのインストール先」を参照）。
+使うプログラムは`-p web -p control-async -p rc2base -p contrib`を付けてビルドします。`web`も`rc2base`も`network`パッケージは要りません（アドレスはrc2baseの`Network.Address.SocketAddress`（`network`パッケージと同じ名前）、ソケットは`System.Posix.Socket`のファイル記述子です）。クライアントには、libcurlの開発用ファイルとライブラリがコンパイラの検索パスに必要です。`web`にはCのシムが1つだけあります。`support/c/idris2rc2_web_curl_util.c`が`curl_global_init`をプロセスにつき1回呼び、`libidris2rc2web.a`にまとめられます。`rc2base`と同じように、パッケージの`lib`ディレクトリへインストールされます（`libs/rc2base/README.ja.md`の「ネイティブライブラリのインストール先」を参照）。
 
 ## モジュール
 
@@ -23,7 +23,7 @@ rc2向けのHTTPです。libcurlのクライアント、OpenAI互換のチャッ
 
 ## テスト
 
-配置は`libs/rc2base/tests`と同じです。`tests/<TestName>/`に`<TestName>.idr`と`<TestName>.expected`を置き、`tests/verify.sh`の`TESTS`配列に載せます。スクリプトは`support/c`を作り直し、パッケージを型検査してインストールしたうえで、すべてのテストを`-p web -p rc2base [-p <追加>...]`でビルドして実行します。先に`rc2base`をインストールしておく必要があります（`libs/rc2base/tests/verify.sh`が行います）。`TestCurl`、`TestWebAPI`、`TestAsyncHTTPClient`はlibcurlのヘッダが必要で、`gcc`が`curl/curl.h`を見つけられないときは`SKIP`の行を出して飛ばします。`TestAsyncHTTPStaticCGI`は`public/`と`cgi/`の場所を実行ファイルのパスから割り出すので、フルパスで起動してください。
+配置は`libs/rc2base/tests`と同じです。`tests/<TestName>/`に`<TestName>.idr`と`<TestName>.expected`を置き、`tests/verify.sh`の`TESTS`配列に載せます。スクリプトは`support/c`を作り直し、パッケージを型検査してインストールしたうえで、すべてのテストを`-p web -p control-async -p rc2base [-p <追加>...]`でビルドして実行します。先に`rc2base`と`control-async`をインストールしておく必要があります（それぞれの`tests/verify.sh`が行います）。`TestCurl`、`TestWebAPI`、`TestAsyncHTTPClient`はlibcurlのヘッダが必要で、`gcc`が`curl/curl.h`を見つけられないときは`SKIP`の行を出して飛ばします。`TestAsyncHTTPStaticCGI`は`public/`と`cgi/`の場所を実行ファイルのパスから割り出すので、フルパスで起動してください。
 
 ## `Network.HTTP.Server`: 最小限のイベント駆動HTTPサーバ
 

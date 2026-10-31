@@ -54,11 +54,10 @@ rc2の汎用サポートライブラリです。上流の`base`/`contrib`に無�
 | `Data.Integer.GMP` | 本物のGMP `mpz_*`関数への直接の`%foreign`バインディング。後述 |
 | `Language.RCExpr.AST`/`Lexer`/`Parser` | rc2自身の`--directive dumprcexpr`の出力を、独立した木に解析します。後述 |
 | `Network.Address` | `SocketAddress`（`IPv4Addr 127 0 0 1`）、`Port`（`Bits16`。`System.Posix.Socket.Port`で定義し、ここから再エクスポートします）、`parseIPv4`。`network`パッケージと同じ名前ですが、それには依存しません。`toSockAddr`が`System.Posix.Socket`の`SockAddr`を作ります。`Network.Async`と`web`はこれを取ります |
+| `Control.Task`、`Network.Async` | `control-async`パッケージ(`libs/control-async`)に移りました。`Task`モナドとそのスケジューラ、およびそのためのノンブロッキングソケットです |
 | `Network.RC2` | `FileDesc`に対する、バイナリ安全でオフセットと長さを指定できる`Data.Buffer`へのソケットIOと、`String`の送受信 |
 | `Network.URL` | URLの解析・構築とパーセントエンコード。後述 |
-| `Network.Async` | `Control.Task`用のノンブロッキングソケット。これを使うHTTPのサーバとクライアントは、`web`パッケージ(`libs/web`)にあります |
 | `System.Posix.*` | POSIXバインディング。`Errno`、`File`/`FileDesc`（`FileDesc`/`DirDesc`は`Int32`と、それが負でないという消去された証明を持ちます）、`Directory`、`Dl`（`dlopen`/`dlsym`/`dlclose`）、`Path`（`mkdir`、`unlink`、`symlink`、`readlink`、`realpath`、`mkfifo`、`mkstemp`など）、`Stat`（`stat`/`lstat`/`fstat`を`Stat`レコードへ、`access`、`truncate`、`utimensat`）、`Time`（`clock_gettime`、`nanosleep`、`gmtime`/`localtime`/`mktime`/`strftime`）、`Fcntl`（`pipe`、`fcntl`のフラグ、`dupfd`）、`Poll`（`poll`）、`Select`（`select`）、`Socket`（`socket`、`bind`、`listen`、`accept`、`connect`、`Buffer`への`send`/`recv`、ソケットオプション、IPv4・IPv6・Unixドメインを表す`SockAddr`）、`Pwd`（`getpwnam`/`getpwuid`/`getgrnam`/`getgrgid`を`Passwd`/`Group`レコードへ）、`Glob`（`fnmatch`、`glob`）、`Syslog`（`openlog`/`syslog`/`closelog`）、`Mmap`、`Process`（各種ID、プロセスグループ、`exec*`、wait状態の判定、`getrlimit`、`uname`、`sysconf`、`sigqueue`）、`Signal`（番号、シグナル集合、`sigprocmask`、`sigwait`、`sigtimedwait`、`sigsuspend`、`raise`、`alarm`）、`Uio`、CのstdioをまとめたStdio（`File = Ptr RawFile`、errnoは`Left`に入ります。`open_memstream`は`MemStream`）。POSIXの範囲を外れる宣言には、docコメントに「Linux only」「Linux and BSD」などと書いてあります |
-| `Control.Task`、`Control.Task.Scheduler`/`Epoll`/`Source` | 差し替え可能なイベントソースの上に作った、協調型の`Task`モナド（`epoll`とタイマー、そして`System.Linux.Uring`の上の`Control.Task.Uring`による`io_uring`）。spawn/both/raceとキャンセルを備え、複数スレッドで状態を共有するための`Ref`/`MVar`/`Chan`もあります。`doc/task.md`を参照 |
 | `System.Concurrency.RC2` | 本物のpthreadを使った`Mutex`/`Condition`/`Semaphore`/`Barrier`/`Channel`と、joinできる`forkJoin`。設計の全体は、トップレベル`README.md`の「Concurrency」の節を参照 |
 | `System.FFI.C.Array` | `malloc`で確保してゼロで埋め、GCが解放し、`Fin`で境界検査される固定長配列。サイズが2^31 - 1バイトに収まることを証明させる（`malloc`はCの`int`を取るため） |
 | `System.FFI.C.Limits` | Cの`<limits.h>`の整数の限界値をcamelCaseで提供します（`intMax`、`longMin`など） |
@@ -68,7 +67,7 @@ rc2の汎用サポートライブラリです。上流の`base`/`contrib`に無�
 | `System.FFI.C.Sizeof` | スカラー型のCの`sizeof`。バッファの刻み幅やオフセットを手で計算するときに使います |
 | `System.GC.RC2` | rc2自身の`idris2rc2_dup`/`dup_n`/`drop`への直接アクセス。不透明なFFIポインタ経由で持ち出した値に使います |
 | `System.GC.RC2.touch` | `touch x`は、そのアクションまで`x`を生かしておきます（GHCの`touchForeignPtr`）。`unsafeGCDup`/`unsafeGCDrop`と違い、どの値に対しても安全です |
-| `System.Linux.*` | Linux専用のバインディング。`Epoll`（`Network.Async`と`web`のサーバのイベントループを支える薄い`epoll`のFFIラッパ）、`Pipe`（`pipe2`）、`Ppoll`（ナノ秒の待ち時間とシグナルマスクを取れる`poll`）、`Eventfd`、`Memfd`（`memfd_create`とファイルシール）、`Copy`（`sendfile`、`splice`、`copy_file_range`）、`Prctl`、`Statx`（生成時刻とマウントID付きの`statx`）、`Random`（`getrandom`）、`Process`（`gettid`、`pidfd_open`、CPUアフィニティ）、`Timerfd`、`Signalfd`、`Inotify`、`Uring`（liburing経由の`io_uring`、`doc/uring.md`。importするプログラムにはliburingのヘッダとライブラリが必要です）、`Clock`（`CLOCK_BOOTTIME`など）、`Dl`（`dladdr`、追加の`dlopen`フラグ） |
+| `System.Linux.*` | Linux専用のバインディング。`Epoll`（`control-async`と`web`のサーバのイベントループを支える薄い`epoll`のFFIラッパ）、`Pipe`（`pipe2`）、`Ppoll`（ナノ秒の待ち時間とシグナルマスクを取れる`poll`）、`Eventfd`、`Memfd`（`memfd_create`とファイルシール）、`Copy`（`sendfile`、`splice`、`copy_file_range`）、`Prctl`、`Statx`（生成時刻とマウントID付きの`statx`）、`Random`（`getrandom`）、`Process`（`gettid`、`pidfd_open`、CPUアフィニティ）、`Timerfd`、`Signalfd`、`Inotify`、`Uring`（liburing経由の`io_uring`、`doc/uring.md`。importするプログラムにはliburingのヘッダとライブラリが必要です）、`Clock`（`CLOCK_BOOTTIME`など）、`Dl`（`dladdr`、追加の`dlopen`フラグ） |
 | `System.Random.Xoroshiro128PlusPlus`/`Xoroshiro64StarStar` | ゼロから移植した2つの乱数生成器。後述 |
 | `Text.Encoding.UTF8` | UTF-8のバイト列とコードポイントの相互変換。純粋な`List`変換です。後述 |
 | `Text.NumberFormat` | すべての固定幅整数型に対する、固定幅・ゼロ詰め・小文字の16進表記（`ToHex`）。後述 |

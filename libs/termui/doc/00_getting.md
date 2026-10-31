@@ -53,7 +53,7 @@ far as termui uses them. Every program in this guide was compiled and run.
 ## 1. Try it
 
 termui is the package `libs/termui`, built for the `rc2` backend (it depends
-on `contrib` and `rc2base`).
+on `contrib`, `control-async` and `rc2base`).
 
 ```sh
 source env.sh                                    # at the repository root
@@ -67,7 +67,7 @@ into the field, press Esc to leave.
 To build your own file:
 
 ```sh
-idris2-rc2 --cg rc2 -p termui -p rc2base -p contrib -o hello Hello.idr
+idris2-rc2 --cg rc2 -p termui -p control-async -p rc2base -p contrib -o hello Hello.idr
 ./build/exec/hello
 ```
 
@@ -471,7 +471,7 @@ the runtime to do. `subs` says which events to listen to.
 
 For slow work (a network request, a big file) use `RunTask`. `blocking` from
 `Control.Task` runs an action that may block on a worker thread and brings the
-result back as a message; see `libs/rc2base/doc/task.md`.
+result back as a message; see `libs/control-async/doc/task.md`.
 
 ### Subscriptions
 
@@ -545,7 +545,7 @@ Mouse events never reach `OnInput`.
 - [`design.md`](design.md): the reference. Layout rules, the input parser, how
   the diff is written, every widget's key bindings, and how focus, mouse and
   signals are handled.
-- `libs/rc2base/doc/task.md`: `Control.Task`, behind `RunTask`.
+- `libs/control-async/doc/task.md`: `Control.Task`, behind `RunTask`.
 - `tests/`: each directory is a small program that drives one feature and
   checks the output. They also show the pure functions (`render`, `layout`,
   `parseInput`) used on their own.

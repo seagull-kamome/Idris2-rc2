@@ -3,7 +3,7 @@ package termui
 version    = 0.1.0
 opts       = "--total"
 sourcedir  = "src"
-depends    = contrib, rc2base
+depends    = contrib, control-async, rc2base
 modules    = TermUI.Len,
              TermUI.Style,
              TermUI.Cell,

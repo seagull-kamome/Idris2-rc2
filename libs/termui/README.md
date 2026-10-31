@@ -2,7 +2,7 @@
 
 Rich terminal UIs for Idris2, in the spirit of Ink: describe a view with a
 layout EDSL, let the layout engine compute the screen, and write only what
-changed. Plain ANSI output (no notcurses), `rc2` backend; the runtime uses `rc2base`.
+changed. Plain ANSI output (no notcurses), `rc2` backend; the runtime uses `rc2base` and `control-async`.
 
 ```idris
 view : Node ()

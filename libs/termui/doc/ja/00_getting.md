@@ -45,7 +45,7 @@
 
 ## 1. 動かす
 
-termuiはパッケージ`libs/termui`で、`rc2`バックエンド向けです(`contrib`と`rc2base`に依存します)。
+termuiはパッケージ`libs/termui`で、`rc2`バックエンド向けです(`contrib`、`control-async`、`rc2base`に依存します)。
 
 ```sh
 source env.sh                                    # リポジトリのルートで
@@ -58,7 +58,7 @@ cd libs/termui/examples && ./rundemo.sh          # デモを動かす
 自分のファイルをビルドするには、次のようにします。
 
 ```sh
-idris2-rc2 --cg rc2 -p termui -p rc2base -p contrib -o hello Hello.idr
+idris2-rc2 --cg rc2 -p termui -p control-async -p rc2base -p contrib -o hello Hello.idr
 ./build/exec/hello
 ```
 
@@ -390,7 +390,7 @@ main = do
 | `SetClipboard text` | デスクトップのクリップボードに文字列を入れる(OSC 52。無視する端末もある) |
 | `Suspend` | シェルのCtrl-Zのように止まり、戻ったときに画面を描き直す |
 
-時間のかかる処理(ネットワーク要求や大きなファイル)には`RunTask`を使います。`Control.Task`の`blocking`は、ブロックするかもしれない処理をワーカースレッドで実行し、結果をメッセージとして戻します。詳しくは`libs/rc2base/doc/task.md`を見てください。
+時間のかかる処理(ネットワーク要求や大きなファイル)には`RunTask`を使います。`Control.Task`の`blocking`は、ブロックするかもしれない処理をワーカースレッドで実行し、結果をメッセージとして戻します。詳しくは`libs/control-async/doc/task.md`を見てください。
 
 ### 購読
 
@@ -432,5 +432,5 @@ main = do
 - [`examples/Demo.idr`](../../examples/Demo.idr): 入力欄、リスト、エディタ、スピナー、進捗バー、ダイアログを組み合わせた例です。`examples/rundemo.sh`で動かせます。
 - [`examples/Editor.idr`](../../examples/Editor.idr): ヘルプビューア、クリップボード、Suspendを備えた小さなテキストエディタです。
 - [`design.md`](../design.md)(英語): リファレンスです。レイアウトの規則、入力パーサー、差分の書き出し、各ウィジェットのキー割り当て、フォーカス・マウス・シグナルの扱いが載っています。
-- `libs/rc2base/doc/task.md`: `RunTask`に使う`Control.Task`です。
+- `libs/control-async/doc/task.md`: `RunTask`に使う`Control.Task`です。
 - `tests/`: 各ディレクトリが1つの機能を動かして出力を確かめる小さなプログラムです。`render`、`layout`、`parseInput`といった純粋な関数を単独で使う例にもなります。

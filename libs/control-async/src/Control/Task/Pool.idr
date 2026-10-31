@@ -3,7 +3,7 @@
 ||| comes and none is idle, up to a limit; the first thread of a program turns
 ||| rc2's reference counts atomic (`rc2/doc/hybrid-refcount.md`), so a program
 ||| that never offloads must not pay for it. With a limit of 0 the action runs at
-||| once on the calling thread. Design: libs/rc2base/doc/task.md ("N:M").
+||| once on the calling thread. Design: libs/control-async/doc/task.md ("N:M").
 |||
 ||| Copyright 2026, Hattori,Hiroki. All rights reserved.
 ||| This module was licensed by BSD3. see LICENSE file for detail.

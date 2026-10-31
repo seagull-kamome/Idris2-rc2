@@ -76,27 +76,27 @@ echo "=== Install into the shared install/ prefix ==="
 echo "=== rc2 backend: build examples/Demo.idr (build only: it needs a terminal) ==="
 rm -f "$PKG_DIR/examples/build/exec/demo"
 ( cd "$PKG_DIR/examples" && ulimit -v 12000000 && timeout 600 \
-    "$IDRIS2RC2" --cg rc2 -p termui -p rc2base -p contrib -o demo Demo.idr )
+    "$IDRIS2RC2" --cg rc2 -p termui -p control-async -p rc2base -p contrib -o demo Demo.idr )
 [[ -x "$PKG_DIR/examples/build/exec/demo" ]] || fail "examples/Demo.idr did not build"
 echo "=== rc2 backend: build examples/Editor.idr (build only) ==="
 rm -f "$PKG_DIR/examples/build/exec/editor"
 ( cd "$PKG_DIR/examples" && ulimit -v 12000000 && timeout 600 \
-    "$IDRIS2RC2" --cg rc2 -p termui -p rc2base -p contrib -o editor Editor.idr )
+    "$IDRIS2RC2" --cg rc2 -p termui -p control-async -p rc2base -p contrib -o editor Editor.idr )
 [[ -x "$PKG_DIR/examples/build/exec/editor" ]] || fail "examples/Editor.idr did not build"
 echo "=== rc2 backend: build examples/LlmChat.idr (build only; it needs a terminal and a model server) ==="
 rm -f "$PKG_DIR/examples/build/exec/llmchat"
 ( cd "$PKG_DIR/examples" && ulimit -v 12000000 && timeout 600 \
-    "$IDRIS2RC2" --cg rc2 -p termui -p web -p rc2base -p contrib -o llmchat LlmChat.idr )
+    "$IDRIS2RC2" --cg rc2 -p termui -p web -p control-async -p rc2base -p contrib -o llmchat LlmChat.idr )
 [[ -x "$PKG_DIR/examples/build/exec/llmchat" ]] || fail "examples/LlmChat.idr did not build"
 echo "=== rc2 backend: build examples/Chat.idr (build only) ==="
 rm -f "$PKG_DIR/examples/build/exec/chat"
 ( cd "$PKG_DIR/examples" && ulimit -v 12000000 && timeout 600 \
-    "$IDRIS2RC2" --cg rc2 -p termui -p rc2base -p contrib -o chat Chat.idr )
+    "$IDRIS2RC2" --cg rc2 -p termui -p control-async -p rc2base -p contrib -o chat Chat.idr )
 [[ -x "$PKG_DIR/examples/build/exec/chat" ]] || fail "examples/Chat.idr did not build"
 
 for entry in "${TESTS[@]}"; do
     IFS='|' read -r t extra desc <<< "$entry"
-    pflags=(-p termui)
+    pflags=(-p termui -p control-async)
     for p in $extra; do pflags+=(-p "$p"); done
 
     echo "=== rc2 backend: build $t ($desc) ==="

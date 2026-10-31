@@ -1,7 +1,7 @@
 ||| A tiny editor: a multi-line text area filling the screen, a status line
 ||| and a help viewer toggled with F1. Ctrl-Z suspends it, Ctrl-C quits.
 |||
-||| Build: idris2-rc2 --cg rc2 -p termui -p rc2base -p contrib -o editor Editor.idr
+||| Build: idris2-rc2 --cg rc2 -p termui -p control-async -p rc2base -p contrib -o editor Editor.idr
 |||
 ||| Copyright 2026, Hattori,Hiroki. All rights reserved.
 ||| This module was licensed by BSD3. see LICENSE file for detail.

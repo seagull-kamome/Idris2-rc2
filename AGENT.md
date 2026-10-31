@@ -32,7 +32,7 @@ history, not there.
   standalone tool consuming rc2's own output lives at the repo root
   (e.g. `tools/rcexpr-lint`, moved out of `rc2/tools/` for exactly
   this reason), and a support library a program compiled with rc2 can
-  depend on lives under `libs/` (`rc2base`, `web`, `notcurses`,
+  depend on lives under `libs/` (`rc2base`, `control-async`, `web`, `notcurses`,
   `text-re2`).
 - `rc2/doc/` — implementation deep-dives for specific compiler passes,
   meant to let a future session regain context without re-deriving the

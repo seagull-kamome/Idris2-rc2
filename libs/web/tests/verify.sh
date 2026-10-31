@@ -19,7 +19,7 @@
 #
 # Usage: ./verify.sh
 #
-# Requires gcc and make on PATH, libcurl's headers for the tests that need them, rc2base installed (libs/rc2base/tests/verify.sh installs it) (the same way
+# Requires gcc and make on PATH, libcurl's headers for the tests that need them, rc2base and control-async installed (their tests/verify.sh install them) (the same way
 # rc2/tests/verify.sh does -- idris2 itself is the self-built one,
 # never nixpkgs', per AGENT.md's "Policy: don't use nixpkgs' idris2 for
 # rc2 work") and rc2/build/exec/idris2-rc2 already built (see rc2/tests/verify.sh or
@@ -52,7 +52,7 @@ fi
 
 source "$REPO_ROOT/env.sh"
 
-# name|extra -p packages (web and rc2base are always passed)|what the test covers
+# name|extra -p packages (web, control-async and rc2base are always passed)|what the test covers
 TESTS=(
     "TestHTTPServer|contrib|Network.HTTP.Server: cross-thread respond + stop, chunked request body"
     "TestHTTPMessage|contrib|Network.HTTP.Message: framing, expectation, chunked bodies, connectionClose, responseHead, findHeadEndFrom, parseHead (strict header lines), growBuffer; FromSegment Int"
@@ -128,7 +128,7 @@ for entry in "${TESTS[@]}"; do
         echo "SKIP  $t -- curl/curl.h not found by gcc (install libcurl's development files)"
         continue
     fi
-    pflags=(-p web -p rc2base)
+    pflags=(-p web -p control-async -p rc2base)
     for p in $extra; do pflags+=(-p "$p"); done
 
     echo "=== rc2 backend: build $t ($desc) ==="

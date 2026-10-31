@@ -2,9 +2,9 @@
 
 *[日本語](README.ja.md)*
 
-HTTP for rc2: a libcurl client, an OpenAI-compatible chat client with OAuth 2.0 (PKCE) login, and two HTTP/1.1 servers with routers (one `epoll` event loop, one made of `Control.Task` tasks), plus static files, CGI, a reverse proxy and a URL rewriter for the task server. It was split off `rc2base`, which keeps the general parts it is built on (`Network.Async`, `Network.RC2`, `Network.URL`, `Control.Task`, `System.Linux.Epoll`, ...). Like `rc2base` it is rc2-only (the `%foreign` bindings are C-only).
+HTTP for rc2: a libcurl client, an OpenAI-compatible chat client with OAuth 2.0 (PKCE) login, and two HTTP/1.1 servers with routers (one `epoll` event loop, one made of `Control.Task` tasks), plus static files, CGI, a reverse proxy and a URL rewriter for the task server. It was split off `rc2base`; it runs on the tasks of `control-async` (`Control.Task`, `Network.Async`). `rc2base` keeps the general parts it is built on (`Network.RC2`, `Network.URL`, `System.Linux.Epoll`, ...). Like `rc2base` it is rc2-only (the `%foreign` bindings are C-only).
 
-A program uses it with `-p web -p rc2base -p contrib`; neither package needs the `network` package (addresses are rc2base's `Network.Address.SocketAddress`, named like the `network` package's but with a 16-bit `Port`, sockets are `System.Posix.Socket` file descriptors). The client needs libcurl's development files and library on the compiler's search path. `web` has one small C shim of its own, `support/c/idris2rc2_web_curl_util.c` (`curl_global_init` once per process), built into `libidris2rc2web.a` and installed into the package's `lib` directory like `rc2base`'s (see `libs/rc2base/README.md`, "Native library install location").
+A program uses it with `-p web -p control-async -p rc2base -p contrib`; neither package needs the `network` package (addresses are rc2base's `Network.Address.SocketAddress`, named like the `network` package's but with a 16-bit `Port`, sockets are `System.Posix.Socket` file descriptors). The client needs libcurl's development files and library on the compiler's search path. `web` has one small C shim of its own, `support/c/idris2rc2_web_curl_util.c` (`curl_global_init` once per process), built into `libidris2rc2web.a` and installed into the package's `lib` directory like `rc2base`'s (see `libs/rc2base/README.md`, "Native library install location").
 
 ## Modules
 
@@ -23,7 +23,7 @@ A program uses it with `-p web -p rc2base -p contrib`; neither package needs the
 
 ## Tests
 
-Same layout as `libs/rc2base/tests`: one directory per test under `tests/<TestName>/` with `<TestName>.idr` and `<TestName>.expected`, listed in the `TESTS` array of `tests/verify.sh`. The script rebuilds `support/c`, type-checks and installs the package, then builds and runs every test with `-p web -p rc2base [-p <extra>...]`. `rc2base` has to be installed first (`libs/rc2base/tests/verify.sh` does it). `TestCurl`, `TestWebAPI` and `TestAsyncHTTPClient` need libcurl's headers and are skipped (with a `SKIP` line) when `gcc` cannot find `curl/curl.h`. `TestAsyncHTTPStaticCGI` finds its `public/` and `cgi/` directories from the path of the executable, so run it by its full path.
+Same layout as `libs/rc2base/tests`: one directory per test under `tests/<TestName>/` with `<TestName>.idr` and `<TestName>.expected`, listed in the `TESTS` array of `tests/verify.sh`. The script rebuilds `support/c`, type-checks and installs the package, then builds and runs every test with `-p web -p control-async -p rc2base [-p <extra>...]`. `rc2base` and `control-async` have to be installed first (their `tests/verify.sh` do it). `TestCurl`, `TestWebAPI` and `TestAsyncHTTPClient` need libcurl's headers and are skipped (with a `SKIP` line) when `gcc` cannot find `curl/curl.h`. `TestAsyncHTTPStaticCGI` finds its `public/` and `cgi/` directories from the path of the executable, so run it by its full path.
 
 ## `Network.HTTP.Server`: a minimal event-driven HTTP server
 

@@ -9,15 +9,15 @@ in `http-client.md`.
 ## 1. Build
 
 The clients are part of the `web` package (which uses `rc2base`), so there is
-nothing else to install (`libs/rc2base/tests/verify.sh` and `libs/web/tests/verify.sh` install them). A program needs
-`-p web -p rc2base -p contrib` and libcurl's development files and
+nothing else to install (`libs/rc2base/tests/verify.sh`, `libs/control-async/tests/verify.sh` and `libs/web/tests/verify.sh` install them). A program needs
+`-p web -p control-async -p rc2base -p contrib` and libcurl's development files and
 library on the compiler's search path:
 
 ```sh
 source env.sh
 export IDRIS2_LDFLAGS="$(pkg-config --libs-only-L libcurl)"
 export LD_LIBRARY_PATH="$(pkg-config --variable=libdir libcurl):${LD_LIBRARY_PATH:-}"
-rc2/build/exec/idris2-rc2 --cg rc2 -p web -p rc2base -p contrib -o chat libs/web/examples/WebAPIChat.idr
+rc2/build/exec/idris2-rc2 --cg rc2 -p web -p control-async -p rc2base -p contrib -o chat libs/web/examples/WebAPIChat.idr
 ```
 
 Compiling a program that uses the WebAPI modules takes a few minutes
@@ -107,7 +107,7 @@ Still, keep it out of public repositories.
 ```sh
 export GOOGLE_CLIENT_ID=....apps.googleusercontent.com
 export GOOGLE_CLIENT_SECRET=...
-rc2/build/exec/idris2-rc2 --cg rc2 -p web -p rc2base -p contrib -o login libs/web/examples/WebAPILogin.idr
+rc2/build/exec/idris2-rc2 --cg rc2 -p web -p control-async -p rc2base -p contrib -o login libs/web/examples/WebAPILogin.idr
 ./build/exec/login
 ```
 

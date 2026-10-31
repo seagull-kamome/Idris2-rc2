@@ -51,7 +51,7 @@ needs liburing's headers and library only where a program uses
    of any family with `AI_NUMERICSERV` (so the port is a decimal string); the
    result is an `AddrInfo`, a `GCPtr` that `freeaddrinfo`s itself when nothing
    refers to it. It may ask a name server, so it is not a ring operation and
-   can run anywhere (`Control.Task.Uring` runs it with `blocking`). `prepConnect
+   can run anywhere (`Control.Task.Uring` of `control-async` runs it with `blocking`). `prepConnect
    ring sqe fd addr userData` then reads `ai_addr`/`ai_addrlen`
    (`addrInfoRaw`) and keeps the `AddrInfo` in `URing.pendingAddrs` until the
    completion is reaped.

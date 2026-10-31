@@ -1,6 +1,6 @@
 ||| The scheduler of `Control.Task`: runs the tasks of one thread, waits for
 ||| the sources (the readiness of descriptors and any other the program
-||| adds) and the timers. Design: libs/rc2base/doc/task.md.
+||| adds) and the timers. Design: libs/control-async/doc/task.md.
 |||
 ||| Copyright 2026, Hattori,Hiroki. All rights reserved.
 ||| This module was licensed by BSD3. see LICENSE file for detail.

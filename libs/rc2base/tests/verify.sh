@@ -93,31 +93,18 @@ TESTS=(
     "TestPosixSocket||System.Posix.Socket: socketpair, TCP/UDP/Unix domain over the loopback, options, addresses"
     "TestPosixStdio||System.Posix.Stdio: FILE* streams, fgetc/fgets/getline/fread, writes, position, tmpfile, fmemopen"
     "TestLinux||System.Linux.Pipe: pipe2 with O_CLOEXEC/O_NONBLOCK"
-    "TestTaskEnv||Control.Task: Env.slot (one value per scheduler, released at close) and Env.addSource (taken out when given up)"
-    "TestTaskIdle||Control.Task.Scheduler.turn: once every task has ended and turn says nothing is left, pollFd is not readable (no busy loop in a program that waits for it)"
-    "TestTaskPointThen||Control.Task: a chain of liftIO runs on one worker in parallel mode (same results and order everywhere, a long chain, a mixed one, a loop that is given up)"
-    "TestTaskHandoff||Control.Task: handoff gives back a value whose task is cancelled; finally and spawnOwning run their action once"
     "TestNetworkAddress||Network.Address: dotted decimal in and out, socket addresses; Network.RC2: String and Buffer IO on a socket pair"
-    "TestNetworkAsync|network contrib|Network.Async: serve a connection; a lost race closes the listener and a just-accepted connection; recv/send refuse bad ranges"
-    "TestTaskUring||Control.Task.Uring: nop, file round trip, two requests at once, a read woken by a write, a request given up by a race"
-    "TestTaskNoUring||Control.Task.Uring imported and not used: builds without liburing, no liburing in the generated C"
     "TestUringNop||System.Linux.Uring: a tagged nop through submit and wait"
     "TestUringFile||System.Linux.Uring: openat, write, fsync, read and close on a temp file"
     "TestUringSocket|network|System.Linux.Uring: accept, multishot accept, connect, send and recv on loopback"
-    "TestTask||Control.Task: monad, both/race/spawn, cancellation, timers, epoll source, inbox"
-    "TestTaskChan||Control.Task.Chan: producer and consumers on four threads, close, full/closed/drained, waits given up"
-    "TestTaskMVar||Control.Task.MVar: lock between tasks on four threads, waits, the line, waits and modifications given up"
-    "TestTaskRef||Control.Task.Ref: no update lost with actions on four threads, each ticket handed out once"
     "TestPosixTermios||System.Posix.Termios: termios constants, tcgetattr/tcsetattr on a pty, cfmakeraw, tc* calls"
     "TestNumberFormat||Text.NumberFormat: the nibble-to-char digit and a ToHex instance per fixed-width integer type"
 )
 
 # Tests that need liburing's headers (liburing.h); skipped the same way.
-NEEDS_URING=" TestUringNop TestUringFile TestUringSocket TestTaskUring "
+NEEDS_URING=" TestUringNop TestUringFile TestUringSocket "
 # Tests built with IDRIS2_CFLAGS=-D_GNU_SOURCE (declarations glibc hides otherwise).
-NEEDS_GNU_SOURCE=" TestPosixSpawn TestPosixTermios TestLinux TestTask TestTaskUring "
-# Tests whose generated C must not mention liburing at all.
-NO_LIBURING_C=" TestTaskNoUring "
+NEEDS_GNU_SOURCE=" TestPosixSpawn TestPosixTermios TestLinux "
 have_uring_h() { echo '#include <liburing.h>' | gcc -E -x c - > /dev/null 2>&1; }
 
 echo "=== Check TESTS against the tests/*/ directories ==="
@@ -138,12 +125,6 @@ for t in "${listed[@]}"; do
     [[ -f "$TESTS_DIR/$t/$t.expected" ]] || fail "tests/$t/$t.expected missing"
 done
 
-echo "=== Check that only Control.Task.Uring imports System.Linux.Uring ==="
-# A module of Control.Task that reached liburing would make every program
-# that uses tasks need it. (rc2 drops the %foreign declarations that nothing
-# reaches, so importing it is harmless; referring to it is not.)
-importers="$(grep -rl --include=*.idr -E '^import +(public +)?System\.Linux\.Uring' "$PKG_DIR/src" | sed "s|$PKG_DIR/src/||" | sort | tr '\n' ' ')"
-[[ "$importers" == "Control/Task/Uring.idr " ]] || fail "System.Linux.Uring is imported by: $importers (expected only Control/Task/Uring.idr)"
 
 echo "=== Clean rebuild of support/c ==="
 ( make -C "$PKG_DIR/support/c" clean && make -C "$PKG_DIR/support/c" )
@@ -190,9 +171,6 @@ for entry in "${TESTS[@]}"; do
     ( cd "$TESTS_DIR/$t" && ulimit -v 12000000 && IDRIS2_CFLAGS="${IDRIS2_CFLAGS:-} $gnu_flags" timeout 600 \
         "$IDRIS2RC2" --cg rc2 "${pflags[@]}" -o "${t}_verify" "$t.idr" )
 
-    if [[ "$NO_LIBURING_C" == *" $t "* ]] && grep -q liburing "$TESTS_DIR/$t/build/exec/${t}_verify.c"; then
-        fail "$t -- liburing appears in the generated C"
-    fi
 
     echo "=== Run and diff against $t.expected ==="
     rc=0
