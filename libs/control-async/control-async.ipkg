@@ -1,0 +1,17 @@
+package control-async
+
+version    = 0.1.0
+opts       = "--total"
+sourcedir  = "src"
+depends    = contrib, rc2base
+modules    = Control.Task,
+             Control.Task.Chan,
+             Control.Task.Epoll,
+             Control.Task.MVar,
+             Control.Task.Pool,
+             Control.Task.Ref,
+             Control.Task.Scheduler,
+             Control.Task.Source,
+             Control.Task.Uring,
+             Control.Task.Waiters,
+             Network.Async

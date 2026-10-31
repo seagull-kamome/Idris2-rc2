@@ -5,7 +5,7 @@
 `Network.HTTP.Server` is one `epoll` loop; a `Handler` answers through a
 `respond` continuation, and work on other threads is handed back through a queue
 and an eventfd. `Network.Async.HTTP.Server` does the same job on `Control.Task`
-(see `task.md`): the scheduler is the loop, and every connection is a task. The
+(see `libs/control-async/doc/task.md`): the scheduler is the loop, and every connection is a task. The
 old server stays until the two have been measured against each other.
 
 ## `Network.Async`
@@ -37,7 +37,7 @@ buffer, before any system call.
 descriptors of the tasks in it: it is `finally (\_ => close s)`. `accept` hands the
 new socket over with `handoff`, and the server starts each connection with
 `spawnOwning (close conn)`, so a connection is closed also when the scope is
-cancelled between its being accepted and its task starting (see `task.md`, "Not
+cancelled between its being accepted and its task starting (see `libs/control-async/doc/task.md`, "Not
 losing what is handed over").
 
 No liburing is involved. `Network.Async` does not import `Control.Task.Uring`,
@@ -136,7 +136,7 @@ call it on the thread of the scheduler, and so are the system calls of `accept`,
 `recv`, `send` and `connect`, so no call is running on a worker when a connection
 is closed and its descriptor number cannot be reused under it.
 
-Tested by `tests/TestNetworkAsync` and `tests/TestAsyncHTTPServer`.
+Tested by `libs/control-async/tests/TestNetworkAsync` and `tests/TestAsyncHTTPServer`.
 
 ## One thread or several
 
@@ -152,11 +152,11 @@ at the same time, and a task that waits for the network or a timer gives its thr
 other requests. The control of the tasks (`>>=`, `race`, `spawn`, the waits) stays on
 one thread, the *reactor*, which also watches the descriptors and does the small steps
 -- the non-blocking system calls, finding the end of the head and parsing it -- because
-handing such a step to a worker costs more than it does (`task.md`, "`Point` on the
+handing such a step to a worker costs more than it does (`libs/control-async/doc/task.md`, "`Point` on the
 workers").
 
 What that asks of a handler: whatever it shares with other requests must be safe
-to share. Use `Control.Task.Ref`, `MVar` and `Chan` (see `task.md`), not an
+to share. Use `Control.Task.Ref`, `MVar` and `Chan` (see `libs/control-async/doc/task.md`), not an
 `IORef`. `Sock.close` is one more thing the reactor must do: inside a task use
 `onReactor (close s)`; `withSock` already does.
 
@@ -252,7 +252,7 @@ and mean nothing else.
   for every `liftIO`, and a request has a dozen of small ones. The server therefore runs
   the small steps (the non-blocking `recv` and `send`, parsing the head) with `onReactor`,
   and `>>=` chains the `liftIO`s that follow each other onto one worker
-  (`PointThen`, `task.md`). Without them 3 threads gave 2 300 requests a second (1 connection),
+  (`PointThen`, `libs/control-async/doc/task.md`). Without them 3 threads gave 2 300 requests a second (1 connection),
   2 600 (64 connections) and 660 (the sleeping handler). They
   help when the handlers compute: 2.4 times the requests of one thread (the 4th
   core is `wrk`'s), and they are still 43 to 60 per cent of one thread on `GET /hello`

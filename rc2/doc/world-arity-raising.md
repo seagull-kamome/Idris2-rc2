@@ -120,7 +120,7 @@ is the regression test.
 `rc2/tests/Test128ArityRaiseWorldParam` is the regression test (a cut-down
 `Control.Task`): the callback called in the lambda, through a named function,
 and through a local action. Without the guard all three leave the result
-at 0. `libs/rc2base/tests/TestTask` hits the same thing through the library.
+at 0. `libs/control-async/tests/TestTask` hits the same thing through the library.
 
 Raised functions / raised call sites, before the guard and with it (`TestWidget`
 and `TestProgram` of termui, `TestWebAPIPure`, `Test92ArityRaise`,

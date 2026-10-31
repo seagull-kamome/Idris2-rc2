@@ -22,7 +22,7 @@
 |||   --system  a system prompt
 ||| The key, if the server wants one, is in $LLM_API_KEY.
 |||
-||| Build: idris2-rc2 --cg rc2 -p termui -p web -p rc2base -p contrib -o llmchat LlmChat.idr
+||| Build: idris2-rc2 --cg rc2 -p termui -p web -p control-async -p rc2base -p contrib -o llmchat LlmChat.idr
 |||
 ||| Copyright 2026, Hattori,Hiroki. All rights reserved.
 ||| This module was licensed by BSD3. see LICENSE file for detail.

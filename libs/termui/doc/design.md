@@ -529,7 +529,7 @@ the terminal restored.
   (signals wait too) until it returns. After a `Quit` the rest of the batch, the
   queue and the events that arrived with it are dropped.
 - `RunTask t` runs a `Control.Task` task beside the program (the scheduler is
-  `rc2base`'s `Control.Task.Scheduler`, one per program): the message it ends
+  `control-async`'s `Control.Task.Scheduler`, one per program): the message it ends
   with is delivered like that of `Emit`, and the loop does not stop while the
   task waits for a descriptor, a timer or other tasks, as it does for `Perform`.
   The scheduler's `pollFd` is one more descriptor of the loop (`watchFd`,

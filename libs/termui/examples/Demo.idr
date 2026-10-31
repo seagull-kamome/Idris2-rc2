@@ -5,7 +5,7 @@
 ||| it with Tab, then Down), tabs, and a function-key guide at the bottom.
 ||| Tab or a click moves the focus, Ctrl-C or Esc quits.
 |||
-||| Build: idris2-rc2 --cg rc2 -p termui -p rc2base -p contrib -o demo Demo.idr
+||| Build: idris2-rc2 --cg rc2 -p termui -p control-async -p rc2base -p contrib -o demo Demo.idr
 |||
 ||| Copyright 2026, Hattori,Hiroki. All rights reserved.
 ||| This module was licensed by BSD3. see LICENSE file for detail.

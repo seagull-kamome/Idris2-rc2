@@ -575,7 +575,7 @@ write of another task, a request given up by a race, and an error.
 
 1. `Control.Task` and the single-threaded scheduler with the epoll source and
    the timers, the tests above, this document brought up to date. (Package
-   `rc2base`; the modules are `Control.Task` for the type and instances,
+   `control-async`; the modules are `Control.Task` for the type and instances,
    `Control.Task.Scheduler` for the scheduler and `Control.Task.Epoll` for the
    epoll source and `awaitReadable`.) The `Source` interface is in from the
    start, so that the epoll source is its first user and not a special case.

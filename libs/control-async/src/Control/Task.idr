@@ -2,7 +2,7 @@
 ||| `Control.Task.Scheduler`, after idris2-coop. A `Task` is a data structure
 ||| built by `>>=`, `both`, `race` and `spawn`; waiting for a descriptor, a
 ||| timer or any other asynchronous operation is `Async`. Design and
-||| semantics: libs/rc2base/doc/task.md.
+||| semantics: libs/control-async/doc/task.md.
 |||
 ||| Copyright 2026, Hattori,Hiroki. All rights reserved.
 ||| This module was licensed by BSD3. see LICENSE file for detail.

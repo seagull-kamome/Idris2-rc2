@@ -4,7 +4,7 @@
 ||| wait, and `drain` reaps them and calls the completion kept under each
 ||| request's tag. A program that makes no request makes no ring, and one that
 ||| does not reach this module needs no liburing at all (see
-||| `libs/rc2base/doc/task.md`, "io_uring").
+||| `libs/control-async/doc/task.md`, "io_uring").
 |||
 ||| The requests are made on the thread of the scheduler, as the ring needs.
 |||

@@ -3,7 +3,7 @@
 ||| lines wrapped with a hanging indent) in a `LogView`, which follows the end
 ||| until you scroll up with Page Up/Down or the wheel. The window size comes from `OnResize`. Ctrl-C or Esc quits.
 |||
-||| Build: idris2-rc2 --cg rc2 -p termui -p rc2base -p contrib -o chat Chat.idr
+||| Build: idris2-rc2 --cg rc2 -p termui -p control-async -p rc2base -p contrib -o chat Chat.idr
 |||
 ||| Copyright 2026, Hattori,Hiroki. All rights reserved.
 ||| This module was licensed by BSD3. see LICENSE file for detail.
