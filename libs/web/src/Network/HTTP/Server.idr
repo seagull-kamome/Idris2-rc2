@@ -453,7 +453,7 @@ loop st handler = do
 -------------------------------------------------------------------------------
 
 ||| Listens on `port` (on `bindAddr`, `localhost` unless given
-||| explicitly -- pass e.g. `{bindAddr = anyAddress}` to listen on
+||| explicitly -- pass e.g. `{bindAddr = IPv4Addr 0 0 0 0}` to listen on
 ||| every interface) and runs the event loop, dispatching every
 ||| incoming request to `handler`. `maxRequestBytes` (default 8 MiB)
 ||| caps one connection's accumulated header+body; a request that would
@@ -463,20 +463,20 @@ loop st handler = do
 ||| `serve 8080 myHandler` -- see the doc for embedding it alongside
 ||| other work instead.
 export
-serve : {default loopbackAddress bindAddr : Address}
+serve : {default (IPv4Addr 127 0 0 1) bindAddr : SocketAddress}
      -> {default 8388608 maxRequestBytes : Int}
-     -> (port : Int) -> Handler -> IO ()
+     -> Port -> Handler -> IO ()
 serve {bindAddr} {maxRequestBytes} port handler = do
   Right ep <- epollCreate 64
     | Left e => giveUp [] "epoll_create failed, errno \{show e}"
-  True <- pure (validPort port)
-    | False => giveUp [ignore (epollClose ep)] "bad port \{show port}"
+  Right local <- pure (toSockAddr bindAddr port)
+    | Left err => giveUp [ignore (epollClose ep)] "bad address or port, errno \{show err}"
   Right lfd <- Posix.socket AF_INET SOCK_STREAM 0
     | Left err => giveUp [ignore (epollClose ep)] "socket() failed, errno \{show err}"
   let undoSock = [ignore (epollClose ep), ignore (close lfd)]
   True <- setReuseAddr lfd
     | False => giveUp undoSock "SO_REUSEADDR failed"
-  Right () <- Posix.bind lfd (toSockAddr bindAddr port)
+  Right () <- Posix.bind lfd local
     | Left err => giveUp undoSock "bind() failed, errno \{show err}"
   Right () <- Posix.listen lfd 128
     | Left err => giveUp undoSock "listen() failed, errno \{show err}"

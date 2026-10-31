@@ -29,8 +29,12 @@ import Network.Address
 import Network.Async.HTTP.Server
 import Network.Socket
 import Network.Socket.Data
+
 import System
 import System.Posix.Errno
+
+-- Network.Address has the same names; the ones of `network` are the clients'.
+%hide System.Posix.Socket.Port.Port
 
 %default covering
 
@@ -61,8 +65,8 @@ upstream req = case fst (break (== '?') req.path) of
                              , header "x-forwarded-for" req, header "forwarded" req, header "x-real-ip" req, header "x-forwarded-proto" req
                              , header "connection" req, header "content-length" req, body] ++ "\n"))
 
-localhost : Address
-localhost = IPv4 127 0 0 1
+localhost : Network.Address.SocketAddress
+localhost = Network.Address.IPv4Addr 127 0 0 1
 
 -- A server that says the same thing to everyone who connects, and closes without
 -- reading what they send (the system then resets the connection).
@@ -94,7 +98,7 @@ raws =
 
 rawServer : Raw -> Task ()
 rawServer r = do
-  Right listener <- liftIO (Network.Async.listen r.port)
+  Right listener <- liftIO (Network.Async.listen (cast r.port))
     | Left _ => pure ()
   withSock listener $ forever $ do
     Right conn <- Network.Async.accept listener
@@ -107,22 +111,22 @@ rawServer r = do
 -- rest of the path.
 viaRoute : List RouteEntryWith
 viaRoute =
-  [ get ("fwd" // splat) (forwardTo localhost upstreamPort)
-  , post ("fwd" // splat) (forwardTo localhost upstreamPort)
+  [ get ("fwd" // splat) (forwardTo localhost (cast upstreamPort))
+  , post ("fwd" // splat) (forwardTo localhost (cast upstreamPort))
   ]
 
 mainMounts : Handler
 mainMounts =
-  proxy "/api" localhost upstreamPort
-    (proxy {options = { stripMount := False } defaultProxy} "/raw" localhost upstreamPort
-      (proxy "/dead" localhost deadPort
-        (proxy {options = { maxResponseBytes := 1000 } defaultProxy} "/small" localhost upstreamPort
-          (proxy {options = { timeoutMs := 300 } defaultProxy} "/quick" localhost upstreamPort
+  proxy "/api" localhost (cast upstreamPort)
+    (proxy {options = { stripMount := False } defaultProxy} "/raw" localhost (cast upstreamPort)
+      (proxy "/dead" localhost (cast deadPort)
+        (proxy {options = { maxResponseBytes := 1000 } defaultProxy} "/small" localhost (cast upstreamPort)
+          (proxy {options = { timeoutMs := 300 } defaultProxy} "/quick" localhost (cast upstreamPort)
             (routerWith (\_ => liftIO (notFound "front: none\n")) viaRoute)))))
 
 
 front : Handler
-front = foldr (\r, next => proxy {options = r.options} r.mount localhost r.port next) mainMounts raws
+front = foldr (\r, next => proxy {options = r.options} r.mount localhost (cast r.port) next) mainMounts raws
 
 session : String -> IO String
 session request = do
@@ -213,7 +217,7 @@ clients = do
 
 main : IO ()
 main = do
-  r <- runTaskWith 3 (race (race (serve upstreamPort upstream) (traverse_ (spawn . rawServer) raws *> serve proxyPort front)) clients)
+  r <- runTaskWith 3 (race (race (serve (cast upstreamPort) upstream) (traverse_ (spawn . rawServer) raws *> serve (cast proxyPort) front)) clients)
   case r of
     Just (Right lines) => traverse_ putStrLn lines
     Just (Left stopped) => putStrLn ("a server ended: " ++ show (either id id stopped))

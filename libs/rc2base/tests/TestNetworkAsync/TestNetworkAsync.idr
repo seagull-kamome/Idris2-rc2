@@ -10,11 +10,15 @@ module Main
 import Control.Task
 import Control.Task.Scheduler
 import Data.Buffer
-import Network.Address
 import Network.Async
 import Network.Socket
 import Network.Socket.Data
+
 import System.Posix.Errno
+
+-- Network.Address has the same names; the ones of `network` are the clients'.
+%hide System.Posix.Socket.Port.Port
+%hide Network.Address.SocketAddress
 
 %default covering
 
@@ -65,7 +69,7 @@ serveOne listener = do
 
 echoTest : IO ()
 echoTest = do
-  Right listener <- listen port
+  Right listener <- listen (cast port)
     | Left e => putStrLn ("listen " ++ show e)
   r <- runTaskWith 2 (do
          server <- fork (serveOne listener)
@@ -78,7 +82,7 @@ echoTest = do
 -- The listener is only waited on; the timer ends the race and closes it.
 giveUpTest : IO ()
 giveUpTest = do
-  Right listener <- listen port
+  Right listener <- listen (cast port)
     | Left e => putStrLn ("listen " ++ show e)
   r <- runTaskWith 2 (do
          _ <- race (withSock listener (accept listener)) (sleepFor 50)
@@ -101,7 +105,7 @@ peerClosed (Just sock) = do
 -- socket is closed (the client sees the end of the stream), not leaked.
 droppedAcceptTest : IO ()
 droppedAcceptTest = do
-  Right listener <- listen port
+  Right listener <- listen (cast port)
     | Left e => putStrLn ("listen " ++ show e)
   r <- runTaskWith 2 (do
          client <- liftIO connectClient
@@ -117,7 +121,7 @@ droppedAcceptTest = do
 -- before any system call.
 boundsTest : IO ()
 boundsTest = do
-  Right listener <- listen port
+  Right listener <- listen (cast port)
     | Left e => putStrLn ("listen " ++ show e)
   Just buf <- newBuffer 8
     | Nothing => putStrLn "newBuffer"
@@ -135,10 +139,10 @@ boundsTest = do
   putStrLn ("bounds: " ++ show r)
 
 -- The client is a task too: `connect`, `sendAll`, `recv`. A port nobody listens
--- on is refused.
+-- on is refused, and a host name is not looked up.
 connectTest : IO ()
 connectTest = do
-  Right listener <- listen port
+  Right listener <- listen (cast port)
     | Left e => putStrLn ("listen " ++ show e)
   r <- runTaskWith 2 (do
          server <- fork (serveOne listener)
@@ -147,12 +151,14 @@ connectTest = do
          pure (served, answer))
   close listener
   putStrLn ("connect: " ++ show r)
-  refused <- runTaskWith 2 (Network.Async.connect (IPv4 127 0 0 1) port)
+  refused <- runTaskWith 2 (Network.Async.connect (IPv4Addr 127 0 0 1) (cast port))
   putStrLn ("refused: " ++ show (map (either show (const "connected")) refused))
+  named <- runTaskWith 2 (Network.Async.connect (Hostname "localhost") (cast port))
+  putStrLn ("host name: " ++ show (map (either show (const "connected")) named))
   where
     client : Task String
     client = do
-      Right sock <- Network.Async.connect (IPv4 127 0 0 1) port
+      Right sock <- Network.Async.connect (IPv4Addr 127 0 0 1) (cast port)
         | Left e => pure ("connect " ++ show e)
       withSock sock $ do
         Just out <- liftIO (newBuffer 4)
@@ -170,11 +176,11 @@ connectTest = do
 -- block, and `Nothing` when nothing arrives before the time.
 deadlineTest : IO ()
 deadlineTest = do
-  Right listener <- listen port
+  Right listener <- listen (cast port)
     | Left e => putStrLn ("listen " ++ show e)
   r <- runTaskWith 2 (do
          server <- fork (accept listener)
-         Right c <- Network.Async.connect (IPv4 127 0 0 1) port
+         Right c <- Network.Async.connect (IPv4Addr 127 0 0 1) (cast port)
            | Left e => pure ["connect " ++ show e]
          Right s <- wait server
            | Left e => pure ["accept " ++ show e]

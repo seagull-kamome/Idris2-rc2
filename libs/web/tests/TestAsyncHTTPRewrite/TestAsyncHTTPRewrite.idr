@@ -26,8 +26,13 @@ import Network.Async.HTTP.Rewrite
 import Network.Async.HTTP.Server
 import Network.Socket
 import Network.Socket.Data
+
 import System
 import System.Posix.Errno
+
+-- Network.Address has the same names; the ones of `network` are the clients'.
+%hide System.Posix.Socket.Port.Port
+%hide Network.Address.SocketAddress
 
 %default covering
 
@@ -146,7 +151,7 @@ main = do
     , refused "/a" "/x" (Redirect 308)
     ]
   traverse_ putStrLn bad
-  r <- runTaskWith 3 (race (serve port (urlRewrite rs echo)) clients)
+  r <- runTaskWith 3 (race (serve (cast port) (urlRewrite rs echo)) clients)
   case r of
     Just (Right lines) => traverse_ putStrLn lines
     Just (Left stopped) => putStrLn "the server ended"

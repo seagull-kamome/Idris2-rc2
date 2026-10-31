@@ -9,6 +9,7 @@ module Main
 -- pieces; the request the server received is shown, and so are an error answer, a
 -- failing key, an endpoint that cannot be used and a reply given up.
 
+import Network.Address
 import Control.Task
 import Control.Task.Scheduler
 import Data.Buffer
@@ -24,7 +25,7 @@ import System.Posix.Errno
 
 %default covering
 
-port : Int
+port : Port
 port = 18765
 
 -------------------------------------------------------------------------------

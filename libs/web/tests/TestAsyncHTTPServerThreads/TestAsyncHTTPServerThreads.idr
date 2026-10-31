@@ -15,8 +15,13 @@ import Data.String
 import Network.Async.HTTP.Server
 import Network.Socket
 import Network.Socket.Data
+
 import System
 import System.Posix.Errno
+
+-- Network.Address has the same names; the ones of `network` are the clients'.
+%hide System.Posix.Socket.Port.Port
+%hide Network.Address.SocketAddress
 
 %default covering
 
@@ -63,7 +68,7 @@ run name runner port = do
   r <- runner (do
          busy <- liftIO (newMVar (the Nat 0, the Nat 0))
          -- threads for the blocking clients as well as for the server's actions
-         answers <- race (serve port (handler busy))
+         answers <- race (serve (cast port) (handler busy))
                          (together (replicate 4 (blocking (ask port))))
          seen <- liftIO (map snd (readMVar busy))
          pure (answers, seen))

@@ -302,7 +302,7 @@ To cap request size differently, pass `maxRequestBytes`:
 `serve {maxRequestBytes = 65536} 8080 handler`.
 
 To bind somewhere other than `localhost`, pass `bindAddr` explicitly:
-`serve {bindAddr = anyAddress} 8080 handler` listens on every
+`serve {bindAddr = IPv4Addr 0 0 0 0} 8080 handler` listens on every
 interface.
 
 Verified end-to-end under `--cg rc2` (`tests/TestHTTPServer/TestHTTPServer.idr`, in

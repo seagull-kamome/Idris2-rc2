@@ -24,10 +24,15 @@ import Data.String
 import Network.Async.HTTP.Server
 import Network.Socket
 import Network.Socket.Data
+
 import System
 import System.Posix.Errno
 import System.Posix.FileDesc
 import System.Posix.Poll
+
+-- Network.Address has the same names; the ones of `network` are the clients'.
+%hide System.Posix.Socket.Port.Port
+%hide Network.Address.SocketAddress
 
 %default covering
 

@@ -317,9 +317,9 @@ serveOn {limits} listener handler = do
 ||| Listen on `port` (loopback by default) and serve until given up. The result
 ||| is the `Errno` that stopped it.
 export
-serve : {default loopbackAddress bindAddr : Address}
+serve : {default (IPv4Addr 127 0 0 1) bindAddr : SocketAddress}
      -> {default defaultLimits limits : Limits}
-     -> (port : Int) -> Handler -> Task (Either Errno ())
+     -> Port -> Handler -> Task (Either Errno ())
 serve {bindAddr} {limits} port handler = do
   Right listener <- handoff (\_, done => (listen {bindAddr} port >>= done) *> pure noCancel)
                             (either (\_ => pure ()) close)

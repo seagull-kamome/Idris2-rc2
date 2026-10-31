@@ -92,33 +92,36 @@ adopt = adoptFrom Nothing
 
 ||| A socket listening on `bindAddr` (loopback by default) and `port`.
 export
-listen : {default loopbackAddress bindAddr : Address}
-      -> (port : Int) -> IO (Either Errno Sock)
-listen {bindAddr} port = if not (validPort port) then pure (Left EINVAL) else do
-  Right fd <- Posix.socket AF_INET SOCK_STREAM 0
-    | Left e => pure (Left e)
-  r <- prepare fd
-  case r of
-    Right () => adopt fd
-    Left e => ignore (System.Posix.FileDesc.close fd) *> pure (Left e)
+listen : {default (IPv4Addr 127 0 0 1) bindAddr : SocketAddress}
+      -> Port -> IO (Either Errno Sock)
+listen {bindAddr} port = case toSockAddr bindAddr port of
+    Left e => pure (Left e)
+    Right local => do
+      Right fd <- Posix.socket AF_INET SOCK_STREAM 0
+        | Left e => pure (Left e)
+      r <- prepare local fd
+      case r of
+        Right () => adopt fd
+        Left e => ignore (System.Posix.FileDesc.close fd) *> pure (Left e)
   where
-    prepare : FileDesc -> IO (Either Errno ())
-    prepare fd = do
+    prepare : SockAddr -> FileDesc -> IO (Either Errno ())
+    prepare local fd = do
       Right () <- setSockOptInt fd SOL_SOCKET SO_REUSEADDR 1
         | Left e => pure (Left e)
-      Right () <- Posix.bind fd (toSockAddr bindAddr port)
+      Right () <- Posix.bind fd local
         | Left e => pure (Left e)
       Posix.listen fd 128
 
-||| Connect to an IPv4 address and wait until the connection is made (a host
-||| name would need a blocking lookup, so it is not accepted). Like `accept`, the socket is handed over with `handoff`; a
+||| Connect to an IPv4 address and wait until the connection is made. Anything
+||| else (a host name would need a blocking lookup, IPv6 is not supported) is
+||| `EAFNOSUPPORT`. Like `accept`, the socket is handed over with `handoff`; a
 ||| connect that is given up while it is under way closes its socket.
 export
-connect : Address -> (port : Int) -> Task (Either Errno Sock)
-connect addr port = handoff start (either (\_ => pure ()) close)
+connect : SocketAddress -> Port -> Task (Either Errno Sock)
+connect addr port = case toSockAddr addr port of
+    Left e => pure (Left e)
+    Right target => handoff (start target) (either (\_ => pure ()) close)
   where
-    target : SockAddr
-    target = toSockAddr addr port
 
     -- A connection under way is done when the descriptor is writable; how it
     -- went is the pending error of the socket.
@@ -140,8 +143,8 @@ connect addr port = handoff start (either (\_ => pure ()) close)
       env.watchFd s.fd EPOLLOUT (\_ => finish s settled done) >>= writeIORef watching
       pure (MkCancel (giveUp s settled watching))
 
-    start : Env -> Completion (Either Errno Sock) -> IO Cancel
-    start env done = if not (validPort port) then noCancel <$ done (Left EINVAL) else do
+    start : SockAddr -> Env -> Completion (Either Errno Sock) -> IO Cancel
+    start target env done = do
       opened <- Posix.socket AF_INET SOCK_STREAM 0
       case opened of
         Left e => noCancel <$ done (Left e)

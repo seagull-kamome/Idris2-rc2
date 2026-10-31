@@ -38,7 +38,7 @@ import Network.URL
 import System.Concurrency
 import System.Concurrency.RC2
 
-mockPort : Int
+mockPort : Port
 mockPort = 18726
 
 napMs : Int -> IO ()
@@ -145,7 +145,7 @@ main : IO ()
 main = do
     let base = "http://127.0.0.1:" ++ show mockPort
     challenge <- newIORef Nothing
-    srv <- forkJoin {a = ()} $ serve {bindAddr = IPv4 127 0 0 1} mockPort (mock challenge)
+    srv <- forkJoin {a = ()} $ serve {bindAddr = IPv4Addr 127 0 0 1} mockPort (mock challenge)
     waitServer base 100
 
     putStrLn "--- chat ---"

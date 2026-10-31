@@ -2,19 +2,22 @@
 "0.0.0.0" -> 0.0.0.0
 "255.255.255.255" -> 255.255.255.255
 "10.20.30.40" -> 10.20.30.40
-"256.0.0.1" -> none
-"1.2.3" -> none
-"1.2.3.4.5" -> none
-"1..2.3" -> none
-"a.b.c.d" -> none
-"" -> none
-"01.2.3.4" -> none
-"1.2.3.-4" -> none
-" 1.2.3.4" -> none
-127.0.0.1:8080
-0.0.0.0:0
-192.168.3.82:1234
-16909060
+"256.0.0.1" -> Invalid
+"1.2.3" -> Invalid
+"1.2.3.4.5" -> Invalid
+"1..2.3" -> Invalid
+"a.b.c.d" -> Invalid
+"" -> Invalid
+"01.2.3.4" -> Invalid
+"1.2.3.-4" -> Invalid
+" 1.2.3.4" -> Invalid
+Right 127.0.0.1:8080
+Right 0.0.0.0:0
+Right 192.168.3.82:1234
+Right 1.2.3.4:65535
+Left Errno:22
+Left Errno:97
+Left Errno:97
 True False
 Right "hello \26085\26412"
 empty: would block

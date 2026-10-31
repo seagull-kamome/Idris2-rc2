@@ -18,6 +18,7 @@ import Data.String.FFI
 import System.FFI
 import System.Posix.Errno
 import System.Posix.FileDesc
+import public System.Posix.Socket.Port
 
 %default covering
 
@@ -152,12 +153,12 @@ Show SockAddr where
 
 ||| The loopback address of IPv4 on a port.
 export
-loopback : Bits16 -> SockAddr
+loopback : Port -> SockAddr
 loopback = SockAddrIn 0x7f000001
 
 ||| Every interface of IPv4, on a port.
 export
-anyAddr : Bits16 -> SockAddr
+anyAddr : Port -> SockAddr
 anyAddr = SockAddrIn 0
 
 %inline %foreign "CExpr:(sizeof(struct sockaddr_storage)),libc,sys/socket.h"
