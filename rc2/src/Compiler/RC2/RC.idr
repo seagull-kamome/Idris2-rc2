@@ -6,6 +6,7 @@
 ||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.RC
 
+import Compiler.RC2.ForeignDivert
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Compiler.RC2.Util
@@ -877,7 +878,7 @@ normalizeTop n d = do
         MkNmCon tag arity nt => pure $ MkRCCon tag arity nt
         MkNmForeign ccs fargs ret => do
             checkForeignReturn n ret
-            pure $ MkRCForeign ccs fargs ret
+            pure $ divertForeign n (MkRCForeign ccs fargs ret)
     st <- get Lifts
     pure ((n, top) :: lifted st, infos st)
 

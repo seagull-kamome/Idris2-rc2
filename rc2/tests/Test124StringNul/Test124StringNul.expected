@@ -17,6 +17,14 @@ True
 6
 "b\NUL1"
 (6, True)
+(6, (True, ['a', 'b', '\NUL', '1', 'c', 'd']))
+[97, 98, 0, 49, 99, 100]
+True
+(0, "")
+(4, (True, ['\955', '\NUL', '1']))
+[206, 187, 0, 49]
+True
+(0, "")
 "0"
 case: matched own literal
 case: correctly distinct past the NUL

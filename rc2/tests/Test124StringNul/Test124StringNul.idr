@@ -9,6 +9,7 @@ module Main
 -- `putStr s` prints only "ab": a String crosses the FFI as `->str`, cut
 -- at the first NUL, which is accepted.
 
+import Data.Buffer
 import Data.String
 import Data.String.Iterator
 import Data.String.RC2
@@ -33,6 +34,25 @@ textRoundTrip : String -> (Nat, Bool)
 textRoundTrip str =
   let t = Data.TextBuffer.fromString str
   in (Data.TextBuffer.length t, Data.TextBuffer.toString t == str)
+
+-- Data.Buffer's stringByteLength, setString and getString take or give a
+-- `char *` upstream; rc2 sends them to length-aware replacements
+-- (fastpack-fix.md), so the bytes after the NUL are counted, written and read.
+bufferCheck : String -> IO ()
+bufferCheck str = do
+  let n = stringByteLength str
+  Just buf <- newBuffer 16
+    | Nothing => putStrLn "no buffer"
+  setString buf 0 str
+  back <- getString buf 0 n
+  bytes <- traverse (getBits8 buf) [0 .. n - 1]
+  printLn (n, back == str, Prelude.unpack back)
+  printLn bytes
+  setString buf 3 str
+  shifted <- getString buf 3 n
+  printLn (shifted == str)
+  empty <- getString buf 3 0
+  printLn (stringByteLength "", empty)
 
 afterFirst : String -> String
 afterFirst str = withString str $ \it => case uncons str it of
@@ -77,6 +97,8 @@ main = do
     printLn (byteLength s)
     printLn (unsafeStringByteSlice s 1 3)
     printLn (textRoundTrip s)
+    bufferCheck s
+    bufferCheck "\955\NUL1"
     printLn (cast {to=String} (the Int 0))
     case s of
          "ab\NUL1cd" => putStrLn "case: matched own literal"

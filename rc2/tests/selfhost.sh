@@ -14,8 +14,7 @@
 #   diff    compiles every program of rc2/tests with the Chez-built idris2-rc2 and
 #           with stage1 and compares the C: any difference that is not only the
 #           notation of a float literal is a failure (doc/self-hosting.md, 9).
-#   all     stage1, libs, api and fixed, in that order (not diff, which fails
-#           until the NUL bug of KNOWN-BUGS.md is fixed).
+#   all     stage1, libs, api, fixed and diff, in that order.
 #
 # Except for what stage1 writes (see above), everything is built under
 # rc2/build/selfhost (git-ignored).
@@ -132,6 +131,6 @@ case "${1:-all}" in
     api) api ;;
     fixed) fixed ;;
     diff) diffc ;;
-    all) stage1; libs; api; fixed ;;
+    all) stage1; libs; api; fixed; diffc ;;
     *) echo "usage: $0 [stage1|libs|api|fixed|diff|all]"; exit 2 ;;
 esac

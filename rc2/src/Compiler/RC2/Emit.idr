@@ -1304,10 +1304,8 @@ declarationsOf n (MkRCForeign _ fargs _) =
 declarationsOf _ (MkRCError _) = pure []
 
 ||| Registers `n`'s own forward declaration(s) (`declarationsOf`) into
-||| `FunctionDefinitions`, plus -- for a standard-FFI `MkRCForeign` not
-||| diverted to rc2's own fastpack replacement (`fastPackFixedReplacement`,
-||| same condition `createCFunctions`'s own `MkRCForeign` case dispatches
-||| on) -- its own lib/header registration (`HeaderFiles`/`ForeignLibs`,
+||| `FunctionDefinitions`, plus -- for a `MkRCForeign` -- its own lib/header
+||| registration (`HeaderFiles`/`ForeignLibs`,
 ||| moved here verbatim from the old `emitGenericForeignWrapper`). Conses
 ||| each declaration onto the front of `FunctionDefinitions`, so run over
 ||| `defs` in its own original order (`generateCSourceFile`'s own
@@ -1322,14 +1320,11 @@ collectDeclarations n (MkRCError exp) = throw $ InternalError ("[rc2] Error with
 collectDeclarations n def@(MkRCForeign ccs fargs ret) = do
     decls <- declarationsOf n def
     update FunctionDefinitions $ \otherDefs => decls ++ otherDefs
-    case (fastPackFixedReplacement n, fastPackFixedShape ret fargs) of
-         (Just _, True) => pure ()
-         _ => do
-             Just spec <- validateForeign n ccs fargs ret
-                 | Nothing => throw $ UserError "[rc2] %foreign declaration \{show n} has no implementation rc2 can call: it needs a \"CExpr:\", \"RC2:\", \"RefC:\" or \"C:\" alternative"
-             let addAll = \xs, s => foldl (flip insert) (the (SortedSet String) s) xs
-             update HeaderFiles (addAll (headerList spec))
-             update ForeignLibs (addAll (mapMaybe linkLibName (libList spec)))
+    Just spec <- validateForeign n ccs fargs ret
+        | Nothing => throw $ UserError "[rc2] %foreign declaration \{show n} has no implementation rc2 can call: it needs a \"CExpr:\", \"RC2:\", \"RefC:\" or \"C:\" alternative"
+    let addAll = \xs, s => foldl (flip insert) (the (SortedSet String) s) xs
+    update HeaderFiles (addAll (headerList spec))
+    update ForeignLibs (addAll (mapMaybe linkLibName (libList spec)))
 collectDeclarations n def = do
     decls <- declarationsOf n def
     update FunctionDefinitions $ \otherDefs => decls ++ otherDefs

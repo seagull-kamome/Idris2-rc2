@@ -1,4 +1,6 @@
 #include "idris2rc2_buffer.h"
+#include "idris2rc2_datatypes.h"
+#include "idris2rc2_memory.h"
 #include "idris2rc2_util.h"
 
 #include <stdlib.h>
@@ -21,7 +23,7 @@ void *newBuffer(int bytes) {
 static void assert_valid_range(IDRIS2RC2_RawBuffer *buf, int64_t offset, int64_t len) {
   IDRIS2RC2_VERIFY(offset >= 0, "offset (%lld) < 0", (long long)offset);
   IDRIS2RC2_VERIFY(len >= 0, "len (%lld) < 0", (long long)len);
-  IDRIS2RC2_VERIFY(offset + len <= buf->size,
+  IDRIS2RC2_VERIFY(offset <= buf->size && len <= (int64_t)buf->size - offset,
                     "offset (%lld) + len (%lld) > buf.size (%lld)",
                     (long long)offset, (long long)len, (long long)buf->size);
 }
@@ -80,6 +82,29 @@ void setBufferString(void *buffer, int loc, char *str) {
   size_t len = strlen(str);
   assert_valid_range(b, loc, len);
   memcpy((b->data) + loc, str, len);
+}
+
+IDRIS2RC2_Value *idris2rc2_stringByteLengthFixed(IDRIS2RC2_Value *str) {
+  return idris2rc2_mkInt64((int64_t)((IDRIS2RC2_String *)str)->len);
+}
+
+IDRIS2RC2_Value *idris2rc2_setBufferStringFixed(IDRIS2RC2_Value *buffer, IDRIS2RC2_Value *loc,
+                                                IDRIS2RC2_Value *str) {
+  IDRIS2RC2_RawBuffer *b = ((IDRIS2RC2_Buffer *)buffer)->buf;
+  IDRIS2RC2_String *s = (IDRIS2RC2_String *)str;
+  int64_t at = idris2rc2_to_i64(loc);
+  assert_valid_range(b, at, (int64_t)s->len);
+  memcpy((b->data) + at, s->str, s->len);
+  return NULL;
+}
+
+IDRIS2RC2_Value *idris2rc2_getBufferStringFixed(IDRIS2RC2_Value *buffer, IDRIS2RC2_Value *loc,
+                                                IDRIS2RC2_Value *len) {
+  IDRIS2RC2_RawBuffer *b = ((IDRIS2RC2_Buffer *)buffer)->buf;
+  int64_t at = idris2rc2_to_i64(loc);
+  int64_t n = idris2rc2_to_i64(len);
+  assert_valid_range(b, at, n);
+  return (IDRIS2RC2_Value *)idris2rc2_mkStringLen(b->data + at, (size_t)n);
 }
 
 char *getBufferString(void *buffer, int loc, int len) {
