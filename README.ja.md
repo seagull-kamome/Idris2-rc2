@@ -13,7 +13,7 @@ rc2は、上流のIdris 2本体を変更せずに開発されています。手�
 ## 目次
 
 - [主な特徴とハイライト](#主な特徴とハイライト)
-- [クイックスタート](#クイックスタート)（[環境準備](#1-環境変数の準備) / [ビルド](#2-rc2本体のビルドとインストール) / [ライブラリ導入](#3-サポートライブラリrc2baseのインストール) / [コンパイル実行](#4-プログラムのコンパイルと実行) / [性能計測](#ビルド時の性能計測--timing)）
+- [クイックスタート](#クイックスタート)（[環境準備](#1-環境変数の準備) / [ビルド](#2-rc2本体のビルドとインストール) / [ライブラリ導入](#3-サポートライブラリrc2baseのインストール) / [コンパイル実行](#4-プログラムのコンパイルと実行) / [セルフホスティング](#5-rc2-自身でコンパイラをビルドするセルフホスティングchez-scheme-なし) / [性能計測](#ビルド時の性能計測--timing)）
 - [付属エコシステムと開発ツール](#付属エコシステムと開発ツール)（[rc2base](#libsrc2baseネイティブc-abiツールキット) / [control-async](#libscontrol-asyncタスクとノンブロッキングソケット) / [web](#libswebhttpクライアントとサーバ) / [text-re2](#libstext-re2google-re2正規表現バインディング) / [notcurses・termui](#その他のバインディングnotcurses-termui) / [rcexpr-lint](#toolsrcexpr-lintir静的解析バグ検出ツール) / [rcexpr-diff](#toolsrcexpr-diffir差分比較ツール)）
 - [アーキテクチャと最適化パイプライン](#アーキテクチャと最適化パイプライン)（[リポジトリ構成](#リポジトリ全体の構成) / [コンパイラ内部構成](#コンパイラ本体rc2の内部構成) / [最適化パス](#主要な最適化パス10の技術的柱)）
 - [上流RefCとの意図的な違い・改善点](#上流refcとの意図的な違い改善点)（[Char](#1-完全なunicodeスカラー値に対応したchar) / [String](#2-コードポイント準拠とnul終端安全なstring) / [pthread](#3-本物のマルチスレッド並行処理pthread) / [%export](#4-ネイティブc-abiとの直接連携export) / [ライフサイクル](#5-プロセスのライフサイクルとロケール非依存な数値書式化) / [CAF・Lazyメモ化](#6-正しい意味論を保証するcafとlazy--infのメモ化)）
@@ -103,6 +103,22 @@ rc2コード生成バックエンドで、Idris 2のプログラムをコンパ�
 
 - 生成したCコードは、ランタイムライブラリと同じ`-O2`で既定でコンパイルされます。
 - 最適化を無効にするには、`CFLAGS=-O0`を渡すか、`IDRIS2_CFLAGS`を設定します。
+
+### 5. rc2 自身でコンパイラをビルドする（セルフホスティング、Chez Scheme なし）
+
+`idris2-rc2-norepl` は、REPL を持たないドライバを使う同じコンパイラです（`rc2/doc/norepl.md`）。rc2 でこれをビルドでき、できたコンパイラは、ライブラリと自分自身をビルドし、コンパイラの API パッケージを型検査して、Chez 版と同じ出力になります。分かったこと、数値、未解決の点は`rc2/doc/self-hosting.md`にあります。
+
+```sh
+cd rc2
+source ../env.sh
+idris2 --build rc2.ipkg && idris2 --install rc2.ipkg          # 1. 手順2と同じ（Chezがidris2-rc2とrc2パッケージをビルドします）
+build/exec/idris2-rc2 --cg rc2 --build rc2-norepl.ipkg        # 2. rc2がコンパイラをビルドします。約10分
+build/exec/idris2-rc2-norepl --cg rc2 Program.idr -o program  # 3. idris2-rc2と同じように使えます
+```
+
+- 手順2は114 MBのCファイルを作ってコンパイルするので、時間の大半はCコンパイラです。Chez Schemeはここでは動きませんが、手順1ではまだ動きます。最初のコンパイラとライブラリの`.ttc`は、Chez製の`idris2`が作るためです。
+- `rc2/tests/selfhost.sh [stage1|libs|api|fixed|all]`が、この実験を`rc2/build/selfhost`の下で繰り返します。`libs`は`prelude`、`base`、`linear`、`network`、`contrib`、`test`をrc2版コンパイラでビルドし、`api`は`idris2api`を型検査し、`fixed`は`idris2-rc2-norepl`をもう一度ビルドして、Cが同じことを確かめ、`diff`は`rc2/tests`を両方のコンパイラでコンパイルしてCを比べます。
+- rc2版コンパイラにはREPLがなく（`--ide-mode`、`--yaffle`、`--ttm`、`--repl`、`--client`は断ります）、型検査はChez版の約2倍遅くなります。
 
 ### ビルド時の性能計測（--timing）
 

@@ -45,8 +45,12 @@ modules = Compiler.RC2.CC,
           Compiler.RC2.Emit.ExternRefs,
           Compiler.RC2.Emit.Foreign,
           Compiler.RC2.Emit,
+          Compiler.RC2.ForeignDivert,
           Compiler.RC2.Pretty,
           Compiler.RC2.RC2,
+          Compiler.RC2.DeadVars,
+          Compiler.RC2.Sink,
+          Compiler.RC2.Types,
           Main
 
 main = Main

@@ -595,10 +595,9 @@ would have had from the start. A divisor that is not a constant keeps the
    the drop list; `Emit.idr` gained a shared `alwaysUnboxedDropVar :
    (String, String, CFType) -> Maybe String` helper (in the same
    `where`-block as `createFFIArgList`/`discardLastArgument`, used by
-   both `emitGenericForeignWrapper`'s and `emitFastPackFixedWrapper`'s
-   own `removeVarsArgList` -- the latter only for consistency, since
-   `idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed`'s own arguments are always
-   `CFUser` and never actually hit the `alwaysUnboxed` case in
+   `emitGenericForeignWrapper`'s own `removeVarsArgList`; it also served a dedicated
+   wrapper for the replaced `fastPack`/`fastConcat`, since removed, whose arguments were
+   always `CFUser` and never actually hit the `alwaysUnboxed` case in
    practice) that returns `Nothing` (skip the drop) when
    `cfTypeNative vt` is `Just ty` and `alwaysUnboxed ty` holds. A third
    related spot, `Emit.idr`'s own `emitFFIWorker` (Stage 3c's
@@ -624,8 +623,7 @@ would have had from the start. A divisor that is not a constant keeps the
   `nativeUnbox`, `rcVarToNativeC`/`rcVarToBoxedC`, `cOp`/`nativeOpExpr`/
   `nativeCmpExpr`, `emitNativeValue`, `InlineMap`/`tryInlineNativeOp`,
   `RepMap`; also `alwaysUnboxedDropVar` (bug 6 above), consulted by
-  `emitGenericForeignWrapper`/`emitFastPackFixedWrapper`'s own
-  `removeVarsArgList`.
+  `emitGenericForeignWrapper`'s own `removeVarsArgList`.
 - `rc2/src/Compiler/RC2/DualABI.idr` -- not otherwise part of this
   document's own Phase 1/2 machinery, but `synthesizeWorker`'s
   `wrapperPostDrop` is a second, separate consumer of

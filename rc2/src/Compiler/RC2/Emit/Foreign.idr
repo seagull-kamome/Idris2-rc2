@@ -1,7 +1,6 @@
 ||| `%foreign` and `%export` C-wrapper generation.
 ||| Everything that turns a `MkRCForeign` declaration into its C wrapper
-||| function (the generic pack/call/unpack shape, rc2's own leak-free
-||| `fastPack`/`fastConcat` diversion, the missing-implementation stub),
+||| function (the generic pack/call/unpack shape, the missing-implementation stub),
 ||| turns a validated `%export` declaration into its externally-callable
 ||| C entry point, and the small shared marshalling primitives
 ||| (`ffiRawCall`, `resolveForeignTarget`, the `CFChar`
@@ -198,67 +197,16 @@ linkLibName lib =
           then Just (substr 3 (length base `minus` 3) base)
           else Nothing
 
-||| Maps `Prelude.Types.fastPack`/`fastConcat` to the leak-free
-||| `idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed` (the generic
-||| `CFString` wrapper would leak their malloc'd result). Intercepted at C
-||| emission, not via `%transform`, which cannot reach call sites inside other
-||| packages' `.ttc`. See `rc2/doc/fastpack-fix.md`.
-||| Matches FULL namespace + base name (unlike `ConstFold`'s
-||| `constExtPrimValue`) so a same-named function elsewhere never misfires;
-||| callers also check the signature shape. Shared by `createCFunctions` and
-||| `collectDeclarations`, which must skip registration exactly when
-||| `createCFunctions` does.
-export
-fastPackFixedReplacement : Name -> Maybe String
-fastPackFixedReplacement (NS ns (UN (Basic f))) =
-    map (\(_, _, c) => c) (find (\(m, g, _) => g == f && ns == mkNamespace m) table)
-  where
-    -- Not leaks: `fastUnpack` and the two `Data.String.Iterator` calls that
-    -- read the string take a `char *`, which loses a String's length at its
-    -- first NUL, so they are sent to replacements taking the String itself.
-    table : List (String, String, String)
-    table =
-      [ ("Prelude.Types", "fastPack", "idris2rc2_fastPackFixed")
-      , ("Prelude.Types", "fastConcat", "idris2rc2_fastConcatFixed")
-      , ("Prelude.Types", "fastUnpack", "idris2rc2_fastUnpackFixed")
-      , ("Data.String.Iterator", "uncons", "idris2rc2_stringIteratorNextFixed")
-      , ("Data.String.Iterator", "withIteratorString", "idris2rc2_stringIteratorToStringFixed")
-      ]
-fastPackFixedReplacement _ = Nothing
-
-||| Whether a `fastPackFixedReplacement` target has a signature its
-||| replacement wrapper handles: every argument passed on as the boxed
-||| value it already is, and a boxed value returned as is.
-export
-fastPackFixedShape : CFType -> List CFType -> Bool
-fastPackFixedShape ret fargs = boxedRet ret && all boxedArg fargs
-  where
-    boxedRet : CFType -> Bool
-    boxedRet CFString = True
-    boxedRet (CFUser _ _) = True
-    boxedRet _ = False
-
-    boxedArg : CFType -> Bool
-    boxedArg CFString = True
-    boxedArg (CFUser _ _) = True
-    boxedArg (CFFun _ _) = True
-    boxedArg _ = False
-
 ||| Lower a `MkRCForeign` declaration to its C wrapper function -- the
 ||| `createCFunctions` `MkRCForeign` clause's whole body, standalone so
-||| it can live outside `Emit.idr`. `fastPackFixedReplacement`'s own doc
-||| comment has the full writeup on the leak-free-diversion check; both
-||| defensive checks (name via that function, signature shape here) must
-||| hold before diverting away from the generic FFI-wrapper codegen path
-||| every other `%foreign` declaration still goes through unconditionally.
+||| it can live outside `Emit.idr`. A declaration that rc2 replaces (see
+||| `Compiler.RC2.ForeignDivert`) has already been rewritten into an ordinary
+||| `RC2:` one by the time it gets here.
 export
 emitForeignDef : {auto oft : Ref OutfileText Output}
               -> {auto il : Ref IndentLevel Nat}
               -> Name -> (ccs : List String) -> (fargs : List CFType) -> (ret : CFType) -> Core ()
-emitForeignDef n ccs fargs ret =
-  case (fastPackFixedReplacement n, fastPackFixedShape ret fargs) of
-       (Just fixedFnName, True) => emitFastPackFixedWrapper fixedFnName
-       _ => emitGenericForeignWrapper
+emitForeignDef n ccs fargs ret = emitGenericForeignWrapper
   where
     createFFIArgList : List CFType
                     -> Core $ List (String, String, CFType)
@@ -291,36 +239,6 @@ emitForeignDef n ccs fargs ret =
         case cfTypeNative vt of
              Just ty => if alwaysUnboxed ty then Nothing else Just varName
              Nothing => Just varName
-
-    ||| Same external name/declared signature `emitGenericForeignWrapper`
-    ||| would have produced (so every existing call site anywhere --
-    ||| including ones already baked into precompiled `network`/`base`
-    ||| code -- keeps linking against the same symbol, unmodified), but
-    ||| the body calls rc2's own leak-free `idris2rc2_fastPackFixed`/
-    ||| `idris2rc2_fastConcatFixed` (`idris2rc2_strings.c`) instead of the leaking
-    ||| `fastPack`/`fastConcat`, and returns its result directly --
-    ||| skipping `packCFType`/`idris2rc2_mkString` entirely, the same
-    ||| way a bare `CFUser` return is already passed straight through
-    ||| with no copy (see `Emit/Util.idr`'s own `packCFType` `CFUser`
-    ||| case) -- since `idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed` already return
-    ||| a fully-formed, correctly-owned `IDRIS2RC2_Value*` themselves.
-    emitFastPackFixedWrapper : String -> Core ()
-    emitFastPackFixedWrapper fixedFnName = do
-        typeVarNameArgList <- createFFIArgList fargs
-
-        emitFDef n typeVarNameArgList
-        emit EmptyFC "{"
-        increaseIndentation
-        emit EmptyFC $ " // rc2's own leak-free replacement for " ++ show n ++ " -- see rc2/doc/fastpack-fix.md"
-        let removeVarsArgList = removeVars (mapMaybe alwaysUnboxedDropVar typeVarNameArgList)
-        emit EmptyFC $ "IDRIS2RC2_Value *retVal = " ++ fixedFnName
-                    ++ "("
-                    ++ showSep ", " (map (\(_, vn, _) => "(IDRIS2RC2_Value*)" ++ vn) typeVarNameArgList)
-                    ++ ");"
-        removeVarsArgList
-        emit EmptyFC "return retVal;"
-        decreaseIndentation
-        emit EmptyFC "}"
 
     emitGenericForeignWrapper : Core ()
     emitGenericForeignWrapper = do
@@ -504,9 +422,8 @@ emitExportWrapper n exportedCName fargs ret = do
     argPack CFInteger i = "(IDRIS2RC2_Value *)idris2rc2_mkIntegerFromMpz(p_\{show i})"
     argPack ty i = "(IDRIS2RC2_Value *)" ++ packCFType ty ("p_" ++ show i)
 
-||| True for a `%foreign` rc2 can implement: diverted to the native
-||| fastPack/fastConcat replacement, or carrying a convention `parseForeign`
-||| recognizes (`CExpr:`/`C:`/`RefC:`/`RC2:`). Otherwise whole-program mode
+||| True for a `%foreign` rc2 can implement: one carrying a convention
+||| `parseForeign` recognizes (`CExpr:`/`C:`/`RefC:`/`RC2:`). Otherwise whole-program mode
 ||| keeps a hard compile error (a reachable one means the program calls
 ||| something rc2 cannot implement; a link-time "undefined reference" would
 ||| hide that). Incremental mode (`dropUnimplementableForeign = True`) drops
@@ -516,8 +433,5 @@ emitExportWrapper n exportedCName fargs ret = do
 ||| See `rc2/doc/incremental-compile.md` "Bugs found while implementing" #3.
 export
 hasUsableForeignImpl : (Name, RCDef) -> Bool
-hasUsableForeignImpl (n, MkRCForeign ccs fargs ret) =
-    case (fastPackFixedReplacement n, fastPackFixedShape ret fargs) of
-         (Just _, True) => True
-         _ => foreignUsable ccs
+hasUsableForeignImpl (_, MkRCForeign ccs _ _) = foreignUsable ccs
 hasUsableForeignImpl _ = True

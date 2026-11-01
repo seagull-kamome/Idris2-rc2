@@ -275,7 +275,7 @@ IDRIS2RC2_Value *stringIteratorNext(char *s, IDRIS2RC2_Value *it_p) {
 }
 
 // What Data.String.Iterator's uncons and withIteratorString are sent to
-// instead of the two above (Emit/Foreign.idr's fastPackFixedReplacement):
+// instead of the two above (Compiler/RC2/ForeignDivert.idr):
 // they get the String itself and stop at its length, not at a NUL.
 IDRIS2RC2_Value *idris2rc2_stringIteratorNextFixed(IDRIS2RC2_Value *str, IDRIS2RC2_Value *it_p) {
   IDRIS2RC2_String *s = (IDRIS2RC2_String *)str;
