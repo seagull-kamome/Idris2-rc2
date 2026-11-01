@@ -4,7 +4,7 @@
 `idris2-rc2`. It is the same compiler (`Compiler.RC2.*` come from the installed
 `rc2` package) with a driver that has no REPL. It was made to answer one
 question: can the compiler itself be built by rc2, without Chez Scheme?
-The answer is yes (see "Result"). `rc2.ipkg` and `idris2-rc2` are untouched; the only change to the compiler is item 3 under "What it took".
+The answer is yes (see "Result"). `idris2-rc2` is untouched; the changes to rc2 are item 3 under "What it took" and the module list of `rc2.ipkg` (three modules were missing). What this is for, and what was found with it, is in `self-hosting.md`.
 
 ## Layout
 
@@ -28,7 +28,7 @@ upstream `Idris.Driver` or with `Main` of `rc2.ipkg`.
 - the banner, `updateREPLOpts` (the editor), and the final `repl` / `replIDE`
   call: after the options have been run, the program says that it has no REPL and
   exits with status 1;
-- `--yaffle`, `--ttm`, `--ide-mode`, `--ide-mode-socket` `--repl [package]` and `--client <cmd>`: each
+- `--yaffle`, `--ttm`, `--ide-mode`, `--ide-mode-socket`, `--repl [package]`, and `--client <cmd>`: each
   is refused with a message;
 - the `replCmd` branch of `postOptions`.
 
@@ -68,19 +68,15 @@ build/exec/idris2-rc2 --cg rc2 --build rc2-norepl.ipkg      # about 10 minutes
 - rc2 builds `idris2-rc2-norepl` itself: about 75 s of code generation and 9 more
   minutes for the C compiler on a 114 MB C file; the executable is 15 MB.
 - The rc2-built compiler compiles programs and gives the same C as the Chez-built
-  one (`Hello`, `Test149StrLiteralFold`, `Test87SpecConstCon`), except that a
-  `Double` literal is printed by the rc2 runtime (`4611686018427388000.0`
-  where Chez prints `4.611686018427388e18`; the same value).
-- It type-checks `libs/control-async` in 8.2 s; the Chez-built one takes 4.9 s,
-  so the rc2-built compiler is about 1.7 times slower there. That is the
-  number to bring down.
+  one (one difference: a `Double` literal is printed by the rc2 runtime, see
+  `self-hosting.md`). It builds the libraries and the compiler's API package with
+  `.ttc` files identical to those of the Chez-built compiler, and itself, with the
+  same C: a fixed point. It is about twice as slow at type-checking.
 - `--build` of an ipkg with an executable and `--typecheck` work.
 
 ## Not done
 
 - The REPL is not out of the binary; only the way to it from the command line is
   closed. Removing it needs a copy of `processPackage`.
-- The `.ttc` files of `prelude`, `base`, `contrib` and the compiler's own API
-  package are still written by the upstream `idris2` (built by Chez). Producing
-  them with the rc2-built compiler (`--build` of those packages) is the next step
-  towards a toolchain without Chez.
+- `--install` with the rc2-built compiler was not tried. The rest of the
+  road to a toolchain without Chez is in `self-hosting.md`.

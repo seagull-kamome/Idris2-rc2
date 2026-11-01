@@ -237,6 +237,26 @@ If one of these stops reproducing, or a fix lands, remove the entry.
   copies the upstream C. Left as is; nothing in rc2 or `libs/` calls
   them (`rc2base` uses plain `send`/`recv`).
 
+## rc2: `Data.Buffer`'s string primitives stop at a NUL byte
+
+`stringByteLength`, `prim__setString` and `prim__getString` of `Data.Buffer`
+(`libs/base`) are declared with a `RefC:` alternative (`stringByteLength`,
+`setBufferString`, `getBufferString`) that works on a `char *`. rc2 uses those, so
+under rc2 `stringByteLength "a\NUL1b"` is 1, `setString` writes one byte, and
+`getString` returns the text up to the first NUL. The compiler's own `.ttc` reader and
+writer (`Core.Binary.Prims`, `TTC String`) use them, so **a compiler built by rc2
+(`idris2-rc2-norepl`, `rc2/doc/self-hosting.md`) cuts every String constant at its
+first NUL**: `printLn (Prelude.String.length "ab\NUL1cd")` prints 6 when the
+program is compiled by the Chez-built compiler and 2 when it is compiled by the
+rc2-built one (`rc2/tests/Test124StringNul` generates different C). Programs
+that are not compiled by an rc2-built compiler, and strings without a NUL, are not
+affected. `fastPack`, `fastConcat`, `fastUnpack` and `Data.String.Iterator` are
+already sent to length-aware replacements (`Emit/Foreign.idr`,
+`fastPackFixedReplacement`); these three are not, and the same mechanism does not
+fit them yet (it only takes boxed arguments and results, and these take an `Int` or a
+`Buffer`). `Libraries.Data.String.Iterator`, used by `Core.Hash`, is not in the table
+either. Run `rc2/tests/selfhost.sh diff` to see the difference.
+
 ## `Nat` division and remainder are slow
 
 `div` and `mod` on a `Nat` (`Integral Nat` in `Data.Nat` of the base library) subtract

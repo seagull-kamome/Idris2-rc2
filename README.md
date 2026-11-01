@@ -13,7 +13,7 @@ rc2 is developed without modifying the upstream Idris 2 codebase. It lives in it
 ## Table of Contents
 
 - [Key Highlights](#key-highlights)
-- [Quick Start](#quick-start) ([Environment](#1-environment-setup) / [Build & Install](#2-building-and-installing-rc2) / [Companion Library](#3-installing-the-support-library-rc2base) / [Compiling Programs](#4-compiling-and-running-programs) / [Profiling](#profiling-build-performance---timing))
+- [Quick Start](#quick-start) ([Environment](#1-environment-setup) / [Build & Install](#2-building-and-installing-rc2) / [Companion Library](#3-installing-the-support-library-rc2base) / [Compiling Programs](#4-compiling-and-running-programs) / [Self-Hosting](#5-building-the-compiler-with-rc2-itself-self-hosting-no-chez-scheme) / [Profiling](#profiling-build-performance---timing))
 - [Ecosystem and Developer Tools](#ecosystem-and-developer-tools) ([rc2base](#libsrc2base-native-c-abi-toolkit) / [control-async](#libscontrol-async-tasks-and-non-blocking-sockets) / [web](#libsweb-http-client-and-servers) / [text-re2](#libstext-re2-google-re2-regex-bindings) / [notcurses & termui](#other-bindings-notcurses-termui) / [rcexpr-lint](#toolsrcexpr-lint-ir-static-checker) / [rcexpr-diff](#toolsrcexpr-diff-ir-diff-tool))
 - [Architecture and Optimization Pipeline](#architecture-and-optimization-pipeline) ([Repository Layout](#repository-layout) / [Compiler Structure](#compiler-structure-rc2) / [Optimization Passes](#ten-key-optimizations))
 - [Deliberate Differences from Upstream RefC](#deliberate-differences-from-upstream-refc) ([Char](#1-full-unicode-scalar-values-for-char) / [String](#2-codepoint-semantics-and-nul-safe-string) / [pthread](#3-real-multithreaded-concurrency-pthread) / [%export](#4-native-c-abi-export-export) / [Lifecycle](#5-process-lifecycle-and-locale-independent-formatting) / [CAF & Lazy Memoization](#6-caf-and-lazy--inf-memoization))
@@ -103,6 +103,22 @@ Compile Idris 2 programs using the `rc2` codegen backend:
 
 - Generated C code is compiled with `-O2` by default, matching the runtime library.
 - To disable optimizations, pass `CFLAGS=-O0` or configure `IDRIS2_CFLAGS`.
+
+### 5. Building the Compiler with rc2 Itself (Self-Hosting, No Chez Scheme)
+
+`idris2-rc2-norepl` is the same compiler with a driver that has no REPL (`rc2/doc/norepl.md`). rc2 can build it, and the result builds the libraries and itself, and type-checks the compiler's API package, with the same output as the Chez-built compiler, with one known exception: it cuts a String constant at a NUL byte (`KNOWN-BUGS.md`). `rc2/doc/self-hosting.md` has the findings, the numbers and what is still open.
+
+```sh
+cd rc2
+source ../env.sh
+idris2 --build rc2.ipkg && idris2 --install rc2.ipkg          # 1. as in step 2 (Chez builds idris2-rc2 and the rc2 package)
+build/exec/idris2-rc2 --cg rc2 --build rc2-norepl.ipkg        # 2. rc2 builds the compiler: about 10 minutes
+build/exec/idris2-rc2-norepl --cg rc2 Program.idr -o program  # 3. it is a compiler like idris2-rc2
+```
+
+- Step 2 produces a 114 MB C file and compiles it, so most of the time is the C compiler. No Chez Scheme runs in it, but step 1 still does: the first compiler and the `.ttc` files of the libraries come from the Chez-built `idris2`.
+- `rc2/tests/selfhost.sh [stage1|libs|api|fixed|all]` repeats the experiment under `rc2/build/selfhost`: `libs` builds `prelude`, `base`, `linear`, `network`, `contrib` and `test` with the rc2-built compiler, `api` type-checks `idris2api`, and `fixed` builds `idris2-rc2-norepl` again and checks that the C is the same, and `diff` compiles `rc2/tests` with both compilers and compares the C (it fails until the NUL bug is fixed).
+- The rc2-built compiler has no REPL (`--ide-mode`, `--yaffle`, `--ttm`, `--repl` and `--client` are refused) and type-checks about twice as slowly as the Chez-built one.
 
 ### Profiling Build Performance (--timing)
 
