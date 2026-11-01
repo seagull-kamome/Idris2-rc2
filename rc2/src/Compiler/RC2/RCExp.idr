@@ -336,9 +336,12 @@ public export
 data RCExp : Type where
      RV         : FC -> RCLocal -> RCExp
      RAppName   : FC -> (lazy : Maybe LazyReason) -> Name -> List RCLocal -> RCExp
-     ||| Direct call to `name`'s dual-ABI worker variant, never valid in
-     ||| a closure-building position. Only produced by
-     ||| `Compiler.RC2.DualABI`. `postDrop`: see `ROp`'s own doc below.
+     ||| Direct call to `name`'s dual-ABI worker variant, or, with every
+     ||| `argReps` entry `RBoxed`, to a boxed entry that
+     ||| `Compiler.RC2.LeafTail` calls directly from a tail position.
+     ||| Never valid in a closure-building position. Produced by
+     ||| `Compiler.RC2.DualABI` and `Compiler.RC2.LeafTail`.
+     ||| `postDrop`: see `ROp`'s own doc below.
      ||| See `doc/dual-abi.md`'s Bugs found #3.
      RAppNameRep : FC -> Name -> (argReps : List Rep) -> (retRep : Rep) -> (postDrop : List RCLocal) -> List RCLocal -> RCExp
      ||| Inlined `%foreign` call, splicing `Emit.emitFFIWorker`'s own

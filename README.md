@@ -106,19 +106,21 @@ Compile Idris 2 programs using the `rc2` codegen backend:
 
 ### 5. Building the Compiler with rc2 Itself (Self-Hosting, No Chez Scheme)
 
+> **Experimental.** The rc2-built compiler is slower than the Chez-built one: it executes about 2.1 times as many instructions building `libs/prelude`, and building `idris2-rc2-norepl` takes about 12 minutes with it against 10 with the Chez-built compiler (C compilation included). Use it to try out rc2 without Chez Scheme, not as your everyday compiler. `rc2/doc/self-hosting.md` has the numbers.
+
 `idris2-rc2-norepl` is the same compiler with a driver that has no REPL (`rc2/doc/norepl.md`). rc2 can build it, and the result builds the libraries and itself, and type-checks the compiler's API package, with the same output as the Chez-built compiler (`rc2/doc/self-hosting.md` has the findings, the numbers and what is still open).
 
 ```sh
 cd rc2
 source ../env.sh
 idris2 --build rc2.ipkg && idris2 --install rc2.ipkg          # 1. as in step 2 (Chez builds idris2-rc2 and the rc2 package)
-build/exec/idris2-rc2 --cg rc2 --build rc2-norepl.ipkg        # 2. rc2 builds the compiler: about 10 minutes
+build/exec/idris2-rc2 --cg rc2 --build rc2-norepl.ipkg        # 2. rc2 builds the compiler: about 10 minutes with the Chez-built idris2-rc2
 build/exec/idris2-rc2-norepl --cg rc2 Program.idr -o program  # 3. it is a compiler like idris2-rc2
 ```
 
 - Step 2 produces a 114 MB C file and compiles it, so most of the time is the C compiler. No Chez Scheme runs in it, but step 1 still does: the first compiler and the `.ttc` files of the libraries come from the Chez-built `idris2`.
 - `rc2/tests/selfhost.sh [stage1|libs|api|fixed|all]` repeats the experiment under `rc2/build/selfhost`: `libs` builds `prelude`, `base`, `linear`, `network`, `contrib` and `test` with the rc2-built compiler, `api` type-checks `idris2api`, and `fixed` builds `idris2-rc2-norepl` again and checks that the C is the same, and `diff` compiles `rc2/tests` with both compilers and compares the C.
-- The rc2-built compiler has no REPL (`--ide-mode`, `--yaffle`, `--ttm`, `--repl` and `--client` are refused) and type-checks about twice as slowly as the Chez-built one.
+- The rc2-built compiler has no REPL (`--ide-mode`, `--yaffle`, `--ttm`, `--repl` and `--client` are refused) and is slower than the Chez-built one (see the note at the top of this section).
 
 ### Profiling Build Performance (--timing)
 

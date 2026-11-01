@@ -39,7 +39,7 @@ for f in isEvenM isOddM stepA stepB cycleA cycleB cycleC; do
         continue
     fi
     n="$(printf '%s\n' "$body" | wc -l)"
-    if [ "$n" != "1" ] || ! printf '%s\n' "$body" | grep -q '^  call {rc2_mutualLoop:[0-9]*} \[#[0-9]*, '; then
+    if [ "$n" != "1" ] || ! printf '%s\n' "$body" | grep -Eq '^  (call \{rc2_mutualLoop:[0-9]*\} \[#[0-9]*, |callRep \{rc2_mutualLoop:[0-9]*\} .*\[#[0-9]*, )'; then
         bad="$bad $f"
     fi
 done
