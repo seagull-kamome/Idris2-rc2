@@ -2,11 +2,10 @@
 
 Status: stages 1 and 2 are done as experiments (`idris2-rc2-norepl` is built by
 rc2, and builds the libraries, type-checks the compiler's API package, and builds
-itself, with the same result as the Chez-built compiler on all of that). **It is not
-yet equivalent to the Chez-built compiler**: it cuts a String constant at its first NUL
-(finding 9), which neither the libraries nor its own sources contain, so the fixed point
-and the `.ttc` comparison could not show it. The NUL bug, the seed, `--install` and the
-speed are open. This document keeps what was found, and the design for the rest.
+itself, with the same result as the Chez-built compiler on all of that). On the 81
+programs of `rc2/tests` it gives the same C as the Chez-built compiler, except for
+the notation of float literals (finding 9). The seed, `--install` and the speed are
+open. This document keeps what was found, and the design for the rest.
 
 Commands: `rc2/tests/selfhost.sh` (see "Reproducing"). The driver that makes it
 possible is described in `norepl.md`.
@@ -69,7 +68,7 @@ Not Chez: `libidris2_support` (C, from `idris2-src/support/c`) and the rc2 runti
      (`4.611686018427388e18`), the same value.
    - **Fixed point**: `idris2-rc2-norepl` built by itself gives the same 114 MB C
      file, byte for byte. This says the two compilers agree on that input; it does not
-     say they agree on every program (see 9).
+     say they agree on every program (finding 9 was found by comparing more).
 6. **Size and time of the build.** The C of `idris2-rc2-norepl` is 114 MB
    (1.69 million lines; 9.3 MB with gzip, 5.8 MB with xz), the executable 15 MB.
    rc2 takes 75 s to produce the C; the C compiler (`-O2`) takes about 9 more
@@ -93,9 +92,10 @@ Not Chez: `libidris2_support` (C, from `idris2-src/support/c`) and the rc2 runti
    with the Chez-built `idris2-rc2-norepl`. **Not tested**: `--install`, `--mkdoc`,
    `--clean`, `--incremental`.
 
-9. **The rc2-built compiler cuts String constants at a NUL.** Found by compiling the
-   81 programs of `rc2/tests` with both compilers and comparing the C (77 identical,
-   see "Reproducing", `diff`):
+9. **The rc2-built compiler cut String constants at a NUL (fixed).** Found by compiling the
+   81 programs of `rc2/tests` with both compilers and comparing the C (77 identical at
+   first; 78 identical, 3 differing only in float notation and none otherwise after the
+   fix; see "Reproducing", `diff`):
    - `Test112Numeric`, `Test83DoubleString` and `Test145DoubleToIntWrap` differ only in
      the notation of `Double` literals (and in the names of the constants made from
      them): `1e-6` and `0.000001`, `9.007199254740992e15` and `9007199254740992.0`.
@@ -109,10 +109,13 @@ Not Chez: `libidris2_support` (C, from `idris2-src/support/c`) and the rc2 runti
      uses exactly these three. Elaboration and the normaliser are right
      (`length "ab\NUL1cd" = 6` is accepted by both compilers); the string is lost
      between elaboration and code generation. (`Libraries.Data.String.Iterator`, which
-     only `Core.Hash` uses, is another `char *` case that is not diverted.)
+     only `Core.Hash` uses, was another `char *` case that was not diverted.)
    - The Chez-built compiler has a bug here too: it prints the denormal `5e-324` as
      `5e-324|1` (Chez's notation), which is not C. The rc2-built one is right.
-   - `KNOWN-BUGS.md` has the entry.
+   - Fix: the three `Data.Buffer` functions (and `Libraries.Data.String.Iterator`) are
+     replaced by rc2's own length-aware ones when the program is turned into `RCDef`s
+     (`Compiler/RC2/ForeignDivert.idr`). What is replaced and why is in
+     `fastpack-fix.md`, "What is replaced, and why". `Test124StringNul` covers it.
 
 ## Design
 
@@ -156,12 +159,6 @@ yet: `--install` is the first open point.
 
 ## Open points, in the order to do them
 
-0. **NUL-safe `Data.Buffer` strings** (finding 9), and the table of diverted
-   `char *` foreigns in `Emit/Foreign.idr` (`fastPackFixedReplacement`) widened to
-   take what these three need (an `Int` argument, a `Buffer`). Test:
-   `rc2/tests/selfhost.sh diff` shows no difference but Double notation, and
-   `Test124StringNul` is identical.
-
 1. **`--install` and the other package commands with stage1.** They write the
    prefix (`.ttc`, `.ttm`, the support files of `postinstall`). Test: a prefix built
    by stage1 alone, then `rc2/tests/verify.sh` and the verify scripts of
@@ -195,7 +192,7 @@ cd rc2
 ```
 
 `diff` needs the Chez-built `idris2-rc2` (step 1 of `stage1` makes it) and `stage1`. It
-lists the programs whose C differs, and says for each whether only float literals differ.
+lists the programs whose C differs other than in float notation, and fails if there is one.
 
 Except for what `stage1` writes (`idris2 --install rc2.ipkg` updates the `rc2` package in
 `install/`, and `rc2/build/exec` gets the new executables), everything is built under

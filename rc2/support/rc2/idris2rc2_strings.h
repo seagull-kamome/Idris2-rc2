@@ -28,14 +28,14 @@ IDRIS2RC2_Value *idris2rc2_strSubstr(IDRIS2RC2_Value *start, IDRIS2RC2_Value *le
 // tag as directly callable, so we must provide these exact symbol names
 // ourselves, using our own value representation.
 char *fastPack(IDRIS2RC2_Value *charList)
-    __attribute__((deprecated("leaks its own malloc'd buffer -- Compiler.RC2.Emit's own createCFunctions should always redirect Prelude.Types.fastPack to idris2rc2_fastPackFixed instead, so reaching this is an rc2 bug, not something to work around (see rc2/doc/fastpack-fix.md)")));
+    __attribute__((deprecated("leaks its own malloc'd buffer -- Compiler.RC2.ForeignDivert should always redirect Prelude.Types.fastPack to idris2rc2_fastPackFixed instead, so reaching this is an rc2 bug, not something to work around (see rc2/doc/fastpack-fix.md)")));
 IDRIS2RC2_Value *fastUnpack(char *str);
-// What Prelude.Types.fastUnpack is sent to instead (Emit/Foreign.idr's
-// fastPackFixedReplacement): it reads the String's own length, so an
+// What Prelude.Types.fastUnpack is sent to instead (Compiler/RC2/ForeignDivert.idr):
+// it reads the String's own length, so an
 // embedded NUL doesn't end the list.
 IDRIS2RC2_Value *idris2rc2_fastUnpackFixed(IDRIS2RC2_Value *str);
 char *fastConcat(IDRIS2RC2_Value *strList)
-    __attribute__((deprecated("leaks its own malloc'd buffer -- Compiler.RC2.Emit's own createCFunctions should always redirect Prelude.Types.fastConcat to idris2rc2_fastConcatFixed instead, so reaching this is an rc2 bug, not something to work around (see rc2/doc/fastpack-fix.md)")));
+    __attribute__((deprecated("leaks its own malloc'd buffer -- Compiler.RC2.ForeignDivert should always redirect Prelude.Types.fastConcat to idris2rc2_fastConcatFixed instead, so reaching this is an rc2 bug, not something to work around (see rc2/doc/fastpack-fix.md)")));
 
 // Leak-free siblings of fastPack/fastConcat above: same computation, but
 // building directly into a fresh IDRIS2RC2_String via idris2rc2_mkEmptyString
@@ -45,7 +45,7 @@ char *fastConcat(IDRIS2RC2_Value *strList)
 // wrong only for these two, which malloc a buffer this project itself owns;
 // see rc2/doc/fastpack-fix.md). Returns an already-fully-built IDRIS2RC2_Value*;
 // every call to Prelude.Types.fastPack/fastConcat is sent here
-// (Emit/Foreign.idr's fastPackFixedReplacement).
+// (Compiler/RC2/ForeignDivert.idr).
 IDRIS2RC2_Value *idris2rc2_fastPackFixed(IDRIS2RC2_Value *charList);
 IDRIS2RC2_Value *idris2rc2_fastConcatFixed(IDRIS2RC2_Value *strList);
 
@@ -60,8 +60,17 @@ IDRIS2RC2_Value *stringIteratorNew(char *str);
 // Emit.idr's `extractValue (CFFun ...)`), not the generic Value*.
 IDRIS2RC2_Value *stringIteratorToString(void *a, char *str, IDRIS2RC2_Value *it, IDRIS2RC2_Closure *f);
 IDRIS2RC2_Value *stringIteratorNext(char *s, IDRIS2RC2_Value *it);
-// Length-aware replacements for the two above (Emit/Foreign.idr's
-// fastPackFixedReplacement).
+// Length-aware replacements for the two above (Compiler/RC2/ForeignDivert.idr).
 IDRIS2RC2_Value *idris2rc2_stringIteratorNextFixed(IDRIS2RC2_Value *str, IDRIS2RC2_Value *it);
+// Length-aware replacements for Data.Buffer's stringByteLength (libc strlen),
+// prim__setString (setBufferString) and prim__getString (getBufferString), which
+// take or give a `char *` and so cut a String at its first embedded NUL
+// (defined in idris2rc2_buffer.c; selected by Compiler/RC2/ForeignDivert.idr, which
+// leaves out the PrimIO world token of the last two).
+IDRIS2RC2_Value *idris2rc2_stringByteLengthFixed(IDRIS2RC2_Value *str);
+IDRIS2RC2_Value *idris2rc2_setBufferStringFixed(IDRIS2RC2_Value *buffer, IDRIS2RC2_Value *loc,
+                                                IDRIS2RC2_Value *str);
+IDRIS2RC2_Value *idris2rc2_getBufferStringFixed(IDRIS2RC2_Value *buffer, IDRIS2RC2_Value *loc,
+                                                IDRIS2RC2_Value *len);
 IDRIS2RC2_Value *idris2rc2_stringIteratorToStringFixed(IDRIS2RC2_Value *a, IDRIS2RC2_Value *str,
                                                       IDRIS2RC2_Value *it, IDRIS2RC2_Value *f);

@@ -121,7 +121,7 @@ compileCObjectFile sourceFile objectFile verbose
 ||| still-unresolved at that point in the link actually needs a symbol
 ||| it provides. That distinction is exactly what lets incremental
 ||| mode's own "drop an unimplementable definition, fail at link time
-||| instead" mechanism (`Emit.idr`'s `hasUsableForeignImpl`/
+||| instead" mechanism (`Emit/Foreign.idr`'s `hasUsableForeignImpl`/
 ||| `generateCSourceFile`'s `dropUnimplementableForeign`,
 ||| rc2/doc/incremental-compile.md's "Bugs found while implementing")
 ||| degrade gracefully rather than universally: a module that

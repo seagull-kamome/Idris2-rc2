@@ -106,7 +106,7 @@ Compile Idris 2 programs using the `rc2` codegen backend:
 
 ### 5. Building the Compiler with rc2 Itself (Self-Hosting, No Chez Scheme)
 
-`idris2-rc2-norepl` is the same compiler with a driver that has no REPL (`rc2/doc/norepl.md`). rc2 can build it, and the result builds the libraries and itself, and type-checks the compiler's API package, with the same output as the Chez-built compiler, with one known exception: it cuts a String constant at a NUL byte (`KNOWN-BUGS.md`). `rc2/doc/self-hosting.md` has the findings, the numbers and what is still open.
+`idris2-rc2-norepl` is the same compiler with a driver that has no REPL (`rc2/doc/norepl.md`). rc2 can build it, and the result builds the libraries and itself, and type-checks the compiler's API package, with the same output as the Chez-built compiler (`rc2/doc/self-hosting.md` has the findings, the numbers and what is still open).
 
 ```sh
 cd rc2
@@ -117,7 +117,7 @@ build/exec/idris2-rc2-norepl --cg rc2 Program.idr -o program  # 3. it is a compi
 ```
 
 - Step 2 produces a 114 MB C file and compiles it, so most of the time is the C compiler. No Chez Scheme runs in it, but step 1 still does: the first compiler and the `.ttc` files of the libraries come from the Chez-built `idris2`.
-- `rc2/tests/selfhost.sh [stage1|libs|api|fixed|all]` repeats the experiment under `rc2/build/selfhost`: `libs` builds `prelude`, `base`, `linear`, `network`, `contrib` and `test` with the rc2-built compiler, `api` type-checks `idris2api`, and `fixed` builds `idris2-rc2-norepl` again and checks that the C is the same, and `diff` compiles `rc2/tests` with both compilers and compares the C (it fails until the NUL bug is fixed).
+- `rc2/tests/selfhost.sh [stage1|libs|api|fixed|all]` repeats the experiment under `rc2/build/selfhost`: `libs` builds `prelude`, `base`, `linear`, `network`, `contrib` and `test` with the rc2-built compiler, `api` type-checks `idris2api`, and `fixed` builds `idris2-rc2-norepl` again and checks that the C is the same, and `diff` compiles `rc2/tests` with both compilers and compares the C.
 - The rc2-built compiler has no REPL (`--ide-mode`, `--yaffle`, `--ttm`, `--repl` and `--client` are refused) and type-checks about twice as slowly as the Chez-built one.
 
 ### Profiling Build Performance (--timing)
