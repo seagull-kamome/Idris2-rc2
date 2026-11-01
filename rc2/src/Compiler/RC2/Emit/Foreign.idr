@@ -236,11 +236,13 @@ fastPackFixedShape ret fargs = boxedRet ret && all boxedArg fargs
     boxedRet : CFType -> Bool
     boxedRet CFString = True
     boxedRet (CFUser _ _) = True
+    boxedRet CFForeignObj = True
     boxedRet _ = False
 
     boxedArg : CFType -> Bool
     boxedArg CFString = True
     boxedArg (CFUser _ _) = True
+    boxedArg CFForeignObj = True
     boxedArg (CFFun _ _) = True
     boxedArg _ = False
 

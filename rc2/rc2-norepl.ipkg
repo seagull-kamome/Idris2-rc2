@@ -1,0 +1,14 @@
+package rc2-norepl
+version = 0.1.0
+authors = "rc2 project"
+
+sourcedir = "src_norepl"
+
+depends = idris2, contrib, network, rc2
+
+modules = NoRepl.SchemeStubs,
+          NoRepl.Driver,
+          NoRepl.Main
+
+main = NoRepl.Main
+executable = "idris2-rc2-norepl"
