@@ -87,6 +87,19 @@ Not Chez: `libidris2_support` (C, from `idris2-src/support/c`) and the rc2 runti
 
    The `idris2api` row ran next to another build on the same machine; the others alone.
    Compiling a small program takes about the same time with both (the C compiler is most of it).
+
+   Later measurements, in instructions and not in time, after the component rule
+   of `leaf-tail-calls.md` replaced its leaf rule (the table above is from
+   before): building `libs/prelude` executes 39.14 G instructions with the
+   rc2-built compiler before that change and 36.94 G after it, against 17.28 G
+   with the Chez-built one (callgrind), so about 2.1 times. Building `idris2-rc2-norepl`
+   (`rc2-norepl.ipkg`, C compilation included) takes 10 min 3 s with the
+   Chez-built compiler and 12 min 18 s with the rc2-built one, one run each.
+   In that callgrind profile about 60% of the instructions are memory
+   management (allocation, reference counts), which `TODO.md` ("a small-object
+   allocator") and a preloaded `mimalloc` (-13% in time on `prelude`, -12% on
+   `base`) address; the self-build is an experiment, not a
+   replacement for the Chez-built compiler.
 8. **What works with the rc2-built compiler** (tested): `-o`, `--check`, `--typecheck` and `--build` of
    packages (libraries and an executable), `--version`, `--help`. `--exec` was only run
    with the Chez-built `idris2-rc2-norepl`. **Not tested**: `--install`, `--mkdoc`,

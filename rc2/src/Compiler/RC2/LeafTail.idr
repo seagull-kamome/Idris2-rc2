@@ -1,77 +1,86 @@
-||| A tail call to a *leaf* function is made directly instead of through a
-||| closure that the caller returns for the nearest trampoline to run.
-||| A leaf function is one with no tail call that can leave work behind:
-||| every tail of its body builds a value, or tail-calls another leaf.
-||| Its call returns after a bounded amount of work of its own, so calling
-||| it from a tail position cannot grow the C stack without bound, which is
-||| all the closure was for. `Control.Task`'s `>>=`, a forwarder of `bind`,
-||| is such a function. See `rc2/doc/leaf-tail-calls.md`. Disable with
-||| `--directive noleaftail`.
+||| A tail call to a known function is made directly instead of through a
+||| closure for the nearest trampoline to run, unless the call stays inside
+||| one strongly connected component of the tail-call graph. See
+||| `rc2/doc/leaf-tail-calls.md`. Disable with `--directive noleaftail`.
 |||
 ||| Copyright 2026, Hattori,Hiroki. All rights reserved.
 ||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.LeafTail
 
+import Compiler.RC2.Emit.Util
+import Compiler.RC2.MutualLoop
 import Compiler.RC2.RCExp
 import Compiler.RC2.Util
 
 import Core.Context
 
+import Data.List
+import Data.SortedMap
 import Data.SortedSet
 
 %default covering
 
-||| The callees of the tail positions of `e` if all of them are values or
-||| calls; `Nothing` if one is anything that can leave work behind (an
-||| `apply`, a worker call, a loop, a force).
-leafTailCallees : RCExp -> Maybe (List Name)
-leafTailCallees (RAppName _ _ n _) = Just [n]
-leafTailCallees (RV {}) = Just []
-leafTailCallees (RCon {}) = Just []
-leafTailCallees (RUnderApp {}) = Just []
-leafTailCallees (ROp {}) = Just []
-leafTailCallees (RPrimVal {}) = Just []
-leafTailCallees (RErased {}) = Just []
-leafTailCallees (RCrash {}) = Just []
-leafTailCallees (RExtPrim {}) = Just []
-leafTailCallees e = tailChildren e >>= \cs => concat <$> Prelude.traverse leafTailCallees cs
+||| The functions whose body `e` ends in a call: a direct tail call to a
+||| boxed function or to a worker, through a loop as well.
+tailCallees : RCExp -> List Name
+tailCallees (RAppName _ _ n _) = [n]
+tailCallees (RAppNameRep _ n _ _ _ _) = [n]
+tailCallees (RLoop _ _ _ _ k) = tailCallees k
+tailCallees e = maybe [] (concatMap tailCallees) (tailChildren e)
 
-||| The functions whose tails are values or calls of functions in the set:
-||| the least fixpoint, so a cycle of tail calls is never in it.
-leafSet : List (Name, RCDef) -> SortedSet Name
-leafSet defs = grow empty candidates
-  where
-    candidates : List (Name, List Name)
-    candidates = mapMaybe cand defs
-      where
-        cand : (Name, RCDef) -> Maybe (Name, List Name)
-        cand (n, MkRCFun (_ :: _) RBoxed False body) = (\cs => (n, cs)) <$> leafTailCallees body
-        cand _ = Nothing
-
-    grow : SortedSet Name -> List (Name, List Name) -> SortedSet Name
-    grow acc cs =
-        let (ready, rest) = partition (\(_, callees) => all (\c => contains c acc) callees) cs
-        in if null ready then acc else grow (foldl (\s, (n, _) => insert n s) acc ready) rest
-
-||| `e` with each tail call of a leaf made through a `let`, which `Emit`
-||| renders as a plain call. Loops are left alone.
-rewriteTails : {auto v : Ref VarId Int} -> SortedSet Name -> RCExp -> Core RCExp
-rewriteTails leaves = go
+||| `e` with each tail call of an eligible function made direct. Loops are
+||| entered; their `RLoopContinue` is not a call.
+rewriteTails : (Name -> List RCLocal -> Bool) -> RCExp -> Core RCExp
+rewriteTails ok = go
   where
     go : RCExp -> Core RCExp
-    go e@(RAppName fc lz n args) =
-        if contains n leaves
-           then do x <- freshVarId
-                   pure (RLet fc x RBoxed e (RV fc (RCLoc x)))
-           else pure e
+    go e@(RAppName fc _ n args) =
+        pure (if ok n args then RAppNameRep fc n (map (const RBoxed) args) RBoxed [] args else e)
+    go (RLoop fc ps initial pd k) = RLoop fc ps initial pd <$> go k
     go e = fromMaybe (pure e) (traverseTailChildren @{Applicative.CORE} go e)
 
-||| Make the tail calls of leaves direct in every definition.
+||| The tail-call graph over the functions of `defs`.
+tailGraph : List (Name, RCDef) -> Graph
+tailGraph defs =
+    let known = SortedSet.fromList (mapMaybe (\(n, d) => case d of
+                                                         MkRCFun {} => Just n
+                                                         _ => Nothing) defs)
+    in SortedMap.fromList (mapMaybe (\(n, d) => case d of
+                                                     MkRCFun _ _ _ body => Just (n, SortedSet.fromList (filter (\c => contains c known) (tailCallees body)))
+                                                     _ => Nothing) defs)
+
+||| The number of the strongly connected component of each function.
+componentOf : Graph -> SortedMap Name Nat
+componentOf graph =
+    let sccs = tarjanSCCs graph
+    in SortedMap.fromList (concat (zipWith (\i, ns => map (\n => (n, i)) ns) [0 .. length sccs] sccs))
+
+||| The boxed entry points a direct call can name, with their arity.
+entryArities : List (Name, RCDef) -> SortedMap Name Nat
+entryArities defs =
+    SortedMap.fromList (mapMaybe (\(n, d) => case d of
+                                                 MkRCFun as RBoxed False _ =>
+                                                     if length as > 0 && length as <= MaxExtractFunArgs
+                                                        then Just (n, length as)
+                                                        else Nothing
+                                                 _ => Nothing) defs)
+
+||| Whether `caller` may call `n` with `args` directly: a boxed entry of that
+||| arity, in a component other than the caller's.
+directOk : SortedMap Name Nat -> SortedMap Name Nat -> Name -> Name -> List RCLocal -> Bool
+directOk comps entries caller n args =
+    case (lookup n entries, lookup caller comps, lookup n comps) of
+         (Just arity, Just a, Just b) => length args == arity && a /= b
+         _ => False
+
+||| Make the tail calls that cannot close a cycle direct, in every definition.
 export
-applyLeafTail : {auto v : Ref VarId Int} -> List (Name, RCDef) -> Core (List (Name, RCDef))
-applyLeafTail defs =
-    let leaves = leafSet defs
-    in if null (Prelude.toList leaves) then pure defs
-       else traverse (\(n, d) => case d of
-                                      MkRCFun as RBoxed False body => (\b => (n, MkRCFun as RBoxed False b)) <$> rewriteTails leaves body
-                                      _ => pure (n, d)) defs
+applyLeafTail : List (Name, RCDef) -> Core (List (Name, RCDef))
+applyLeafTail defs = go (componentOf (tailGraph defs)) (entryArities defs)
+  where
+    go : SortedMap Name Nat -> SortedMap Name Nat -> Core (List (Name, RCDef))
+    go comps entries =
+        traverse (\(n, d) => case d of
+                                   MkRCFun as RBoxed isWorker body =>
+                                       (\b => (n, MkRCFun as RBoxed isWorker b)) <$> rewriteTails (directOk comps entries n) body
+                                   _ => pure (n, d)) defs

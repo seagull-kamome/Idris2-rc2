@@ -106,6 +106,8 @@ rc2コード生成バックエンドで、Idris 2のプログラムをコンパ�
 
 ### 5. rc2 自身でコンパイラをビルドする（セルフホスティング、Chez Scheme なし）
 
+> **実験的な機能です。** rc2でビルドしたコンパイラは、Chez版より遅くなります。`libs/prelude`のビルドで実行する命令数は約2.1倍で、`idris2-rc2-norepl`のビルドは、Chez版で約10分のところ約12分かかります（Cのコンパイルを含みます）。Chez Schemeなしでrc2を試すための機能で、普段使いのコンパイラには向きません。数値は`rc2/doc/self-hosting.md`にあります。
+
 `idris2-rc2-norepl` は、REPL を持たないドライバを使う同じコンパイラです（`rc2/doc/norepl.md`）。rc2 でこれをビルドでき、できたコンパイラは、ライブラリと自分自身をビルドし、コンパイラの API パッケージを型検査して、Chez 版と同じ出力になります。分かったこと、数値、未解決の点は`rc2/doc/self-hosting.md`にあります。
 
 ```sh
@@ -118,7 +120,7 @@ build/exec/idris2-rc2-norepl --cg rc2 Program.idr -o program  # 3. idris2-rc2と
 
 - 手順2は114 MBのCファイルを作ってコンパイルするので、時間の大半はCコンパイラです。Chez Schemeはここでは動きませんが、手順1ではまだ動きます。最初のコンパイラとライブラリの`.ttc`は、Chez製の`idris2`が作るためです。
 - `rc2/tests/selfhost.sh [stage1|libs|api|fixed|all]`が、この実験を`rc2/build/selfhost`の下で繰り返します。`libs`は`prelude`、`base`、`linear`、`network`、`contrib`、`test`をrc2版コンパイラでビルドし、`api`は`idris2api`を型検査し、`fixed`は`idris2-rc2-norepl`をもう一度ビルドして、Cが同じことを確かめ、`diff`は`rc2/tests`を両方のコンパイラでコンパイルしてCを比べます。
-- rc2版コンパイラにはREPLがなく（`--ide-mode`、`--yaffle`、`--ttm`、`--repl`、`--client`は断ります）、型検査はChez版の約2倍遅くなります。
+- rc2版コンパイラにはREPLがなく（`--ide-mode`、`--yaffle`、`--ttm`、`--repl`、`--client`は断ります）、Chez版より遅くなります（この節の冒頭の注を参照）。
 
 ### ビルド時の性能計測（--timing）
 

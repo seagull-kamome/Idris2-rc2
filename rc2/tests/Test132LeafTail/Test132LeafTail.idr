@@ -4,7 +4,8 @@ module Main
 -- `doc/leaf-tail-calls.md`): forwarders that only tail-call a function
 -- returning a constructor, next to `ping` and `pong`, which tail-call each
 -- other. A cycle is not a leaf, and a million bounces must still run in
--- constant C stack. The answers are what an output diff can see; the shape
+-- constant C stack (here `MutualLoop` makes them one loop; `Test154SccTail`
+-- keeps a real cycle). The answers are what an output diff can see; the shape
 -- of the code is in the doc.
 
 %noinline
