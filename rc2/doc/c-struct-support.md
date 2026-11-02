@@ -562,6 +562,17 @@ not copying files. What that comes down to, concretely:
   `SetField` directly from `ExtPrim`, with no reference counts to
   track, so that part of the design has no upstream analogue.
 
+## A native operand of `RExtPrim`
+
+An operand held natively (a `Double` or large `Int` literal, a native `Double`
+local) is boxed for the call, and the box was never dropped, so `writeIORef r 1.5`
+leaked 16 bytes on every execution (`tests/Test156ExtPrimLiteral`). `Emit` now boxes
+such an operand with `boxOpArgParts`, as its `ROp` case does, and drops that box after
+the call. This is right because every primitive of the whitelist that keeps a value
+takes its own reference: `prim__newIORef`, `prim__writeIORef`, `prim__newArray`,
+`prim__arraySet` and `prim__onCollectAny` (`prim__onCollect` calls it) `dup` it; the
+others (`prim__readIORef`, `prim__arrayGet`, `prim__os`, `prim__codegen`) keep none.
+
 ## Open questions for rc2's own design
 
 - ~~Unconfirmed: what happens, in any backend including Chez, when a
