@@ -29,8 +29,9 @@ else
 fi
 
 # And at the C level: no Boxed Bool is built for them, the conditions are
-# the `_raw` helpers (a plain C int).
-raw="$(grep -cE 'int cmp_[0-9]+ = idris2rc2_(lt|gt|eq|lte|gte)_(Integer|string)_raw\(' "$TMP/${name}_rc2.c" || true)"
+# the `_raw` helpers (a plain C int), in the `if` itself or, when a drop runs
+# before the branch, in a scratch `int cmp_N`.
+raw="$(grep -cE '(int cmp_[0-9]+ = |if \()idris2rc2_(lt|gt|eq|lte|gte)_(Integer|string)_raw\(' "$TMP/${name}_rc2.c" || true)"
 if [ "$raw" -ge "$cmps" ]; then
     pass "Integer/String comparisons -- $raw condition(s) are *_raw C int helpers"
 else

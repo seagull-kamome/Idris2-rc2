@@ -774,6 +774,9 @@ int64_t tmp_22 = var_555;
 if (tmp_22 == UINT8_C(1)) { ... } else { ... }
 ```
 
+(Written at the time of Stage 4: `Emit` no longer copies a native scrutinee that
+is already a variable into `tmp_22`, and compares `var_555` in the `if`.)
+
 `rc2/tests/Test13NativeArgChain.idr`'s own `classify`/`describe` (plus
 the `*Neg` second callers that keep `Compiler.RC2.LateInline`'s own
 single-caller inlining from splicing the callee away before Stage 4
