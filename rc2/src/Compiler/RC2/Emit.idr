@@ -501,11 +501,12 @@ mutual
         branchBody sink body tailPosition
 
     ||| Lower a fused comparison branch (see RCExp.idr's own doc comment
-    ||| on RCmpCase and `nativeCmpExpr`): the comparison is evaluated once
-    ||| into a raw C `int` (no heap allocation for the Bool it would
-    ||| otherwise be), `postDrop` is lowered immediately after (see
-    ||| emitRC's own doc comment for the rule) -- and then exactly one of the two
-    ||| branches runs, each writing straight into `sink` (resolved once,
+    ||| on RCmpCase and `nativeCmpExpr`): the comparison is a raw C `int`
+    ||| condition (no heap allocation for the Bool it would otherwise be),
+    ||| written in the `if` itself, or kept in a scratch `int cmp_N` when a
+    ||| drop (an operand's own, or `postDrop`, see emitRC's own doc comment
+    ||| for the rule) has to run between it and the branch -- and then
+    ||| exactly one of the two branches runs, each writing straight into `sink` (resolved once,
     ||| before either branch -- see `resolveSink`) instead of a throwaway
     ||| `switchReturnVar`. Under `SinkReturn`, `whenTrue` is guaranteed to
     ||| end in `return`/`goto` (see `chainsWithElse`'s own doc comment),
@@ -523,13 +524,17 @@ mutual
                               then traverseVect (boxOpArg fc) args
                               else traverseVect (rcVarToNativeC (TPrim (cmpOpTy op))) args
         let argStrs = map fst argsWithPending
-        let condVar = "cmp_" ++ !(getNextCounter)
-        emit fc $ "int " ++ condVar ++ " = "
-                  ++ (if boxedCmp then boxedCmpExpr op.fst argStrs else nativeCmpExpr op.fst argStrs) ++ ";"
-        removeVars $ concatMap snd (toList argsWithPending)
-        removeVars $ map varName postDrop
+        let cond = if boxedCmp then boxedCmpExpr op.fst argStrs else nativeCmpExpr op.fst argStrs
+        condText <- if null (concatMap snd (toList argsWithPending)) && null postDrop
+                       then pure cond
+                       else do
+                           let condVar = "cmp_" ++ !(getNextCounter)
+                           emit fc $ "int " ++ condVar ++ " = " ++ cond ++ ";"
+                           removeVars $ concatMap snd (toList argsWithPending)
+                           removeVars $ map varName postDrop
+                           pure condVar
         resolvedSink <- resolveSink fc sink
-        emit emptyFC "if (\{condVar}) {"
+        emit fc "if (\{condText}) {"
         increaseIndentation
         emitInto emptyFC resolvedSink tailPosition whenTrue
         decreaseIndentation
@@ -593,7 +598,6 @@ mutual
         scRep <- repOfLocal sc
         case integerSwitch alts of
             True => do
-                tmpint <- getNewVarThatWillNotBeFreedAtEndOfBlock
                 (extractExpr, pending) <- the (Core (String, List String)) $ case scRep of
                      RNative ty => rcVarToNativeC ty sc
                      RInlineNative ty => rcVarToNativeC ty sc
@@ -601,10 +605,20 @@ mutual
                      RBoxed => pure (case alts of
                                            (MkRConstAlt c0 _ :: _) => extractIntExpr c0 sc'
                                            [] => "idris2rc2_extractInt(\{sc'})", [])
-                emit emptyFC "int64_t \{tmpint} = \{extractExpr};"
-                removeVars pending
+                let plain = isCIdentifier extractExpr
+                let atMostOneAlt = case alts of
+                                       [] => True
+                                       [_] => True
+                                       _ => False
+                scrutinee <- if null pending && (plain || atMostOneAlt)
+                                then pure extractExpr
+                                else do
+                                    tmpint <- getNewVarThatWillNotBeFreedAtEndOfBlock
+                                    emit emptyFC "int64_t \{tmpint} = \{extractExpr};"
+                                    removeVars pending
+                                    pure tmpint
                 emitAltChain resolvedSink
-                    (\(MkRConstAlt c _) => pure ("\{tmpint} == \{const2Integer c 0}", []))
+                    (\(MkRConstAlt c _) => pure ("\{scrutinee} == \{const2Integer c 0}", []))
                     (\(MkRConstAlt _ body) => branchBody resolvedSink body tailPosition)
                     defaultAction
                     alts

@@ -1298,6 +1298,12 @@ integerSwitch (MkRConstAlt c _  :: _) =
         (Ch x) => True
         _ => False
 
+||| Whether `s` is a bare C identifier (or a number): a name that stands for
+||| the same value wherever it is read, so it needs no scratch copy.
+export
+isCIdentifier : String -> Bool
+isCIdentifier s = not (null (unpack s)) && all (\c => isAlphaNum c || c == '_') (unpack s)
+
 ||| The int64 an RConstCase "integer switch" compares, read with the
 ||| accessor for the alts' constant type (every alt shares one, per
 ||| `integerSwitch`). An immediate carries no type of its own
