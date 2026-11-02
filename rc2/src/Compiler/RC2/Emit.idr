@@ -1065,14 +1065,17 @@ emitRC sink (RExtPrim fc _ p args postDrop) _ = do
     -- ext-prim args follow the same borrow/move contract as an
     -- ordinary ROp's operands (see RC.idr's own annotate RExtPrim
     -- case) -- box any that happen to be native locals first.
-    argsWithPending <- traverse rcVarToBoxedC args
+    argsWithFresh <- traverse (boxOpArgParts fc) args
     -- `postDrop`: see emitRC's own doc comment (same rule as the ROp
     -- case above) -- each argument's own InlineMap'd pending drop
     -- (`rcVarToBoxedC`'s own doc comment) needs exactly the same
-    -- timing.
+    -- timing. The box made here for a native operand (`boxOpArgParts`) is
+    -- dropped after the call as well: doc/c-struct-support.md, "A native
+    -- operand of `RExtPrim`".
     finalizeSinkWithDrop fc sink
-      "idris2rc2_\{cName p}(\{showSep ", " (map fst argsWithPending)})"
-      (map varName postDrop ++ concatMap snd argsWithPending)
+      "idris2rc2_\{cName p}(\{showSep ", " (map (\(e, _, _) => e) argsWithFresh)})"
+      (map varName postDrop ++ mapMaybe (\(_, fresh, _) => fresh) argsWithFresh
+         ++ concatMap (\(_, _, pending) => pending) argsWithFresh)
 
 -- Part D (doc/c-struct-support.md's "Design" section): resolve
 -- structName/fieldName against StructDefs (Part B/C), then render
