@@ -80,6 +80,7 @@ fine-grained per-function/per-node control.
 | `nopushdown` | `Compiler.RC2.PushDown`: a run of `dup`/`drop` nodes right in front of a `case` moves into the arms, where a `dup` meets the arm's own `drop` of the same local (`doc/pushdown.md`). |
 | `nodupmerge` | `Compiler.RC2.DupMerge`'s batching of several individual `RDup` nodes into one higher-`extra` `RDup`, *and* its `cancelDupDrop` peephole (an `RDup` whose local an `RDrop` in the same refcount-only run, or the `postDrop` of the read-only node right after the dups, releases again; an alias `let x = w; drop [x]` becomes `drop [w]`). |
 | `noleaftail` | `Compiler.RC2.LeafTail`'s direct tail calls: every tail call to a known function goes back through a closure for the trampoline. See `leaf-tail-calls.md`. |
+| `noconstalias` | `Compiler.RC2.DeadVars`'s removal of `let x = <constant>` and of the `dup`/`drop` of `x` (the constant is read in its place). See `dead-vars.md`, "Constant aliases". |
 | `noreusenested` | `Compiler.RC2.Reuse`'s search for a same-name constructor inside the *value* of a `let` (a `case`/`let` tree) when the body claims nothing; with it the reuse pass behaves as before (`doc/reuse-analysis.md`, "Nested let values"). |
 | `noreuserecheck` | `Compiler.RC2.Reuse.recheckReuse`, the pass after `DualABI` that gives a dead offer (released up front because an inner offer once claimed its constructor) a claim again when `DualABI`'s struct return removed the inner claim; with it the reuse result stays as `Reuse` left it (`doc/reuse-analysis.md`, "Re-checking dead offers after DualABI"). |
 

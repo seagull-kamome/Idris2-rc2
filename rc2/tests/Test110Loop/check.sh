@@ -83,8 +83,9 @@ divPlace() {
         on && /op \/Int / { print (inloop ? "inside" : "outside"); exit }' "$d"
 }
 # sumDivLiteral is inlined into `run`: its hoisted division is the
-# `op /Int [_, #7]` sitting right before the `loop [`.
-if grep -A1 'op /Int \[v[0-9]*, #7\]' "$d" | grep -q '^ *loop \['; then
+# `op /Int [_, #7]` sitting right before the `loop [` (its dividend is a
+# variable or a constant).
+if grep -A1 'op /Int \[[v#]-\?[0-9]*, #7\]' "$d" | grep -q '^ *loop \['; then
     lit=outside
 else
     lit=inside

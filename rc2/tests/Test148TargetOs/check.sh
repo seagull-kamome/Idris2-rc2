@@ -29,8 +29,8 @@ else
 fi
 
 # The comparison with a literal folds with it (rc2/doc/const-caf-fold.md,
-# "String literals"); under dynamic it has to stay.
-if [ "$(grep -c 'cmp ==String \[.*#"Linux"' "$dump" || true)" = "0" ]; then
+# "String literals"): only the branch taken is left; under dynamic it has to stay.
+if ! grep -q 'os is other' "$dump"; then
     pass "default: os == \"Linux\" folded"
 else
     fail "default: os == \"Linux\" left in $dump"

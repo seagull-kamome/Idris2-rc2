@@ -120,3 +120,44 @@ counter for it, since it's still real storage at that offset in the
 matched constructor, just not one this alt itself ever needs to name.
 
 - Measured on idris2-lsp: asking per alt (`freeLocalsR` of the alt's own body) cost 2.74s of the pass's 2.82s; the single whole-definition `mentionedLocals` set replaces it.
+
+## Constant aliases
+
+The pass also removes `let x = <constant>`. `LateInline` binds a callee's
+parameter to a fresh variable when the argument is a constant, because its
+`Renaming` maps ids to ids and cannot name a constant (`buildSplice`, last
+clause). The callee's own `dup`s and `drop`s of the parameter then stay, on a
+variable bound to something that is NULL, an immediate or an immortal static.
+`ConstFold`, `SpecConstCon`, `SpecClosure` and `ArityRaise` leave a few of the
+same shape. Counted on `TestAsyncHTTPServer`, stopping `LateInline` removes 87%
+of them.
+
+`propagateConstAliases` runs before the erasure above, on each definition:
+
+- It takes every `RLet x _ (RV c)` whose `c` is NULL, erased, the world, an
+  empty or constant constructor, a constant closure, a string, or an
+  integer, character or `Bits` literal that is an immediate. A `Double`, an
+  `Int64` or `Integer` outside [-2^62, 2^62) and a `Bits64` of 2^63 or more
+  are left: `rcVarToBoxedC` boxes such a native literal with a fresh
+  allocation at every read, so a variable bound to one owns a cell and keeps
+  its `dup`s and `drop`s (`safeConst`). A `let` that holds a pointer natively
+  (`Native Ptr`) is left too: boxing one gives the tagged word `mkPtr` makes,
+  and a null pointer read that way is not the plain `NULL` of `RCNull`, which
+  `idris2rc2_toPtr` would then dereference (`plainRep`). A `let` binding the same id twice is left
+  as well.
+- `x` stays when a node reads it where a variable is needed: a `case`
+  scrutinee, a cell or struct, a forced or applied value, a reuse token, or a
+  `reuse=`. A loop parameter has the same id as the variable that starts the
+  loop, so that id stays too; replacing it would turn the reads inside the loop
+  into the constant (`Test155ConstAlias`, `countVowels`).
+- Every other read of `x` becomes `c`, the `let` is removed, and so are the
+  `dup`, `drop` and `free` of `x` and the constants in `postDrop` lists, which
+  `Emit` reads as variables.
+- It repeats up to three times, since replacing one alias can make another
+  `let` a constant.
+
+Disable with `--directive noconstalias`; `--directive nodeadvars` turns off
+the whole pass.
+
+Measured on `TestAsyncHTTPServer`: the `let`s that bind a constant go from 84
+to 15 of 2,944, the `dup`/`drop` lines from 2,294 to 2,266.
