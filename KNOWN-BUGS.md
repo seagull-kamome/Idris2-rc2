@@ -271,3 +271,19 @@ enough depth:
 - continuation-passing traversals and other closure chains
   (`TODO.md`, "closure-valued loop parameters, beyond difference
   lists").
+
+## rc2: a `Double` or large `Int` literal passed to `RExtPrim` leaks its box
+
+`writeIORef r 1.5` and `newIORef 0.0` each leak 16 bytes per execution
+(valgrind: `idris2rc2_mkDouble`, and `idris2rc2_mkInt64` for an `Int`
+outside the immediate range). A native literal read in a Boxed position is
+boxed with a fresh allocation at every read (`rcVarToBoxedC`), and `Emit`'s
+`RExtPrim` case never drops it: `ROp` does, through `boxOpArgParts`' fresh
+boxes, but `RExtPrim` renders its arguments with `rcVarToBoxedC` only. The
+callee takes its own reference (`prim__writeIORef` dups its value), so the
+fresh one is never released. It happens with `--directive noconstalias`, so
+it is not caused by `DeadVars`' constant aliases.
+
+Reproducer: `r <- newIORef 0.0; writeIORef r 1.5` under valgrind. In a loop
+that writes a literal it leaks on every iteration. An immediate (an `Int` in
+range, a `Bits8`, a `Char`, a `String`, a literal bound by `let`) does not.
