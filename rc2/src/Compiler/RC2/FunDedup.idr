@@ -136,6 +136,8 @@ hasFatConst = go
     go (RLoopContinue _ args postDrop) = ls args || ls postDrop
     go (RMemoize _ _ _ body) = go body
 
+||| `renameNamesR` over one definition.
+export
 renameNamesD : (Name -> Name) -> RCDef -> RCDef
 renameNamesD f (MkRCFun args r w body) = MkRCFun args r w (renameNamesR f body)
 renameNamesD f (MkRCError body) = MkRCError (renameNamesR f body)
