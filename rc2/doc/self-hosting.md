@@ -71,35 +71,79 @@ Not Chez: `libidris2_support` (C, from `idris2-src/support/c`) and the rc2 runti
      say they agree on every program (finding 9 was found by comparing more).
 6. **Size and time of the build.** The C of `idris2-rc2-norepl` is 114 MB
    (1.69 million lines; 9.3 MB with gzip, 5.8 MB with xz), the executable 15 MB.
-   rc2 takes 75 s to produce the C; the C compiler (`-O2`) takes about 9 more
-   minutes, on one core.
-7. **The rc2-built compiler is about twice as slow as the Chez-built one**, on
-   the same work:
+   The Chez-built rc2 takes 75 s to produce the C; the C compiler (`-O2`) takes
+   about 9 more minutes, on one core.
+7. **The rc2-built compiler is about 1.7 times as slow in time as the Chez-built
+   one on large builds** (1.65 for `base`; 1.35 for the short `prelude` build), and
+   executes about 2.1 times as many instructions.
 
    | work | Chez-built | rc2-built | ratio |
    |---|---|---|---|
-   | `prelude` | 5.1 s | 8.0 s | 1.6 |
-   | `base` (136 modules) | 52.4 s | 109.9 s | 2.1 |
-   | `contrib` (103) | 29.5 s | 62.9 s | 2.1 |
-   | `linear`, `network`, `test` | 6.7 s | 10.3 s | 1.5 |
-   | `idris2api` type-check (292) | 403 s | 894 s | 2.2 |
-   | `libs/control-async` type-check (11) | 4.9 s | 8.2 s | 1.7 |
+   | `base` (136 modules), 2026-11 | 52.4 s | 86.7 s | 1.65 |
+   | `base`, type-checking only (the `Elaborating` times) | 44.3 s | 74.3 s | 1.68 |
+   | `prelude` | 5.1 s | 6.9 s | 1.35 |
+   | `contrib` (103), earlier | 29.5 s | 62.9 s | 2.1 |
+   | `linear`, `network`, `test`, earlier | 6.7 s | 10.3 s | 1.5 |
+   | `idris2api` type-check (292), earlier | 403 s | 894 s | 2.2 |
+   | `libs/control-async` type-check (11), earlier | 4.9 s | 8.2 s | 1.7 |
 
-   The `idris2api` row ran next to another build on the same machine; the others alone.
+   The rows marked "earlier" are from before the speed-ups listed below (the older
+   `base` row said 109.9 s, ratio 2.1); the `idris2api` row ran next to another
+   build on the same machine; the others alone, one run each.
    Compiling a small program takes about the same time with both (the C compiler is most of it).
 
-   Later measurements, in instructions and not in time, after the component rule
-   of `leaf-tail-calls.md` replaced its leaf rule (the table above is from
-   before): building `libs/prelude` executes 39.14 G instructions with the
-   rc2-built compiler before that change and 36.94 G after it, against 17.28 G
-   with the Chez-built one (callgrind), so about 2.1 times. Building `idris2-rc2-norepl`
+   - **No module is an outlier.** For the 136 modules of `base` the ratio of the
+     `Elaborating` times lies between 1.6 and 2.1 (median 1.69 for the 20 modules
+     that take over 0.5 s in the Chez-built compiler). A module that does almost
+     nothing takes 0.08 s against 0.05 s, the same ratio.
+   - **Why `prelude` may look better.** Checking one module of three lines executes
+     3.44 G instructions in the Chez-built compiler and 2.38 G in the rc2-built one
+     (callgrind). That fixed cost of the Chez-built compiler is a larger share of
+     a short run such as the build of `prelude`, and may explain part of its better
+     ratio. Not measured further.
+   - **Where a small check goes in the rc2-built compiler.** 64% of those 2.38 G
+     instructions read the `.ttc` of `prelude` (`readFromTTC`, `fromBuf`), which
+     builds many small objects.
+   - **Outside type-checking.** In the build of `base` it is 14% of the time in the
+     rc2-built compiler (12.4 s of 86.7 s) and 15% in the Chez-built one (8.1 s of
+     52.4 s).
+
+   With the component rule of `leaf-tail-calls.md` (which replaced its leaf rule),
+   building `libs/prelude` executes 36.94 G instructions in the rc2-built compiler
+   instead of 39.14 G, against 17.28 G in the Chez-built one (callgrind), so about
+   2.1 times as many instructions. Building `idris2-rc2-norepl`
    (`rc2-norepl.ipkg`, C compilation included) takes 10 min 3 s with the
    Chez-built compiler and 12 min 18 s with the rc2-built one, one run each.
-   In that callgrind profile about 60% of the instructions are memory
-   management (allocation, reference counts), which `TODO.md` ("a small-object
-   allocator") and a preloaded `mimalloc` (-13% in time on `prelude`, -12% on
-   `base`) address; the self-build is an experiment, not a
-   replacement for the Chez-built compiler.
+   In the callgrind profile of that build, `malloc`/`free` take 27% of the
+   instructions, the reference counts (`dup`, `drop`, `teardown`) 26% and the
+   allocation wrappers 8%, about 60% for memory management together. The top
+   entries are `idris2rc2_teardown` 8.9%, `idris2rc2_drop` 8.8%, `free` 8.3%,
+   `malloc` 7.1% and `idris2rc2_dup` 6.8%; no function of the compiler itself has
+   more than 1.4%.
+
+   What was tried to speed this build up, with the effect (measured on `libs/prelude`
+   built by the rc2-built compiler, unless the cell says otherwise):
+
+   | change | instructions | time | kept |
+   |---|---|---|---|
+   | tail calls out of a cycle-free callee set made direct (`leaf-tail-calls.md`) | -5.6% | build of `rc2-norepl` by the Chez-built compiler -7% | yes |
+   | `let x = <constant>` and its `dup`/`drop` removed (`dead-vars.md`) | -0.004% | | yes (the IR is smaller) |
+   | scratch `int cmp_N` / `int64_t tmp_N` of a condition removed | not measured (`gcc` should fold them) | | yes (4,041 lines of C fewer) |
+   | preloaded `mimalloc` | | -13% (`prelude`), -12% (`base`) | no (a dependency) |
+   | reuse a constructor cell for another constructor of the same size | -0.45% | | no (gain too small) |
+   | `dup`/`drop` fast path forced inline (`always_inline`) | -7.1% | -5% | no (build of `rc2-norepl` 10 -> 40 min, executable 15 -> 38 MB) |
+   | only the NULL/immediate test of `dup`/`drop` inline | +3.4% | +8% | no (slower) |
+
+   Stack-allocating constructors that are only borrowed would reach few of them.
+   Counted statically on the IR of the compiler, not at run time: of 34,383
+   constructors bound by `let`, at most 7.6% could be stack-allocated if every
+   argument of a non-tail call could be borrowed, and 1.4% with the parameters that
+   can be borrowed today (`borrow-inference.md`). `teardown` takes about 47
+   instructions per freed object (a call frees a whole structure, so its cost
+   follows the number of objects). `TODO.md` ("a small-object allocator") keeps the
+   open item.
+
+   The self-build is an experiment, not a replacement for the Chez-built compiler.
 8. **What works with the rc2-built compiler** (tested): `-o`, `--check`, `--typecheck` and `--build` of
    packages (libraries and an executable), `--version`, `--help`. `--exec` was only run
    with the Chez-built `idris2-rc2-norepl`. **Not tested**: `--install`, `--mkdoc`,
@@ -178,11 +222,12 @@ yet: `--install` is the first open point.
    `libs/*` with it.
 2. **A seed release** (the C file, how it is made and checked), and a check in
    `gen-env.sh`/`env.sh` that does not ask for Chez when stage1 is there.
-3. **Speed.** The factor of two is the number to bring down (target: not more
-   than 1.2). Start with a profile (`callgrind`) of `base` built by stage1, to see
-   whether it is the work of the type checker (`Integer`/`Nat`, `String`, maps), the
-   closures, or the reference counts. The compiler is also the best large program for the
-   optimisations of rc2.
+3. **Speed.** About 1.7 times in time and 2.1 times in instructions (finding 7); the
+   number to bring down (target: not more than 1.2). The profile is taken: about 60%
+   of the instructions are memory management and no function stands out. What is
+   left is to do less of it (the table in finding 7 lists what was tried) or to make
+   each operation cheaper (`TODO.md`, "a small-object allocator"). The compiler is
+   also the best large program for the optimisations of rc2.
 4. **Build time.** 9 minutes of C compiler on one core. Per-module C (`--inc rc2`),
    or a C file cut in several translation units, would let `make -j` work; `-O1` for
    the cold code is the other lever.
@@ -198,9 +243,9 @@ yet: `--install` is the first open point.
 ```sh
 cd rc2
 ./tests/selfhost.sh stage1   # about 10 minutes
-./tests/selfhost.sh libs     # about 4 minutes
+./tests/selfhost.sh libs     # 3 to 4 minutes
 ./tests/selfhost.sh api      # about 15 minutes
-./tests/selfhost.sh fixed    # about 10 minutes
+./tests/selfhost.sh fixed    # about 12 minutes
 ./tests/selfhost.sh diff     # about 10 minutes: compiles rc2/tests with both compilers
 ```
 

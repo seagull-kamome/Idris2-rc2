@@ -71,7 +71,7 @@ build/exec/idris2-rc2 --cg rc2 --build rc2-norepl.ipkg      # about 10 minutes
   one (one difference: a `Double` literal is printed by the rc2 runtime, see
   `self-hosting.md`). It builds the libraries and the compiler's API package with
   `.ttc` files identical to those of the Chez-built compiler, and itself, with the
-  same C: a fixed point. It is about twice as slow at type-checking.
+  same C: a fixed point. It is about 1.7 times as slow on large builds such as `base` (`self-hosting.md`, finding 7).
 - `--build` of an ipkg with an executable and `--typecheck` work.
 
 ## Not done
