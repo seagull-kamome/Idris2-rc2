@@ -74,7 +74,7 @@ test for this -- `ctx` is read only when *two* nested flags are both
 
 ### Deciding whether `value` is even a candidate (`sinkEligible`)
 
-A bare `ROp`/`RCon`/`RAppName` (after peeling the same leading `RDup`/
+A bare `ROp`/`RCon`/`RAppName`/`RStructGet`/`RUnderApp`/`RDelay` (after peeling the same leading `RDup`/
 `RDrop`/`RFree`/`RReleaseReuse` wrapper shapes
 `Compiler.RC2.Loop.isInvariantExpr` already peels for an analogous
 reason), with the same exclusions that function uses and for the same
@@ -97,10 +97,9 @@ down to "only when the one arm that needs it is actually reached" --
 so a call that would have executed regardless is still guaranteed to,
 now simply closer to (and only when reaching) its one actual use;
 nothing here can turn a "never runs" path into a "now runs" one, the
-same safety argument the whole pass already rests on. `RApp`/
-`RUnderApp` (closure application/building) stay explicitly out of
-scope -- more machinery (allocation, the trampoline) than a direct
-named call, not analysed here. `RExtPrim` (genuine `%World`-threaded
+same safety argument the whole pass already rests on. `RApp` (closure
+application) stays out of scope, and `RUnderApp`/`RDelay` are covered in
+"Closures" below. `RExtPrim` (genuine `%World`-threaded
 effects) is never eligible, sunk or not.
 
 Sinking a call needed one new piece of infrastructure this whole pass
@@ -137,10 +136,10 @@ deliberately distinct from `RCExp.idr`'s own `freeLocalsR`: an
 it (`freeLocalsR` counts it as a use, which would make every sink
 candidate look used everywhere -- exactly wrong for this purpose).
 
-Sinking only fires when **exactly one arm is Used** and every other
-arm is DropOnly or Absent. Two-or-more-Used and zero-Used are both left
-alone (the first has nothing to gain; the second means `var` is truly
-dead code, not this pass's problem to clean up).
+Sinking fires when **some but not all arms are Used**: `value` is copied
+into each Used arm, and every other arm is DropOnly or Absent. All arms
+Used and zero Used are both left alone (the first has nothing to gain; the
+second means `var` is truly dead code, not this pass's problem to clean up).
 
 **`var` must not be the branch's own deciding operand**
 (`isDecidingOperand`) -- an `RCmpCase`'s own comparison args, or an
@@ -293,6 +292,20 @@ operands) left the arms the value does not sink into without the drop of
 the reference `x` arrived with, a leak. All four cases now share `spend`
 (`tests/Test137SinkDupTwice`).
 
+## Closures (`RUnderApp`, `RDelay`)
+
+A `partial` (under-applied call) or a `delay` (lazy cell) allocates, and
+has no other effect, so it is eligible like a `RCon`. The motivating case
+is a lazy closure built in front of a `case` that only one arm forces:
+the other arms no longer pay for the allocation and its release.
+`consumedOperands` counts the captured variables as consumed, so an arm that
+does not receive the closure gets an explicit `drop` of them, as for an
+`RCon`'s fields.
+
+Sinking moves the closure next to its `apply`, which makes it a candidate
+for `applyFoldApplied` (`doc/const-closure-fold.md`). That pass runs again
+right after Sink (`--directive noapplyfold` turns it off).
+
 ## Pipeline position
 
 Runs after `Compiler.RC2.Loop` (self-tail-call conversion), before
@@ -315,6 +328,7 @@ this stage alone, same convention as every other optional stage (see
   fix above), `sinkEligible`/`isDecidingOperand` (eligibility guards),
   `trySinkInto`/`trySinkIntoArms`/`applySinkExp`/`applySink` (the
   rewrite and whole-tree walk).
+- `rc2/tests/Test159SinkClosure` -- a closure sunk into the one arm that returns it (`check.sh` looks at the IR).
 - `rc2/src/Compiler/RC2/RC2.idr` -- `toRCDefs`'s own pipeline wiring.
 - `rc2/src/Compiler/RC2/ConAltNative.idr` -- `peelWrappers`, the
   "leading-wrapper-then-branch" idiom this pass's own wrapper-peeling

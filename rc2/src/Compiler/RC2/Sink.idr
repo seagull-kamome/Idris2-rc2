@@ -128,6 +128,8 @@ consumedOperands reps = go []
     -- call whose operands were dup'd first").
     go dupped (RAppName _ _ _ args) = spend dupped (filter isDroppableBoxed args)
     go dupped (RCon _ _ _ _ args _) = spend dupped (filter isDroppableBoxed args)
+    go dupped (RUnderApp _ _ _ args) = spend dupped (filter isDroppableBoxed args)
+    go dupped (RDelay _ _ _ caps) = spend dupped (filter isDroppableBoxed caps)
     go dupped (RDup _ v extra cont) = go (replicate (S extra) v ++ dupped) cont
     go dupped (RDrop _ _ cont) = go dupped cont
     go dupped (RFree _ _ cont) = go dupped cont
@@ -177,7 +179,7 @@ addOperandDrops fc consumed branch =
 ||| Whether `value` (after peeling the same leading `RDup`/`RDrop`/
 ||| `RFree`/`RReleaseReuse` wrappers `Compiler.RC2.Loop`'s own
 ||| `isInvariantExpr` peels for an analogous reason) is a bare
-||| `ROp`/`RCon`/`RAppName`/`RStructGet` eligible to sink -- same
+||| `ROp`/`RCon`/`RAppName`/`RStructGet`/`RUnderApp`/`RDelay` eligible to sink -- same
 ||| exclusions as `isInvariantExpr` for the first three (non-`Lazy`, no
 ||| `reuseFrom`), kept in sync deliberately rather than re-derived.
 ||| Unlike hoisting, `RAppName` *is* eligible here: sinking only ever
@@ -186,8 +188,10 @@ addOperandDrops fc consumed branch =
 ||| neither a `lazy` nor a `reuseFrom` field to exclude on, a struct
 ||| field read being unconditionally eager and never itself a reuse
 ||| candidate -- but its own `postDrop` still needs `consumedOperands`
-||| (above) to compensate for, exactly like `ROp`'s. `RApp`/
-||| `RUnderApp`/`RExtPrim` stay out of scope. See
+||| (above) to compensate for, exactly like `ROp`'s. `RUnderApp` and `RDelay`
+||| (building a closure or a lazy cell) are eligible: they have no effect and
+||| allocate, which is what the arm that does not use them can be spared.
+||| `RApp`/`RExtPrim` stay out of scope. See
 ||| doc/branch-sinking.md's "Deciding whether value is even a
 ||| candidate".
 sinkEligible : RCExp -> Bool
@@ -195,6 +199,8 @@ sinkEligible (ROp _ Nothing _ _ _) = True
 sinkEligible (RCon _ _ _ _ _ Nothing) = True
 sinkEligible (RAppName _ Nothing _ _) = True
 sinkEligible (RStructGet _ _ _ _) = True
+sinkEligible (RUnderApp _ _ _ _) = True
+sinkEligible (RDelay _ _ _ _) = True
 sinkEligible (RDup _ _ _ cont) = sinkEligible cont
 sinkEligible (RDrop _ _ cont) = sinkEligible cont
 sinkEligible (RFree _ _ cont) = sinkEligible cont
@@ -256,7 +262,7 @@ stripForSink var fc consumed branch = stripIfUnused var branch >>= addOperandDro
 ||| still computes at most once per evaluation either way, the same as
 ||| it would sitting unconditionally before the whole branch. The only
 ||| real cost is code size, and `sinkEligible` already bounds `value` to
-||| a single bare `ROp`/`RCon`/`RAppName`/`RStructGet` node, never an
+||| a single bare node, never an
 ||| arbitrarily large subtree, so that cost stays modest. `Nothing` in
 ||| exactly two cases: `usedCount == 0` (nothing to sink, `value` would
 ||| just vanish) or `usedCount == totalCount` (Used everywhere -- every
