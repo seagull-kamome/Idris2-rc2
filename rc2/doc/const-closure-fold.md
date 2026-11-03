@@ -490,3 +490,26 @@ of how many distinct functions a generic helper is ever called with.
   resulting immortal closure, modeled on `Test18ClosureInPlaceGrow`'s
   own rigor. (Kept its own test -- its long loop under valgrind doesn't
   belong in the merged suite.)
+
+## Over-application of a folded closure
+
+`foldConst` turns an `apply` of a constant closure into a call only when it
+gets exactly what the closure misses, and into a `partial` when it gets less.
+It gets more when the closure is the first stage of a curried lambda: `foldl`
+specialised on the constant closure of `Data.SortedMap.{insertFrom:1}` (one
+parameter, the key) applies it to the element and the accumulator at once, so
+the C was `idris2rc2_applyClosureN(&constclosure_N, {x, acc}, 2)`, which calls
+the lifted function, builds the closure it returns and applies that.
+
+`ArityRaise` had by then made `insertFrom:1` a bare wrapper of a function that
+takes both (`f params = partial g m params`), and `applyFoldApplied`
+(`ArityRaise.idr`) knows such wrappers. It now also folds `apply <constant
+closure of a bare wrapper> ys` with `length ys` equal to what the closure
+misses plus `m` into the call `g ys`. The closure is an immortal static that holds
+nothing, so there is nothing to drop; `ys` move into the call as they moved
+into the `apply`. The `let c = <closure>` form was folded before, with the
+drops of what the closure held adjusted.
+
+`Test157ApplyConstClosure` checks it with `Data.SortedMap.fromList`: the program's
+IR has fewer `apply` nodes of a constant closure than with `--directive noapplyfold`
+(none against one), and the output (against RefC) and valgrind are the same.

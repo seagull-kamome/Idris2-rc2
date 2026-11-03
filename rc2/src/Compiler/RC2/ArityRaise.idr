@@ -292,6 +292,10 @@ replaceApply c owned mk e = if mentions (RCLoc c) e == 0 then Just e else traver
 ||| exactly what it misses (or one more, to a bare wrapper missing one),
 ||| and otherwise only dropped, becomes a call at that `apply`; each drop
 ||| of it drops the closure's captured Boxed arguments instead.
+|||
+||| An `apply` of the constant closure of a bare wrapper (`f params = partial g
+||| m params`, zero-filled, so it misses `k` = the number of `params`), given
+||| all `k + m` arguments at once, is the call `g` with them.
 foldAppliedExp : SortedMap Name (Name, Nat) -> (SortedSet Int, SortedSet Int) -> RCExp -> RCExp
 foldAppliedExp ws nat e = here (mapChildren (foldAppliedExp ws nat) e)
   where
@@ -309,6 +313,10 @@ foldAppliedExp ws nat e = here (mapChildren (foldAppliedExp ws nat) e)
     isLoc _ _ = False
 
     here : RCExp -> RCExp
+    here e@(RApp fc Nothing (RCConstClosure n k) ys) = fromMaybe e $ do
+        (g, m) <- lookup n ws
+        guard (length ys == k + m)
+        pure (RAppName fc Nothing g (forget ys))
     here e@(RLet _ c RBoxed value body) = fromMaybe e $ do
         (lead, g, m, xs) <- closureValue ws value
         let owned = filter (isLoc (\i => not (contains i (fst nat)))) xs

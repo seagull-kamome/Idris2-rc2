@@ -436,8 +436,9 @@ foldConst _ env (RUnderApp fc n missing []) = RV fc (RCConstClosure n missing)
 foldConst _ env (RUnderApp fc n missing args) = RUnderApp fc n missing (map (resolveLocal env) args)
 -- Saturating a constant closure is a plain direct call (named, so the later
 -- passes see through it); an under-application builds an `RUnderApp`.
--- Over-application can't occur (`collectAppChain`). See
--- rc2/doc/const-closure-fold.md's "Saturated application of a folded closure".
+-- An over-application is left for `ArityRaise.applyFoldApplied`, which knows
+-- the bare wrappers. See rc2/doc/const-closure-fold.md's "Saturated
+-- application of a folded closure" and "Over-application of a folded closure".
 foldConst _ env (RApp fc lazy c args) =
     let c' = resolveLocal env c
         args' = map (resolveLocal env) args
