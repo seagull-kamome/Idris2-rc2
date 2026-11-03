@@ -8,11 +8,16 @@ IDRIS2RC2_Value *idris2rc2_strTail(IDRIS2RC2_Value *input) {
   IDRIS2RC2_String *s = (IDRIS2RC2_String *)input;
   size_t byteLen = s->len;
   size_t offset = idris2rc2_utf8ByteOffsetOfChar(s->str, byteLen, 1);
-  if (offset >= byteLen)
-    return (IDRIS2RC2_Value *)&idris2rc2_emptyStringValue;
+  if (offset >= byteLen) {
+    IDRIS2RC2_Value *result = (IDRIS2RC2_Value *)&idris2rc2_emptyStringValue;
+    idris2rc2_drop(input);
+    return result;
+  }
   IDRIS2RC2_String *r = idris2rc2_mkEmptyString(byteLen - offset + 1);
   memcpy(r->str, s->str + offset, byteLen - offset);
-  return (IDRIS2RC2_Value *)r;
+  IDRIS2RC2_Value *result = (IDRIS2RC2_Value *)r;
+  idris2rc2_drop(input);
+  return result;
 }
 
 IDRIS2RC2_Value *idris2rc2_strReverse(IDRIS2RC2_Value *str) {
@@ -42,7 +47,9 @@ IDRIS2RC2_Value *idris2rc2_strReverse(IDRIS2RC2_Value *str) {
     outPos += width;
   }
   free(offsets);
-  return (IDRIS2RC2_Value *)r;
+  IDRIS2RC2_Value *result = (IDRIS2RC2_Value *)r;
+  idris2rc2_drop(str);
+  return result;
 }
 
 IDRIS2RC2_Value *idris2rc2_strIndex(IDRIS2RC2_Value *str, IDRIS2RC2_Value *i) {
@@ -51,7 +58,10 @@ IDRIS2RC2_Value *idris2rc2_strIndex(IDRIS2RC2_Value *str, IDRIS2RC2_Value *i) {
   int64_t idx = idris2rc2_extractInt(i);
   size_t offset = idris2rc2_utf8ByteOffsetOfChar(s->str, byteLen, (size_t)idx);
   size_t consumed;
-  return idris2rc2_mkChar(idris2rc2_utf8DecodeAt(s->str, byteLen, offset, &consumed));
+  IDRIS2RC2_Value *result = idris2rc2_mkChar(idris2rc2_utf8DecodeAt(s->str, byteLen, offset, &consumed));
+  idris2rc2_drop(str);
+  idris2rc2_drop(i);
+  return result;
 }
 
 IDRIS2RC2_Value *idris2rc2_strCons(IDRIS2RC2_Value *c, IDRIS2RC2_Value *str) {
@@ -62,7 +72,10 @@ IDRIS2RC2_Value *idris2rc2_strCons(IDRIS2RC2_Value *c, IDRIS2RC2_Value *str) {
   IDRIS2RC2_String *r = idris2rc2_mkEmptyString((size_t)cpLen + byteLen + 1);
   idris2rc2_utf8EncodeInto(cp, r->str);
   memcpy(r->str + cpLen, s->str, byteLen);
-  return (IDRIS2RC2_Value *)r;
+  IDRIS2RC2_Value *result = (IDRIS2RC2_Value *)r;
+  idris2rc2_drop(c);
+  idris2rc2_drop(str);
+  return result;
 }
 
 IDRIS2RC2_Value *idris2rc2_strAppend(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {
@@ -71,7 +84,10 @@ IDRIS2RC2_Value *idris2rc2_strAppend(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {
   IDRIS2RC2_String *r = idris2rc2_mkEmptyString(idris2rc2_checkedStrLen(la + lb) + 1);
   memcpy(r->str, ((IDRIS2RC2_String *)a)->str, la);
   memcpy(r->str + la, ((IDRIS2RC2_String *)b)->str, lb);
-  return (IDRIS2RC2_Value *)r;
+  IDRIS2RC2_Value *result = (IDRIS2RC2_Value *)r;
+  idris2rc2_drop(a);
+  idris2rc2_drop(b);
+  return result;
 }
 
 IDRIS2RC2_Value *idris2rc2_strSubstr(IDRIS2RC2_Value *start, IDRIS2RC2_Value *len, IDRIS2RC2_Value *s) {
@@ -79,8 +95,13 @@ IDRIS2RC2_Value *idris2rc2_strSubstr(IDRIS2RC2_Value *start, IDRIS2RC2_Value *le
   size_t byteLen = in->len;
   int64_t startIdx = idris2rc2_extractInt(start);
   int64_t lenIdx = idris2rc2_extractInt(len);
-  if (startIdx < 0 || lenIdx < 0)
-    return (IDRIS2RC2_Value *)idris2rc2_mkEmptyString(1);
+  if (startIdx < 0 || lenIdx < 0) {
+    IDRIS2RC2_Value *result = (IDRIS2RC2_Value *)idris2rc2_mkEmptyString(1);
+    idris2rc2_drop(start);
+    idris2rc2_drop(len);
+    idris2rc2_drop(s);
+    return result;
+  }
   size_t startByte = idris2rc2_utf8ByteOffsetOfChar(in->str, byteLen, (size_t)startIdx);
   // Walk onward from startByte for lenIdx more characters, rather than
   // computing (startIdx + lenIdx) up front and re-scanning from byte 0 --
@@ -95,7 +116,11 @@ IDRIS2RC2_Value *idris2rc2_strSubstr(IDRIS2RC2_Value *start, IDRIS2RC2_Value *le
   size_t outLen = offset - startByte;
   IDRIS2RC2_String *r = idris2rc2_mkEmptyString(outLen + 1);
   memcpy(r->str, in->str + startByte, outLen);
-  return (IDRIS2RC2_Value *)r;
+  IDRIS2RC2_Value *result = (IDRIS2RC2_Value *)r;
+  idris2rc2_drop(start);
+  idris2rc2_drop(len);
+  idris2rc2_drop(s);
+  return result;
 }
 
 char *fastPack(IDRIS2RC2_Value *charList) {

@@ -34,12 +34,16 @@ maybeToList : Maybe a -> List a
 maybeToList Nothing = []
 maybeToList (Just x) = [x]
 
+||| The string primitives `Emit.Util.isReuseConsumingOp` lists, by dump name.
+stringOps : List String
+stringOps = ["++", "op_strcons", "op_strtail", "op_strrev", "op_strindex", "op_strsubstr"]
+
 ||| Does the arithmetic `op` named by the dump string consume its boxed operands
 ||| (`Emit.Util.isReuseConsumingOp`)? Its `postDrop` is then ignored by `Emit`:
 ||| a `dup` in front of it is a real reference handed over, not a read.
 ||| `Div` is consuming for `Int`/`Int64`/`Bits64` but not for `Integer`.
 consumingOp : String -> Bool
-consumingOp name = any test [("Integer", False), ("Int64", True), ("Int", True), ("Bits64", True)]
+consumingOp name = elem name stringOps || any test [("Integer", False), ("Int64", True), ("Int", True), ("Bits64", True)]
   where
     test : (String, Bool) -> Bool
     test (ty, divToo) =

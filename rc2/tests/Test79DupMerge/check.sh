@@ -42,7 +42,8 @@ fi
 
 # Section 5: `dup v` ahead of a read-only node that releases `v` again
 # through its own `postDrop` (op, extprim, comparison, call). The
-# Integer/Int64/Double arithmetic ops are skipped on purpose: their
+# Integer/Int64/Double arithmetic ops and the string ops (`++` and the
+# `op_str*` family) are skipped on purpose: their
 # runtime primitive consumes the operands itself (`Emit.idr` ignores
 # their `postDrop`), so there the `dup` is a real reference.
 pairs="$(awk '
@@ -55,7 +56,7 @@ pairs="$(awk '
     }
     {
         if (indent_of($0) == ind && match($0, /postDrop= \[[^]]*\]/) &&
-            $0 !~ /^ *op ((\+|-|\*|%|&|\||\^|<<|>>|neg)[A-Za-z]|(shl|shr|and|or|xor) )/) {
+            $0 !~ /^ *op ((\+|-|\*|%|&|\||\^|<<|>>|neg)[A-Za-z]|(shl|shr|and|or|xor) |\+\+ |op_str[a-z]+ )/) {
             s = substr($0, RSTART + 11, RLENGTH - 12)
             k = split(s, vs, /, */)
             for (j = 1; j <= k; j++) if (vs[j] in pend) { bad++; break }

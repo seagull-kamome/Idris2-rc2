@@ -231,8 +231,9 @@ cOp Crash         [_, msg]  = "idris2rc2_crash(" ++ msg ++ ");"
 cOp fn args = show fn ++ "(" ++ (showSep ", " $ toList args) ++ ")"
 
 ||| `True` for the Boxed `PrimFn`s whose runtime primitive
-||| (`idris2rc2_numeric.h`) consumes all its operands (reuses a unique one's
-||| storage, drops the rest); `Emit`'s `ROp` case then skips its own post-call
+||| (`idris2rc2_numeric.h`, `idris2rc2_strings.c`) consumes all its operands
+||| (the numeric ones reuse a unique one's storage; every one drops the rest);
+||| `Emit`'s `ROp` case then skips its own post-call
 ||| drops. See `rc2/doc/rop-reuse.md` "Which ops count as consuming".
 ||| `IntType` must be listed wherever `Int64Type` is (same C primitive):
 ||| missing either one double-drops.
@@ -285,6 +286,12 @@ isReuseConsumingOp (Sub DoubleType) = True
 isReuseConsumingOp (Mul DoubleType) = True
 isReuseConsumingOp (Div DoubleType) = True
 isReuseConsumingOp (Neg DoubleType) = True
+isReuseConsumingOp StrTail     = True
+isReuseConsumingOp StrReverse  = True
+isReuseConsumingOp StrIndex    = True
+isReuseConsumingOp StrCons     = True
+isReuseConsumingOp StrAppend   = True
+isReuseConsumingOp StrSubstr   = True
 isReuseConsumingOp _ = False
 
 export
