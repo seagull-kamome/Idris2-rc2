@@ -19,7 +19,8 @@
 |||    post-RC case into tails (`PushCon`)
 ||| 8. Branch-local sinking (`Sink`), dual ABI, null parameters and struct
 |||    return (`DualABI`, `NullParams`), reuse re-check (`Reuse`)
-||| 9. Dead-code elimination (`DeadCode`), dup/drop push-down (`PushDown`),
+||| 9. Forwarder aliases (`FwdAlias`), dead-code elimination (`DeadCode`),
+|||    dup/drop push-down (`PushDown`),
 |||    dup merging (`DupMerge`), leaf tail calls (`LeafTail`), dead variable
 |||    erasure (`DeadVars`), function dedup (`FunDedup`, whole program only)
 ||| 10. C generation (`Emit`) and C compiler invocation (`CC`)
@@ -45,6 +46,7 @@ import Compiler.RC2.LeafTail
 import Compiler.RC2.KnownPartial
 import Compiler.RC2.PushApply
 import Compiler.RC2.FunDedup
+import Compiler.RC2.FwdAlias
 import Compiler.RC2.PushDown
 import Compiler.RC2.Emit
 import Compiler.RC2.Emit.Util
@@ -246,7 +248,7 @@ inlineNamed disabled keep main defs =
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "notinyinline", "nopushapply", "nosink", "nocmpmerge", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nonullparams", "nostructreturn", "nomutualstruct", "nodeadcode", "nopushdown", "nodupmerge", "nodeadvars", "noconstalias", "noleaftail", "nofundedup", "noreusenested", "noreuserecheck"]
+    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "notinyinline", "nopushapply", "nosink", "nocmpmerge", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nonullparams", "nostructreturn", "nomutualstruct", "nodeadcode", "nopushdown", "nodupmerge", "nodeadvars", "noconstalias", "noleaftail", "nofwdalias", "nofundedup", "noreusenested", "noreuserecheck"]
 
 ||| Stages that are off unless asked for with `--directive <name>`. They
 ||| travel to `toRCDefs` in the same list as the disables above.
@@ -462,9 +464,13 @@ toRCDefs directives incremental roots thunks preFolded0 = do
                     then pure dualABId
                     else logTime 2 "rc2: Reuse re-check" $
                            pure (map (\(n, d) => (n, recheckReuseDef (not ("noreusenested" `elem` directives)) d)) dualABId)
+    -- rc2/doc/fwd-alias.md: before Dead code, which then drops the aliases.
+    aliased <- if "nofwdalias" `elem` directives
+                  then pure rechecked
+                  else logTime 2 "rc2: Forwarder aliases" $ pure (applyFwdAlias rechecked)
     pruned <- if "nodeadcode" `elem` directives
-                 then pure rechecked
-                 else logTime 2 "rc2: Dead code elimination" $ pure (pruneDeadDefs roots rechecked)
+                 then pure aliased
+                 else logTime 2 "rc2: Dead code elimination" $ pure (pruneDeadDefs roots aliased)
     -- rc2/doc/pushdown.md: a dup/drop run in front of a case moves into the arms.
     pushedDown <- if "nopushdown" `elem` directives
                      then pure pruned

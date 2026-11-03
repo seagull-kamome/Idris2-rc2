@@ -76,6 +76,8 @@ history, not there.
   optimizations (Inline, DualABI's Stage 3a wrapper split) leave with
   zero remaining callers, run in `toRCDefs` after DualABI, `fun-dedup.md` for
   merging functions whose bodies are equal up to the numbering of their locals,
+  `fwd-alias.md` for pointing every reference at the target of a function that only
+  forwards its parameters to another,
   `concurrency.md` for the runtime's
   multi-step move to thread-safety -- atomic reference count, then real
   OS thread spawning (`refc_fork`) and Mutex/Condition, then the
