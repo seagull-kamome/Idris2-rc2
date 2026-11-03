@@ -60,6 +60,44 @@ constFoldOp fn cs =
                  Just (NPrimVal _ c) => Just c
                  _                   => Nothing
 
+||| The range of a type whose `cast` to `Integer` keeps the value, and a
+||| constant of that type for a value in the range. See `doc/widening-compare.md`.
+widenSpec : PrimType -> Maybe (Integer, Integer, Integer -> Constant)
+widenSpec IntType    = Just (-9223372036854775808, 9223372036854775807, \c => I (fromInteger c))
+widenSpec Int8Type   = Just (-128, 127, \c => I8 (fromInteger c))
+widenSpec Int16Type  = Just (-32768, 32767, \c => I16 (fromInteger c))
+widenSpec Int32Type  = Just (-2147483648, 2147483647, \c => I32 (fromInteger c))
+widenSpec Int64Type  = Just (-9223372036854775808, 9223372036854775807, \c => I64 (fromInteger c))
+widenSpec Bits8Type  = Just (0, 255, \c => B8 (fromInteger c))
+widenSpec Bits16Type = Just (0, 65535, \c => B16 (fromInteger c))
+widenSpec Bits32Type = Just (0, 4294967295, \c => B32 (fromInteger c))
+widenSpec Bits64Type = Just (0, 18446744073709551615, \c => B64 (fromInteger c))
+widenSpec CharType   = Just (0, 1114111, \c => Ch (chr (fromInteger c)))
+widenSpec _ = Nothing
+
+||| `x op c` (`c op x` when `castFirst` is `False`) for an `x` known to lie
+||| strictly on one side of `c`: `xGreater` says which.
+holdsOutside : CmpOp -> (castFirst : Bool) -> (xGreater : Bool) -> Bool
+holdsOutside (Element (LT _) _)  True  g = not g
+holdsOutside (Element (LTE _) _) True  g = not g
+holdsOutside (Element (GT _) _)  True  g = g
+holdsOutside (Element (GTE _) _) True  g = g
+holdsOutside (Element (LT _) _)  False g = g
+holdsOutside (Element (LTE _) _) False g = g
+holdsOutside (Element (GT _) _)  False g = not g
+holdsOutside (Element (GTE _) _) False g = not g
+holdsOutside (Element (EQ _) _)  _     _ = False
+
+retypeCmp : PrimType -> CmpOp -> CmpOp
+retypeCmp t (Element (LT _) _)  = Element (LT t) IsLT
+retypeCmp t (Element (GT _) _)  = Element (GT t) IsGT
+retypeCmp t (Element (EQ _) _)  = Element (EQ t) IsEQ
+retypeCmp t (Element (LTE _) _) = Element (LTE t) IsLTE
+retypeCmp t (Element (GTE _) _) = Element (GTE t) IsGTE
+
+data WidenCmp = Decided Bool
+              | Narrowed CmpOp (Vect 2 RCLocal)
+
 ||| A local bound directly to a constructor with at least one
 ||| non-constant field: its name, tag, (already resolved) field locals,
 ||| and the position of its one native field if it has exactly one --
@@ -152,11 +190,12 @@ record Env where
   knownCons : SortedMap Int KnownCon
   knownPartials : SortedMap Int (Name, Nat, List RCLocal)
   bigLits : SortedMap Int Constant
+  widened : SortedMap Int (PrimType, RCLocal)
 
 ||| `knownCons`: whether to fold known constructors at all, which costs
 ||| a `useInfo` walk up front.
 emptyEnv : (knownCons : Bool) -> RCExp -> Env
-emptyEnv knownCons body = MkEnv (if knownCons then Just (useInfo body) else Nothing) empty empty empty empty empty
+emptyEnv knownCons body = MkEnv (if knownCons then Just (useInfo body) else Nothing) empty empty empty empty empty empty
 
 insertConst : Int -> Subset RCLocal IsAnyConstLocal -> Env -> Env
 insertConst i c = { consts $= insert i c }
@@ -182,6 +221,36 @@ resolveConst env l = case resolveLocal env l of
                            RCConst c => Just c
                            RCLoc i   => lookup i env.bigLits
                            _         => Nothing
+
+||| A comparison of `Integer`s, one of them `cast` from a narrower type (`widened`)
+||| and the other a literal, as a comparison in the narrower type, or decided
+||| at once when the literal is out of its range. See `doc/widening-compare.md`.
+cmpWidened : Env -> CmpOp -> Vect 2 RCLocal -> Maybe WidenCmp
+cmpWidened env op [a, b] =
+    case cmpOpTy op of
+         IntegerType => case (castOf a, castOf b) of
+                             (Just (ty, x), Nothing) => decide True ty x b
+                             (Nothing, Just (ty, x)) => decide False ty x a
+                             _ => Nothing
+         _ => Nothing
+  where
+    castOf : RCLocal -> Maybe (PrimType, RCLocal)
+    castOf (RCLoc i) = lookup i env.widened
+    castOf _ = Nothing
+
+    surrogate : Integer -> Bool
+    surrogate c = c >= 55296 && c <= 57343
+
+    decide : (castFirst : Bool) -> PrimType -> RCLocal -> RCLocal -> Maybe WidenCmp
+    decide castFirst ty x other =
+        case (widenSpec ty, resolveConst env other) of
+             (Just (lo, hi, mk), Just (BI c)) =>
+                 if c < lo then Just (Decided (holdsOutside op castFirst True))
+                 else if c > hi then Just (Decided (holdsOutside op castFirst False))
+                 else if ty == CharType && surrogate c then Nothing
+                 else let k = RCConst (mk c)
+                      in Just (Narrowed (retypeCmp ty op) (if castFirst then [x, k] else [k, x]))
+             _ => Nothing
 
 ||| `l` is one of `RCLocal`'s constant forms *and* safe to stage as a
 ||| static C initializer -- kept at full (non-erased) multiplicity so
@@ -343,6 +412,13 @@ foldConst caf env (RLet fc var rep value body) =
             -- field's box. An escaping one is left alone: its native
             -- fields would be boxed again at every use instead of once.
             -- See rc2/doc/constructor-escape-analysis.md's "Rewrite A".
+            ROp _ Nothing (Cast t IntegerType) [a] _ =>
+                if isJust (widenSpec t)
+                   then let body' = foldConst caf ({ widened $= insert var (t, resolveLocal env a) } env) body
+                        in if mentionsLocal (RCLoc var) body'
+                              then RLet fc var rep value' body'
+                              else body'
+                   else RLet fc var rep value' (foldConst caf env body)
             _ => case splitLetChain value' of
                       (wrap, con@(RCon _ n _ tag args Nothing)) =>
                           if maybe True (\u => contains (RCLoc var) u.escaping) env.uses || any isBigLiteral args
@@ -488,7 +564,11 @@ foldConst caf env (RCmpCase fc op args postDrop t f) =
                             Just (I 1) => t'
                             Just (I 0) => f'
                             _          => RCmpCase fc op resolvedArgs postDrop t' f'
-            Nothing => RCmpCase fc op resolvedArgs postDrop t' f'
+            Nothing => case cmpWidened env op resolvedArgs of
+                            Just (Decided True)  => t'
+                            Just (Decided False) => f'
+                            Just (Narrowed op' args') => RCmpCase fc op' args' postDrop t' f'
+                            Nothing => RCmpCase fc op resolvedArgs postDrop t' f'
 -- Mirrors `RConstCase`'s own scrutinee-resolution below, for tag
 -- dispatch: a resolved `RCConstCon`/`RCEmptyCon` scrutinee makes the
 -- whole case disappear in favour of the matching alt (fields
