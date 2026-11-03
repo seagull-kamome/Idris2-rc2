@@ -439,9 +439,13 @@ toRCDefs directives incremental roots thunks preFolded0 = do
     latePushed <- if not ("latepushcon" `elem` directives) || ("nopushcon" `elem` directives)
                      then pure applyFolded
                      else logTime 2 "rc2: Push case into tails (post-RC)" $ applyPushConRC applyFolded
-    sunk <- if "nosink" `elem` directives
-               then pure latePushed
-               else logTime 2 "rc2: Sink" $ pure (map (\(n, d) => (n, applySink d)) latePushed)
+    sunkOnly <- if "nosink" `elem` directives
+                   then pure latePushed
+                   else logTime 2 "rc2: Sink" $ pure (map (\(n, d) => (n, applySink d)) latePushed)
+    -- doc/branch-sinking.md, "Closures": a closure sunk next to its `apply`.
+    sunk <- if ("nosink" `elem` directives) || ("noapplyfold" `elem` directives)
+               then pure sunkOnly
+               else logTime 2 "rc2: Fold applied closures (after Sink)" $ pure (applyFoldApplied sunkOnly)
     dualABId <- if "nodualabi" `elem` directives
        then pure sunk
        else logTime 2 "rc2: DualABI" $ do
