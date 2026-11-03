@@ -38,6 +38,46 @@ else
     fail "only $raw *_raw conditions in $TMP/${name}_rc2.c for $cmps cmp node(s)"
 fi
 
+# A condition is not wrapped in a second pair of parentheses: clang rejects
+# `if ((a == b))` (-Wparentheses-equality) under -Werror, gcc does not. The
+# awk below finds `if (X) {` where X is one parenthesised group whose top level
+# is a plain `==` (not a `&&`/`||`/`?:` chain, which clang accepts).
+doubled() {  # C file -> number of such conditions
+    awk '
+        function closesAtEnd(c,   n, d, i, ch) {
+            n = length(c); d = 0
+            for (i = 1; i <= n; i++) {
+                ch = substr(c, i, 1)
+                if (ch == "(") d++
+                else if (ch == ")") { d--; if (d == 0) return i == n }
+            }
+            return 0
+        }
+        function plainEquality(c,   n, d, i, ch, eq, other) {
+            n = length(c); d = 0; eq = 0; other = 0
+            for (i = 1; i <= n; i++) {
+                ch = substr(c, i, 1)
+                if (ch == "(") d++
+                else if (ch == ")") d--
+                else if (d == 0 && substr(c, i, 4) == " == ") eq = 1
+                else if (d == 0 && (substr(c, i, 2) == "&&" || substr(c, i, 2) == "||" || ch == "?")) other = 1
+            }
+            return eq && !other
+        }
+        /^ *(\} else )?if \(.*\) \{$/ {
+            c = $0; sub(/^ *(\} else )?if \(/, "", c); sub(/\) \{$/, "", c)
+            if (substr(c, 1, 1) == "(" && closesAtEnd(c) && plainEquality(substr(c, 2, length(c) - 2))) n++
+        }
+        END { print n + 0 }' "$1"
+}
+eqs="$(grep -cE '^ *(\} else )?if \(.* == ' "$TMP/${name}_rc2.c" || true)"
+extra="$(doubled "$TMP/${name}_rc2.c")"
+if [ "$eqs" -ge 1 ] && [ "$extra" = "0" ]; then
+    pass "comparison conditions carry no extra parentheses ($eqs equality conditions)"
+else
+    fail "$extra condition(s) of the form if ((a == b)), $eqs equality conditions in $TMP/${name}_rc2.c"
+fi
+
 # CmpMerge: nested `<`/`==` (and `>`/`==`) comparisons of the same
 # operands with equal branches become one `<=` (`>=`) node
 # (doc/native-type-inference.md, "Merging nested comparisons"). Invisible

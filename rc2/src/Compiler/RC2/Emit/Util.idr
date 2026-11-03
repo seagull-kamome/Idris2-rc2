@@ -508,15 +508,18 @@ nativeOpExpr fn args = "0 /* [rc2] unreachable native op " ++ show fn ++ " */"
 ||| `rcVarToNativeC`), same convention as `nativeOpExpr`. Unlike `cOp`'s
 ||| own LT/GT/EQ/LTE/GTE handling (which calls a runtime function
 ||| returning a freshly boxed Bool), this never allocates -- it's only
-||| ever embedded directly as an `if` condition by `emitRC`'s own
-||| RCmpCase case, the comparison's result never becomes a value at all.
+||| ever used as the condition of an `if` (or the initialiser of an `int`)
+||| by `emitRC`'s own RCmpCase case, the comparison's result never becomes
+||| a value at all. No outer parentheses: `if ((a == b))` is a clang
+||| `-Wparentheses-equality` error under `-Werror`. So it is a bare
+||| expression: not for embedding in a larger one.
 export
 nativeCmpExpr : PrimFn 2 -> Vect 2 String -> String
-nativeCmpExpr (LT ty)  [x, y] = "(" ++ x ++ " < "  ++ y ++ ")"
-nativeCmpExpr (GT ty)  [x, y] = "(" ++ x ++ " > "  ++ y ++ ")"
-nativeCmpExpr (EQ ty)  [x, y] = "(" ++ x ++ " == " ++ y ++ ")"
-nativeCmpExpr (LTE ty) [x, y] = "(" ++ x ++ " <= " ++ y ++ ")"
-nativeCmpExpr (GTE ty) [x, y] = "(" ++ x ++ " >= " ++ y ++ ")"
+nativeCmpExpr (LT ty)  [x, y] = x ++ " < "  ++ y
+nativeCmpExpr (GT ty)  [x, y] = x ++ " > "  ++ y
+nativeCmpExpr (EQ ty)  [x, y] = x ++ " == " ++ y
+nativeCmpExpr (LTE ty) [x, y] = x ++ " <= " ++ y
+nativeCmpExpr (GTE ty) [x, y] = x ++ " >= " ++ y
 nativeCmpExpr fn _ = "0 /* [rc2] unreachable native comparison " ++ show fn ++ " */"
 
 
