@@ -785,3 +785,49 @@ of the calls) is not touched: it is not a known closure. Test:
 `maybe`/`either` left; `--directive nospecclosure` fails it).
 
 - Measured on idris2-lsp (32.4k definitions, 12.2k opportunities): flattening per-definition opportunity lists with `concatMap` (left-nested `++`) cost ~0.9s of the pass's own time; grouping into the map as collected avoids it. A per-key CAF-table rebuild and call-site redirect (O(distinct keys x program size)) was impractically slow and is done once per round instead.
+
+## Closures that stay unspecialised: measured (2026-11-04)
+
+The counts below come from a script over the final IR of `rc2-norepl` (master
+`9d83d96`); the reasons given for each row were read from `SpecClosure.idr`, not
+tested by changing it. The input differs from the idris2-lsp numbers above.
+
+A clone is made per (callee, argument position, closure function, missing), and the
+captured values are passed to it as parameters (see "Internal structure"). So
+the cases that a clone would serve are the ones that recur: 540 call sites pass
+a closure built right there (`RUnderApp`, or `RDelay` for a lazy value) as an
+argument; 221 of them are the only site of their (callee, closure function) pair
+and are left out. The other 319 sites form 72 pairs seen at two or more sites with
+different captured values, of which 318 sites could be assigned to a row:
+
+| how the callee body uses the parameter | sites | pairs |
+|---|---|---|
+| no `apply` of it: passed on or stored (`fromMaybe`, the message of `log`); whether the receiver applies it was not followed | 167 | 37 |
+| `apply` with exactly the missing number of arguments | 107 | 23 |
+| `apply` with fewer arguments than missing (a `Core` action built per call: `foldl` over `foldlC`) | 25 | 6 |
+| no `apply`; captured by another closure (`alterAnnotations`) | 14 | 4 |
+| `apply` with more arguments than missing | 5 | 2 |
+
+- Row 2 is not cloned for the reason of "Multiple apply chains": a parameter applied at
+  several places is accepted only for a closure without captured values and a callee
+  of at most `multiApplyMaxSize` (16) nodes. About 40 of the 107 sites are calls of
+  `mapChildren` (13 `apply` sites in its final IR), the others are small
+  higher-order functions at two or three sites each. The reason for the other
+  sites was not checked one by one.
+- Rows 3 and 5: `chainArgs` follows only an `apply` that supplies exactly the missing
+  arguments.
+- Row 4 is the "stored" use of "Multiple specialized parameters and stored uses",
+  not an `apply`.
+
+None of these was tried: lifting the size limit, or recognising an under-applied
+`apply`. No saving was estimated either; the first adds a body per closure
+function.
+
+### Closures carried by a loop
+
+Of 4,904 loops, 125 build a closure in their body (305 sites), and 10 pass a
+closure they built to the next iteration through `continue loop`:
+`treeToList'` of `SortedMap`/`StringMap`/`UserNameMap`, `applyLams` of the three
+Scheme backends, `bindAll`, `treeMap` and others. A closure cell is not reused as a
+constructor cell is (`reuse-analysis.md`), so each iteration allocates it; how often
+these loops run was not measured.
