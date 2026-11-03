@@ -202,7 +202,7 @@ final IR no longer contains such pairs: `Compiler.RC2.DupMerge`
 (`cancelRun`) cancels them, judging the whole leading run of dups
 against the node's original `postDrop`, with `min (extra + 1, entries)`
 cancelled per local. Two kinds of node keep their `dup`: an Integer/
-Int64/Double arithmetic `op` (`Emit.Util.isReuseConsumingOp`), whose
+Int64/Double arithmetic `op` or a string `op` (`Emit.Util.isReuseConsumingOp`), whose
 runtime primitive consumes its operands itself and ignores the
 `postDrop` field, so the `dup` is a real reference handed over; and a
 call or `extprim` that consumes some other operand (an operand not in

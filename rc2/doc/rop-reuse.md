@@ -480,6 +480,7 @@ concurrency-related code (see `doc/concurrency.md`).
   of the former single `IDRIS2RC2_INTTYPES`), `IDRIS2RC2_DEFOP_REUSE`,
   `IDRIS2RC2_DOUBLE_BINOP`, and the hand-written `Int64`/`Double`
   `negate`.
+- `rc2/support/rc2/idris2rc2_strings.c` -- the six string primitives above.
 - `rc2/src/Compiler/RC2/Emit/Util.idr` -- `isReuseConsumingOp`, including
   (extension) the `Int64Type`/`Bits64Type`/`DoubleType` cases and the
   matching `IntType` cases added by the double-drop bug fix.
@@ -505,3 +506,34 @@ pointers with no cell to reuse and no post-call drop left to skip.
 both to the C name `Int64`, so `Add IntType` and `Add Int64Type` call the
 same `idris2rc2_add_Int64`; missing one makes `Emit.idr` drop operands the
 primitive already consumed (double-drop), not just lose an optimisation.
+
+## String operations
+
+`StrTail`, `StrReverse`, `StrIndex`, `StrCons`, `StrAppend` and `StrSubstr` are
+consuming too (`idris2rc2_strings.c`): the primitive drops every operand it was
+handed, the box of a native `Char`/`Int` index included, after building its
+result. There is no reuse, only the move: a result has another length than its
+operand. Counted in the type check of rc2 itself (`--typecheck rc2.ipkg`, 12.7 s,
+a binary of rc2 relinked with a counter): `++` ran 1.19M times with the left
+operand unique in 23% of the calls and the right one in 47%, the operands
+averaging 10 bytes, so reusing the allocation would save under 0.4% of the run.
+What the move buys is the one contract for all the `ROp`s that take a boxed
+operand and build a boxed result, and fewer `drop`s in the C: 11.6k lines in
+`rc2-norepl` (0.7% of its lines).
+
+`StrLength` and `StrHead` are macros that only read their operand (the result is
+boxed, as the `ROp`s above): they stay borrowing, and `Emit` still emits their
+`postDrop`.
+
+An operand that lives on after the op is `dup`'d first, and the primitive drops
+that reference: `DupMerge` can no longer cancel the pair as it does for a reading
+op. In `rc2-norepl` that is 96 pairs (0.8% of the `postDrop` entries of string
+ops: 11,667 without `DupMerge`, 11,571 with it).
+
+`tools/rcexpr-lint`'s `consumingOp` lists the same dump names (`++`,
+`op_strcons`, `op_strtail`, `op_strrev`, `op_strindex`, `op_strsubstr`).
+
+Like the numeric change, this is a change of the runtime contract: an object built by
+an older compiler (an `--inc` build) still drops after the call. Rebuild
+what was built before, and `idris2 --install rc2.ipkg` after a change to
+`support/`.

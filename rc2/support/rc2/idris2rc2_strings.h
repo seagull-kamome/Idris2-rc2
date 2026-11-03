@@ -13,6 +13,8 @@
       ((IDRIS2RC2_String *)(x))->str, ((IDRIS2RC2_String *)(x))->len)))
 #define idris2rc2_strHead(x) (idris2rc2_cast_string_to_Char(x))
 
+// strTail .. strSubstr consume every operand (doc/rop-reuse.md, "String
+// operations"); strLength and strHead only read theirs.
 IDRIS2RC2_Value *idris2rc2_strTail(IDRIS2RC2_Value *str);
 IDRIS2RC2_Value *idris2rc2_strReverse(IDRIS2RC2_Value *str);
 IDRIS2RC2_Value *idris2rc2_strIndex(IDRIS2RC2_Value *str, IDRIS2RC2_Value *i);
