@@ -11,6 +11,7 @@
 module Compiler.RC2.ArityRaise
 
 import Compiler.RC2.Emit.Util
+import Compiler.RC2.FunDedup
 import Compiler.RC2.RCExp
 import Compiler.RC2.Util
 
@@ -327,12 +328,28 @@ foldAppliedExp ws nat e = here (mapChildren (foldAppliedExp ws nat) e)
         pure (lead body')
     here e = e
 
-||| The post-RC fold over every definition.
+||| What a closure over `n` that misses `missing` arguments is a closure over,
+||| when `n` is a bare wrapper `f params = partial g m params`: the closure over
+||| `g` that misses `missing + m`. A wrapper of a wrapper is followed to the end,
+||| for at most `fuel` steps.
+wrapperClosure : SortedMap Name (Name, Nat) -> (fuel : Nat) -> Name -> Nat -> (Name, Nat)
+wrapperClosure _ Z n missing = (n, missing)
+wrapperClosure ws (S k) n missing =
+    case lookup n ws of
+         Just (g, m) => wrapperClosure ws k g (missing + m)
+         Nothing => (n, missing)
+
+||| The post-RC fold over every definition. A closure over a bare wrapper that
+||| is left (`partial f missing caps`, a constant closure) becomes a closure over
+||| what the wrapper wraps (`doc/const-closure-fold.md`).
 export
 applyFoldApplied : List (Name, RCDef) -> List (Name, RCDef)
 applyFoldApplied defs =
     let ws = bareWrappers defs
-    in map (\(n, d) => (n, foldDef ws d)) defs
+        fuel = length defs + 1
+        folded = map (\(n, d) => (n, foldDef ws d)) defs
+    in if null ws then folded
+          else map (\(n, d) => (n, renameNamesDG id (wrapperClosure ws fuel) d)) folded
   where
     foldDef : SortedMap Name (Name, Nat) -> RCDef -> RCDef
     foldDef ws (MkRCFun args retRep isWorker body) = MkRCFun args retRep isWorker (foldAppliedExp ws (nativeLocals args body) body)
