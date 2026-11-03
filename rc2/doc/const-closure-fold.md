@@ -513,3 +513,37 @@ drops of what the closure held adjusted.
 `Test157ApplyConstClosure` checks it with `Data.SortedMap.fromList`: the program's
 IR has fewer `apply` nodes of a constant closure than with `--directive noapplyfold`
 (none against one), and the output (against RefC) and valgrind are the same.
+
+## Closures over a bare wrapper
+
+A closure over a bare wrapper that is not applied where it is built was left as it
+was: `rc2_specConst_Libraries_Data_Tap_traverse_0_9364 f xs` is
+`partial rc2_raised_..._7 missing=1 [f, xs]` after `ArityRaise` (the world
+raised), and its callers built `partial W missing=1 [f]` and stored it. Applying
+that closure to `xs` called `W`, which allocated a closure of the raised function,
+which the world was then applied to.
+
+With `W params = partial R m params`, `partial W k caps` applied to `k` arguments
+is `partial R m (caps ++ arguments)`, and `partial R (k + m) caps` applied to
+the same `k` arguments is the same closure. So `applyFoldApplied` now renames every
+closure over a bare wrapper to a closure over what it wraps, missing `k + m`
+(`wrapperClosure` in `ArityRaise.idr`, through `FunDedup.renameNamesG`): a `partial`,
+and a constant closure (`RCConstClosure W k` becomes `RCConstClosure R (k + m)`).
+A wrapper of a wrapper is followed to the end. The captured values are the same
+and keep their order, so nothing is added to or taken from what the closure
+owns. A wrapper that no `partial`, constant closure, call or `delay` names any more
+is dropped by dead code elimination.
+
+A constant closure inside a constant constructor is not reached (see
+`fwd-alias.md`); a `delay` is a lazy cell, not a closure, and is left alone.
+`applyFoldApplied` runs again after `Sink`: a closure that `Sink` moves next to
+the `apply` of exactly its missing `k` arguments has become a closure over `R` by then,
+which misses `k + m`, so that `apply` is no longer folded into a call.
+
+In the IR of `rc2-norepl`: 220 bare wrappers, of which 137 were named by a `partial`
+(729 sites) and 61 by a constant closure (343 sites). After the change 49 are left, named
+by no `partial` and by 253 constant-closure sites (inside constant constructors); the
+definitions go from 13,160 to 12,990.
+
+`Test163WrapperClosure`: closures over a wrapper of `step`; the IR has fewer of them than
+with `--directive noapplyfold`, and the output is the same.

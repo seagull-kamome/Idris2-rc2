@@ -11,12 +11,14 @@ fail() { echo "FAIL  $name ($1)"; }
 # continuation captures in a partial application. The clone must exist
 # and hold no boxed closure dispatch, and the lifted continuation must
 # be cloned with it (a call or a capture of the generic one would keep
-# the dictionary alive). Invisible to an output diff.
+# the dictionary alive). A clone is a `rc2_specConst_Main_` function, or the
+# `rc2_raised_` function that `ArityRaise` made of it once the wrapper that kept
+# its name is gone. Invisible to an output diff.
 #
 # Asserts that a stage *fired*, so `--directive nospecconstcon` makes
 # it FAIL by design.
 dump="$TMP/${name}_rc2.rcexpr"
-clones="$(grep -cE '^def \{rc2_specConst_Main_' "$dump" || true)"
+clones="$(grep -cE '^def \{(rc2_raised_)?rc2_specConst_Main_' "$dump" || true)"
 dispatches="$(awk '/^def /{ins = ($0 ~ /rc2_specConst_Main_/)} ins && /apply /' "$dump" | wc -l)"
 # The continuation's partial application inside a clone must point at a
 # clone, not at the generic lifted lambda (which would keep the dictionary).

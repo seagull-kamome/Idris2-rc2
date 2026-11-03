@@ -28,58 +28,63 @@ import Data.Vect
 -- Renaming the functions a body refers to
 ------------------------------------------------------------------------
 
-renameLocalN : (Name -> Name) -> RCLocal -> RCLocal
-renameLocalN f (RCConstClosure n missing) = RCConstClosure (f n) missing
+||| What a closure over `n` that misses `missing` arguments becomes.
+public export
+ClosureRename : Type
+ClosureRename = Name -> Nat -> (Name, Nat)
+
+renameLocalN : ClosureRename -> RCLocal -> RCLocal
+renameLocalN cl (RCConstClosure n missing) = uncurry RCConstClosure (cl n missing)
 renameLocalN _ l = l
 
-mutual
-  ||| `e` with every function name `f` maps changed. A `RCConstCon`'s
-  ||| fields are left as they are (its erased proof cannot be rebuilt):
-  ||| a closure constant inside one keeps its function alive, which is
-  ||| safe, only less thorough.
-  renameNamesR : (Name -> Name) -> RCExp -> RCExp
-  renameNamesR f = go
-    where
-      l : RCLocal -> RCLocal
-      l = renameLocalN f
+||| `e` with every function name `f` maps changed, and the closures (`partial`,
+||| constant closures) renamed by `cl`, which may change the number of arguments
+||| they miss. A `RCConstCon`'s fields are left as they are (its erased proof
+||| cannot be rebuilt): a closure constant inside one keeps its function alive,
+||| which is safe, only less thorough.
+renameNamesG : (Name -> Name) -> ClosureRename -> RCExp -> RCExp
+renameNamesG f cl = go
+  where
+    l : RCLocal -> RCLocal
+    l = renameLocalN cl
 
-      ls : List RCLocal -> List RCLocal
-      ls = map l
+    ls : List RCLocal -> List RCLocal
+    ls = map l
 
-      go : RCExp -> RCExp
-      go (RV fc v) = RV fc (l v)
-      go (RAppName fc lazy n args) = RAppName fc lazy (f n) (ls args)
-      go (RAppNameRep fc n argReps retRep postDrop args) = RAppNameRep fc (f n) argReps retRep (ls postDrop) (ls args)
-      go (RAppFFIInline fc ccs fargs ret postDrop args) = RAppFFIInline fc ccs fargs ret (ls postDrop) (ls args)
-      go (RUnderApp fc n missing args) = RUnderApp fc (f n) missing (ls args)
-      go (RDelay fc lr n caps) = RDelay fc lr (f n) (ls caps)
-      go (RForce fc lr v postDrop) = RForce fc lr (l v) (ls postDrop)
-      go (RApp fc lazy c args) = RApp fc lazy (l c) (map l args)
-      go (RLet fc var rep value body) = RLet fc var rep (go value) (go body)
-      go (RCon fc n ci tag args reuseFrom) = RCon fc n ci tag (ls args) (map l reuseFrom)
-      go (RRetPack fc n tag fields) = RRetPack fc n tag (ls fields)
-      go (ROp fc lazy op args postDrop) = ROp fc lazy op (map l args) (ls postDrop)
-      go (RExtPrim fc lazy p args postDrop) = RExtPrim fc lazy p (ls args) (ls postDrop)
-      go (RStructGet fc sv sf postDrop) = RStructGet fc (l sv) sf (ls postDrop)
-      go (RStructSet fc sv sf value postDrop) = RStructSet fc (l sv) sf (l value) (ls postDrop)
-      go (RFill fc cell k value postDrop) = RFill fc (l cell) k (l value) (ls postDrop)
-      go (RCmpCase fc op args postDrop t e) = RCmpCase fc op (map l args) (ls postDrop) (go t) (go e)
-      go (RConCase fc sc alts mDef) =
-          RConCase fc (l sc) (map (\(MkRConAlt n ci tag as body) => MkRConAlt n ci tag as (go body)) alts) (map go mDef)
-      go (RConstCase fc sc alts mDef) =
-          RConstCase fc (l sc) (map (\(MkRConstAlt c body) => MkRConstAlt c (go body)) alts) (map go mDef)
-      go (RPrimVal fc c) = RPrimVal fc c
-      go (RErased fc) = RErased fc
-      go (RCrash fc msg) = RCrash fc msg
-      go (RDup fc v extra body) = RDup fc (l v) extra (go body)
-      go (RDrop fc vars body) = RDrop fc (ls vars) (go body)
-      go (RFree fc v body) = RFree fc (l v) (go body)
-      go (RReleaseReuse fc v body) = RReleaseReuse fc (l v) (go body)
-      go (RReuseOffer fc sc dupOnShared dropOnUnique body) =
-          RReuseOffer fc (l sc) (ls dupOnShared) (ls dropOnUnique) (go body)
-      go (RLoop fc params initial prologueDrop body) = RLoop fc params (ls initial) (ls prologueDrop) (go body)
-      go (RLoopContinue fc args postDrop) = RLoopContinue fc (ls args) (ls postDrop)
-      go (RMemoize fc n rep body) = RMemoize fc n rep (go body)
+    go : RCExp -> RCExp
+    go (RV fc v) = RV fc (l v)
+    go (RAppName fc lazy n args) = RAppName fc lazy (f n) (ls args)
+    go (RAppNameRep fc n argReps retRep postDrop args) = RAppNameRep fc (f n) argReps retRep (ls postDrop) (ls args)
+    go (RAppFFIInline fc ccs fargs ret postDrop args) = RAppFFIInline fc ccs fargs ret (ls postDrop) (ls args)
+    go (RUnderApp fc n missing args) = let (n', missing') = cl n missing in RUnderApp fc n' missing' (ls args)
+    go (RDelay fc lr n caps) = RDelay fc lr (f n) (ls caps)
+    go (RForce fc lr v postDrop) = RForce fc lr (l v) (ls postDrop)
+    go (RApp fc lazy c args) = RApp fc lazy (l c) (map l args)
+    go (RLet fc var rep value body) = RLet fc var rep (go value) (go body)
+    go (RCon fc n ci tag args reuseFrom) = RCon fc n ci tag (ls args) (map l reuseFrom)
+    go (RRetPack fc n tag fields) = RRetPack fc n tag (ls fields)
+    go (ROp fc lazy op args postDrop) = ROp fc lazy op (map l args) (ls postDrop)
+    go (RExtPrim fc lazy p args postDrop) = RExtPrim fc lazy p (ls args) (ls postDrop)
+    go (RStructGet fc sv sf postDrop) = RStructGet fc (l sv) sf (ls postDrop)
+    go (RStructSet fc sv sf value postDrop) = RStructSet fc (l sv) sf (l value) (ls postDrop)
+    go (RFill fc cell k value postDrop) = RFill fc (l cell) k (l value) (ls postDrop)
+    go (RCmpCase fc op args postDrop t e) = RCmpCase fc op (map l args) (ls postDrop) (go t) (go e)
+    go (RConCase fc sc alts mDef) =
+        RConCase fc (l sc) (map (\(MkRConAlt n ci tag as body) => MkRConAlt n ci tag as (go body)) alts) (map go mDef)
+    go (RConstCase fc sc alts mDef) =
+        RConstCase fc (l sc) (map (\(MkRConstAlt c body) => MkRConstAlt c (go body)) alts) (map go mDef)
+    go (RPrimVal fc c) = RPrimVal fc c
+    go (RErased fc) = RErased fc
+    go (RCrash fc msg) = RCrash fc msg
+    go (RDup fc v extra body) = RDup fc (l v) extra (go body)
+    go (RDrop fc vars body) = RDrop fc (ls vars) (go body)
+    go (RFree fc v body) = RFree fc (l v) (go body)
+    go (RReleaseReuse fc v body) = RReleaseReuse fc (l v) (go body)
+    go (RReuseOffer fc sc dupOnShared dropOnUnique body) =
+        RReuseOffer fc (l sc) (ls dupOnShared) (ls dropOnUnique) (go body)
+    go (RLoop fc params initial prologueDrop body) = RLoop fc params (ls initial) (ls prologueDrop) (go body)
+    go (RLoopContinue fc args postDrop) = RLoopContinue fc (ls args) (ls postDrop)
+    go (RMemoize fc n rep body) = RMemoize fc n rep (go body)
 
 ------------------------------------------------------------------------
 -- Constants
@@ -95,53 +100,62 @@ isFatConst _ = False
 ||| function is no candidate.
 hasFatConst : RCExp -> Bool
 hasFatConst = go
-  where
-    l : RCLocal -> Bool
-    l = isFatConst
+where
+  l : RCLocal -> Bool
+  l = isFatConst
 
-    ls : List RCLocal -> Bool
-    ls = any l
+  ls : List RCLocal -> Bool
+  ls = any l
 
-    go : RCExp -> Bool
-    go (RV _ v) = l v
-    go (RAppName _ _ _ args) = ls args
-    go (RAppNameRep _ _ _ _ postDrop args) = ls postDrop || ls args
-    go (RAppFFIInline {}) = True
-    go (RUnderApp _ _ _ args) = ls args
-    go (RDelay _ _ _ caps) = ls caps
-    go (RForce _ _ v postDrop) = l v || ls postDrop
-    go (RApp _ _ c args) = l c || any l args
-    go (RLet _ _ _ value body) = go value || go body
-    go (RCon _ _ _ _ args reuseFrom) = ls args || maybe False l reuseFrom
-    go (RRetPack _ _ _ fields) = ls fields
-    go (ROp _ _ _ args postDrop) = any l args || ls postDrop
-    go (RExtPrim _ _ _ args postDrop) = ls args || ls postDrop
-    go (RStructGet _ sv _ postDrop) = l sv || ls postDrop
-    go (RStructSet _ sv _ value postDrop) = l sv || l value || ls postDrop
-    go (RFill _ cell _ value postDrop) = l cell || l value || ls postDrop
-    go (RCmpCase _ _ args postDrop t e) = any l args || ls postDrop || go t || go e
-    go (RConCase _ sc alts mDef) =
-        l sc || any (\(MkRConAlt _ _ _ _ body) => go body) alts || maybe False go mDef
-    go (RConstCase _ sc alts mDef) =
-        l sc || any (\(MkRConstAlt _ body) => go body) alts || maybe False go mDef
-    go (RPrimVal _ _) = False
-    go (RErased _) = False
-    go (RCrash _ _) = False
-    go (RDup _ v _ body) = l v || go body
-    go (RDrop _ vars body) = ls vars || go body
-    go (RFree _ v body) = l v || go body
-    go (RReleaseReuse _ v body) = l v || go body
-    go (RReuseOffer _ sc dupOnShared dropOnUnique body) = l sc || ls dupOnShared || ls dropOnUnique || go body
-    go (RLoop _ _ initial prologueDrop body) = ls initial || ls prologueDrop || go body
-    go (RLoopContinue _ args postDrop) = ls args || ls postDrop
-    go (RMemoize _ _ _ body) = go body
+  go : RCExp -> Bool
+  go (RV _ v) = l v
+  go (RAppName _ _ _ args) = ls args
+  go (RAppNameRep _ _ _ _ postDrop args) = ls postDrop || ls args
+  go (RAppFFIInline {}) = True
+  go (RUnderApp _ _ _ args) = ls args
+  go (RDelay _ _ _ caps) = ls caps
+  go (RForce _ _ v postDrop) = l v || ls postDrop
+  go (RApp _ _ c args) = l c || any l args
+  go (RLet _ _ _ value body) = go value || go body
+  go (RCon _ _ _ _ args reuseFrom) = ls args || maybe False l reuseFrom
+  go (RRetPack _ _ _ fields) = ls fields
+  go (ROp _ _ _ args postDrop) = any l args || ls postDrop
+  go (RExtPrim _ _ _ args postDrop) = ls args || ls postDrop
+  go (RStructGet _ sv _ postDrop) = l sv || ls postDrop
+  go (RStructSet _ sv _ value postDrop) = l sv || l value || ls postDrop
+  go (RFill _ cell _ value postDrop) = l cell || l value || ls postDrop
+  go (RCmpCase _ _ args postDrop t e) = any l args || ls postDrop || go t || go e
+  go (RConCase _ sc alts mDef) =
+      l sc || any (\(MkRConAlt _ _ _ _ body) => go body) alts || maybe False go mDef
+  go (RConstCase _ sc alts mDef) =
+      l sc || any (\(MkRConstAlt _ body) => go body) alts || maybe False go mDef
+  go (RPrimVal _ _) = False
+  go (RErased _) = False
+  go (RCrash _ _) = False
+  go (RDup _ v _ body) = l v || go body
+  go (RDrop _ vars body) = ls vars || go body
+  go (RFree _ v body) = l v || go body
+  go (RReleaseReuse _ v body) = l v || go body
+  go (RReuseOffer _ sc dupOnShared dropOnUnique body) = l sc || ls dupOnShared || ls dropOnUnique || go body
+  go (RLoop _ _ initial prologueDrop body) = ls initial || ls prologueDrop || go body
+  go (RLoopContinue _ args postDrop) = ls args || ls postDrop
+  go (RMemoize _ _ _ body) = go body
+
+||| `renameNamesG` with the closures renamed as the other names are.
+renameNamesR : (Name -> Name) -> RCExp -> RCExp
+renameNamesR f = renameNamesG f (\n, m => (f n, m))
+
+||| `renameNamesG` over one definition.
+export
+renameNamesDG : (Name -> Name) -> ClosureRename -> RCDef -> RCDef
+renameNamesDG f cl (MkRCFun args r w body) = MkRCFun args r w (renameNamesG f cl body)
+renameNamesDG f cl (MkRCError body) = MkRCError (renameNamesG f cl body)
+renameNamesDG _ _ d = d
 
 ||| `renameNamesR` over one definition.
 export
 renameNamesD : (Name -> Name) -> RCDef -> RCDef
-renameNamesD f (MkRCFun args r w body) = MkRCFun args r w (renameNamesR f body)
-renameNamesD f (MkRCError body) = MkRCError (renameNamesR f body)
-renameNamesD _ d = d
+renameNamesD f = renameNamesDG f (\n, m => (f n, m))
 
 ------------------------------------------------------------------------
 -- Candidates
