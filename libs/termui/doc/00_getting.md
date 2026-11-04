@@ -1,5 +1,7 @@
 # termui: a tour
 
+*[日本語](ja/00_getting.md)*
+
 **Describe the screen. termui draws it.**
 
 ```

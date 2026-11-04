@@ -1,5 +1,7 @@
 # termui ツアー
 
+*[English](../00_getting.md)*
+
 **画面の姿を書けば、termuiが描きます。**
 
 ```
@@ -251,7 +253,7 @@ box [absolute, top 0, left 0, right 0, bottom 0, align Center, justify JCenter]
 box [] ([ mainPart ] ++ (if m.help then [ helpDialog ] else []))
 ```
 
-大きさの決め方まで含めた完全な規則は、[`design.md`](../design.md)の「Layout semantics」にあります(英語)。
+大きさの決め方まで含めた完全な規則は、[`design.md`](design.md)（[英語版](../design.md)）の「レイアウトのセマンティクス」にあります。
 
 ## 5. 色と文字
 
@@ -367,7 +369,7 @@ main = do
 | `TermUI.Widget.Splitter` | `splitter` | 矢印キーやマウスのドラッグで境界を動かせる、2つのペイン |
 | `TermUI.Widget.Display` | `spinner`、`progressBar`、`table` | フォーカスのない表示部品。`spinner`は自分で数えるtickで進む |
 
-リスト、ビューア、表、エディタの高さは、モデルの一部です(`S.fromList 5 items`は5行を見せます)。そのため、ウィジェットとそのビューの高さはいつも一致します。各ウィジェットのキー割り当ては、[`design.md`](../design.md)の「Widgets」にあります。
+リスト、ビューア、表、エディタの高さは、モデルの一部です(`S.fromList 5 items`は5行を見せます)。そのため、ウィジェットとそのビューの高さはいつも一致します。各ウィジェットのキー割り当ては、[`design.md`](design.md)（[英語版](../design.md)）の「ウィジェット」にあります。
 
 同じ種類の`focusable`が実行中に出たり消えたりするときは、`keyed "name" node`で名前を付けてください。フォーカスは木の中の位置ではなく、その名前のウィジェットに付いたままになります。
 
@@ -431,6 +433,6 @@ main = do
 
 - [`examples/Demo.idr`](../../examples/Demo.idr): 入力欄、リスト、エディタ、スピナー、進捗バー、ダイアログを組み合わせた例です。`examples/rundemo.sh`で動かせます。
 - [`examples/Editor.idr`](../../examples/Editor.idr): ヘルプビューア、クリップボード、Suspendを備えた小さなテキストエディタです。
-- [`design.md`](../design.md)(英語): リファレンスです。レイアウトの規則、入力パーサー、差分の書き出し、各ウィジェットのキー割り当て、フォーカス・マウス・シグナルの扱いが載っています。
+- [`design.md`](design.md)（[英語版](../design.md)）: リファレンスです。レイアウトの規則、入力パーサー、差分の書き出し、各ウィジェットのキー割り当て、フォーカス・マウス・シグナルの扱いが載っています。
 - `libs/control-async/doc/task.md`: `RunTask`に使う`Control.Task`です。
 - `tests/`: 各ディレクトリが1つの機能を動かして出力を確かめる小さなプログラムです。`render`、`layout`、`parseInput`といった純粋な関数を単独で使う例にもなります。

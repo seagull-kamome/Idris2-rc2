@@ -1,5 +1,7 @@
 # termui design
 
+*[日本語](ja/design.md)*
+
 `termui` is a library for rich terminal UIs in the style of JavaScript's Ink:
 a view is described with a layout EDSL, a layout engine computes the screen,
 and only the difference from the previous screen is written to the terminal.
