@@ -2,7 +2,7 @@
 
 Status: implemented and on by default since 2026-09-25 (`--directive
 nostructreturn` turns it off), after the measurements in "Results";
-constructors of up to four fields since 2026-09-26.
+constructors of up to four fields since 2026-09-26 (eight since 2026-11-04).
 (The `TODO.md` item it tracked is done and removed.)
 
 ## The problem
@@ -22,17 +22,17 @@ once per level. What is left is that one malloc/free pair per chain, and
 at every level a uniqueness check (`reuseOffer`), its `dupOnShared`
 branch and the reads and writes of the cell itself.
 
-## Scope: four fixed C types, at most four fields
+## Scope: eight fixed C types, at most eight fields
 
 ```c
 typedef union { IDRIS2RC2_Value *p; int64_t i; double d; } IDRIS2RC2_RetField;
 
 typedef struct { int64_t tag; IDRIS2RC2_RetField f0; } IDRIS2RC2_Ret1;
 typedef struct { int64_t tag; IDRIS2RC2_RetField f0, f1; } IDRIS2RC2_Ret2;
-/* ... IDRIS2RC2_Ret3, IDRIS2RC2_Ret4 */
+/* ... IDRIS2RC2_Ret3, ... IDRIS2RC2_Ret8 */
 ```
 
-Four types for the whole program, in the runtime header. No per-type
+Eight types for the whole program, in the runtime header. No per-type
 layouts and no `CFType`: `Core.CompileExpr.CFType` is upstream's
 type, and its `CFStruct` already means "pointer to a C struct" in every
 backend (Chez renders it `(* name)`, RefC and rc2 `void *`), so it is the
@@ -118,8 +118,8 @@ on a real workload have not been measured.
 lives (`layout` is in "Native fields" below), and one new node
 builds one. Everything else is an existing node.
 
-Two erased proofs on `RRet`, `IsSucc n` and `LT n 5`, keep `n` to the
-widths `IDRIS2RC2_Ret1`..`Ret4` exist for; `retLayouts` checks them where
+Two erased proofs on `RRet`, `IsSucc n` and `LT n 9`, keep `n` to the
+widths `IDRIS2RC2_Ret1`..`Ret8` exist for; `retLayouts` checks them where
 it computes the width, and `applyStructReturn` stops with an internal
 error if a planned function's width fails.
 
@@ -213,9 +213,9 @@ Struct return is another worker/wrapper split, so it belongs in
 - **Eligibility** (read-only, like DualABI's Stage 2): the greatest
   fixpoint above, over the post-`Loop` defs DualABI already sees. A tail
   is acceptable if it is:
-  - an `RCon` with at most four arguments and a `Just` tag;
+  - an `RCon` with at most eight arguments and a `Just` tag;
   - a static constant constructor (`RCConstCon`/`RCEmptyCon`) of at
-    most four fields;
+    most eight fields;
   - an `RCrash`;
   - a non-lazy `RAppName`, or an `RAppNameRep`, to another eligible
     function;
@@ -300,7 +300,7 @@ because a struct is never shared.
     `.i`/`.d` for a native field, and the fields past the constructor's
     arity left zero.
     Worker synthesis turns the function's constructor tails into
-    `RRetPack`s: an `RCon` of at most four fields, and a static constant
+    `RRetPack`s: an `RCon` of at most eight fields, and a static constant
     constructor, whose static fields are immortal and need no dup.
   - `RRetPack C tag []` (a nullary constructor) returns `{ tag }`.
   - A tail call to another `RRet` worker renders `return worker(...);`.
@@ -488,7 +488,7 @@ was left was `i + 1000` in the benchmark's own loop building the literal
 
 ## Wider constructors (2026-09-26)
 
-A constructor tail of up to four fields is eligible now. `RRet1` became
+A constructor tail of up to four fields was eligible at first (eight now, see the last sections). `RRet1` became
 `RRet n layout`, `n` being the struct's width (`IDRIS2RC2_Ret1` to
 `IDRIS2RC2_Ret4`), and `RRetPack` takes a list of fields. A function's
 width is the widest constructor it returns; tail-call neighbours share
@@ -548,6 +548,22 @@ A small test program did not reproduce the shape: Inline folds the
 pieces together before they narrow. The reproduction is a program
 calling `IOHashMap`'s `read` and `write`, as `missing-containers`'
 benchmark does.
+
+## Calls whose case is not the next expression (2026-11-04)
+
+A site is `let v = call g ..; case v of ..`. `caseOn` used to look through `dup` and `drop` only, so a
+`let` that does not read `v` between the call and the `case` kept the cell. It now looks through such a `let` too: the
+struct is held in a C local across it. On `rc2-norepl` the struct workers go from 1,547 to 1,550 and the
+`let .. : RetN` from 10,833 to 10,852: few sites had a `let` there.
+
+`Test166StructReturnLet`: `keep` computes a value between `step` and the `case`; its worker receives the struct.
+
+## Eight fields (2026-11-04)
+
+The limit is eight fields now (`maxRetFields`, `IDRIS2RC2_Ret5` to `Ret8`): a struct past four fields comes back through
+memory like `Ret2` to `Ret4`. `Test165StructReturnWide` returns a five-field and an eight-field record from a function that
+cases on its own result. No function of `rc2-norepl` gains from it: of its call sites that still hold the cell, those whose callee ends in a constructor of five to eight fields
+have a result that is passed on or stored, not switched on.
 
 ## Open questions
 

@@ -250,7 +250,7 @@ Show NativeTy where
 ||| `inlineableRep` doc comment has the full reasoning for why that's
 ||| still safe.
 ||| `RRet n layout`: a small constructor held by value as an
-||| `IDRIS2RC2_Ret<n>` struct of `n` fields (1-4) -- see
+||| `IDRIS2RC2_Ret<n>` struct of `n` fields (1-8) -- see
 ||| `doc/struct-return.md`. Its layout lists the tags with a field the
 ||| struct carries natively, each with one entry per field: `Just ty`
 ||| carries it as `ty`, `Nothing` as a Boxed pointer (or not at all, past
@@ -262,7 +262,7 @@ data Rep : Type where
      RBoxed : Rep
      RNative : NativeTy -> Rep
      RInlineNative : NativeTy -> Rep
-     RRet : (n : Nat) -> {auto 0 nz : IsSucc n} -> {auto 0 lt : LT n 5} -> List (Int, Vect n (Maybe PrimType)) -> Rep
+     RRet : (n : Nat) -> {auto 0 nz : IsSucc n} -> {auto 0 lt : LT n 9} -> List (Int, Vect n (Maybe PrimType)) -> Rep
 
 ||| The native type `RRet`'s layout carries field `k` of `tag` as, if any.
 export

@@ -89,7 +89,7 @@ history, not there.
   `RMemoize` IR node that memoizes a plain top-level `unsafePerformIO`
   CAF (Boxed CAFs only; the doc explains why the native case turned
   out unreachable), `struct-return.md` for returning a constructor
-  of at most four fields as a by-value `{tag, f0, ...}` struct from a DualABI
+  of at most eight fields as a by-value `{tag, f0, ...}` struct from a DualABI
   worker, `world-arity-raising.md` for the pass that
   passes the world to a function returning a closure waiting for it,
   so its callers call instead of applying, `leaf-tail-calls.md` for

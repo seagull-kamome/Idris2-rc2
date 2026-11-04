@@ -230,9 +230,9 @@ data RetTail = TailCon Bool Int ConShape | TailCall Name | TailCrash | TailOther
                ||| `retTails` never builds one): a real producer, carrying no shape.
                TailProducer
 
-||| The widest constructor a struct return carries (`IDRIS2RC2_Ret4`).
+||| The widest constructor a struct return carries (`IDRIS2RC2_Ret8`).
 maxRetFields : Nat
-maxRetFields = 4
+maxRetFields = 8
 
 ||| A constructor tail of `k` (at least one) fields.
 fieldsTail : Name -> ConInfo -> Int -> Nat -> RetTail
@@ -581,7 +581,7 @@ retLayouts defs planned =
     toRep m =
         let tags : List (Int, List (Maybe PrimType)) := SortedMap.toList m
             width : Nat := foldl (\w, tf => max w (length (snd tf))) 1 tags
-        in case (isItSucc width, isLT width 5) of
+        in case (isItSucc width, isLT width 9) of
                (Yes nz, Yes lt) => Just (RRet width {nz} {lt} (mapMaybe (\(t, fs) => if any isJust fs then Just (t, padFields width fs) else Nothing) tags))
                _ => Nothing
 
@@ -1342,6 +1342,9 @@ caseOn v (RDup fc x n k) =
 caseOn v (RDrop fc vs k) =
     if RCLoc v `elem` vs then Nothing
     else map (\(w, c) => (RDrop fc vs . w, c)) (caseOn v k)
+caseOn v (RLet fc y rep value k) =
+    if contains (RCLoc v) (mentionedLocals value) then Nothing
+    else map (\(w, c) => (RLet fc y rep value . w, c)) (caseOn v k)
 caseOn v (RConCase fc (RCLoc s) alts mDef) =
     if s == v then Just (id, fc, alts, mDef) else Nothing
 caseOn _ _ = Nothing

@@ -175,7 +175,7 @@ typedef struct {
   (idris2rc2_is_unboxed(p) ? (int32_t)idris2rc2_to_u32(p) \
 			   : ((IDRIS2RC2_Constructor *)(p))->tag)
 
-// A constructor of at most four fields returned by value:
+// A constructor of at most eight fields returned by value:
 // rc2/doc/struct-return.md. IDRIS2RC2_Ret<n> has room for n fields;
 // IDRIS2RC2_Ret1 (16 bytes) comes back in two registers, a wider one
 // through memory the caller provides.
@@ -201,6 +201,22 @@ typedef struct {
   int64_t tag;
   IDRIS2RC2_RetField f0, f1, f2, f3;
 } IDRIS2RC2_Ret4;
+typedef struct {
+  int64_t tag;
+  IDRIS2RC2_RetField f0, f1, f2, f3, f4;
+} IDRIS2RC2_Ret5;
+typedef struct {
+  int64_t tag;
+  IDRIS2RC2_RetField f0, f1, f2, f3, f4, f5;
+} IDRIS2RC2_Ret6;
+typedef struct {
+  int64_t tag;
+  IDRIS2RC2_RetField f0, f1, f2, f3, f4, f5, f6;
+} IDRIS2RC2_Ret7;
+typedef struct {
+  int64_t tag;
+  IDRIS2RC2_RetField f0, f1, f2, f3, f4, f5, f6, f7;
+} IDRIS2RC2_Ret8;
 
 // `arity`/`filled` sit in the header's alignment gap, before `fn`:
 // rc2/doc/constructor-layout.md, "Closures".
