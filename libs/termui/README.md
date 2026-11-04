@@ -1,5 +1,7 @@
 # termui
 
+*[日本語](README.ja.md)*
+
 Rich terminal UIs for Idris2, in the spirit of Ink: describe a view with a
 layout EDSL, let the layout engine compute the screen, and write only what
 changed. Plain ANSI output (no notcurses), `rc2` backend; the runtime uses `rc2base` and `control-async`.
@@ -27,7 +29,7 @@ their own and a canvas for painting single cells. Demos: [`examples/Demo.idr`](e
 [`examples/Editor.idr`](examples/Editor.idr),
 [`examples/Chat.idr`](examples/Chat.idr) (a chat log),
 [`examples/LlmChat.idr`](examples/LlmChat.idr) (a chat with a language model that streams its reply, shown as Markdown with blocks that fold). It needs the `web` package (`-p web`) for the HTTP client.
-See [`doc/design.md`](doc/design.md).
+See a tour in [`doc/00_getting.md`](doc/00_getting.md) and the reference in [`doc/design.md`](doc/design.md).
 
 ## Build & test
 
