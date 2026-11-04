@@ -60,6 +60,8 @@ nothing, so a permutation always moves a missing parameter).
 ## Not done
 
 - A closure that misses a parameter in the middle: `f` stays.
+- A closure over constants (`RCConstPartial`) of a forwarder with another order: it keeps `f`
+  (only the function and what it misses are renamed, so an in-order forwarder is reached).
 - A forwarder to a permuter is followed one step only; a call that is already a
   `RAppNameRep` is not rewritten.
 - A forwarder that drops a parameter, repeats one or passes a constant.

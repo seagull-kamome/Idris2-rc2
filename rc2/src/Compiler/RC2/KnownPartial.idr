@@ -49,4 +49,14 @@ foldKnownPartials = go empty
                              Nothing => pure e
                     else pure e
              Nothing => pure e
+    go kp e@(RApp fc lazy (RCConstPartial n missing caps) args) =
+        let as = forget args in
+        if missing > 0 && length as > missing
+           then do
+               r <- freshVarId
+               case fromList (drop missing as) of
+                    Just rest => pure $ RLet fc r RBoxed (RAppName fc lazy n (caps ++ take missing as))
+                                           (RApp fc lazy (RCLoc r) rest)
+                    Nothing => pure e
+           else pure e
     go kp e = traverseChildren @{Applicative.CORE} (go kp) e

@@ -319,6 +319,7 @@ varName (RCConstCon {}) = "/* [rc2] unreachable RCConstCon varName */"
 -- Unreachable in practice, same reasoning as RCConstCon above:
 -- repOfLocal/inlineExprFor always intercept a RCConstClosure first.
 varName (RCConstClosure {}) = "/* [rc2] unreachable RCConstClosure varName */"
+varName (RCConstPartial {}) = "/* [rc2] unreachable RCConstPartial varName */"
 
 ------------------------------------------------------------------------
 -- Native (unboxed) codegen, driven by Compiler.RC2.Types' Rep inference.
@@ -904,6 +905,7 @@ mutual
     constConFieldExpr (RCEmptyCon _ _ tag) = pure "idris2rc2_mkBits32(\{show tag})"
     constConFieldExpr l@(RCConstCon {})    = boxedConstConExpr l {prf=ItIsConstCon}
     constConFieldExpr l@(RCConstClosure {}) = boxedConstClosureExpr l {prf=ItIsConstClosure}
+    constConFieldExpr l@(RCConstPartial {}) = boxedConstPartialExpr l {prf=ItIsConstPartial}
     constConFieldExpr (RCLoc _) {prf=_} impossible
 
     ||| Walks `args` alongside its own `All` proof so each element's
@@ -957,6 +959,26 @@ mutual
                             else "struct { IDRIS2RC2_Header header; uint16_t arity; int16_t tag; IDRIS2RC2_Value *args[\{show (length slots)}]; }"
             pure "static \{tyName} const \{nm} = { IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CONSTRUCTOR), \{show arity}, \{tagField}, { \{showSep ", " slots} } };"
 
+    ||| The boxed C expression for a closure over constants only (an
+    ||| `RCConstPartial`), staged like `boxedConstClosureExpr` but with the
+    ||| captured values in `args`: `IDRIS2RC2_ConstClosureArgs<n>`, laid out as
+    ||| `IDRIS2RC2_Closure` with `n` elements in its array (a struct of that
+    ||| shape in place for more than 20, as `staticClosure` below). Immortal, so
+    ||| no `drop` frees it, and an `apply` of it never grows it in place
+    ||| (`idris2rc2_isUnique` is false for an immortal value).
+    boxedConstPartialExpr : {auto a : Ref ArgCounter Nat}
+                          -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                          -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
+                          -> (l : RCLocal) -> {0 prf : IsConstPartialLocal l} -> Core String
+    boxedConstPartialExpr l@(RCConstPartial n missing caps {capsConst}) {prf=ItIsConstPartial} =
+        stageConstCon l "constpartial_" $ \nm => do
+            argExprs <- constConFieldExprsFor caps capsConst
+            let filled = length caps
+            let tyName = if filled <= 20
+                            then "IDRIS2RC2_ConstClosureArgs\{show filled}"
+                            else "struct { IDRIS2RC2_Header header; uint8_t arity; uint8_t filled; void *fn; IDRIS2RC2_Value *args[\{show filled}]; }"
+            pure "static \{tyName} const \{nm} = { .header = IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CLOSURE), .arity = \{show (filled + missing)}, .filled = \{show filled}, .fn = (IDRIS2RC2_Value *(*)())\{cName n}, .args = { \{showSep ", " argExprs} } };"
+
 ||| `Just` the C expression text standing in for `l`'s never-declared
 ||| variable if it's an InlineMap-registered local, or an RCConst (see
 ||| InlineMap's and RCLocal's own comments -- a native-eligible one
@@ -988,6 +1010,7 @@ inlineExprFor (RCConst c) = (\e => Just (e, [])) <$> case litRep c of
 inlineExprFor (RCEmptyCon {}) = pure Nothing
 inlineExprFor l@(RCConstCon {}) = (\e => Just (e, [])) <$> boxedConstConExpr l {prf=ItIsConstCon}
 inlineExprFor l@(RCConstClosure {}) = (\e => Just (e, [])) <$> boxedConstClosureExpr l {prf=ItIsConstClosure}
+inlineExprFor l@(RCConstPartial {}) = (\e => Just (e, [])) <$> boxedConstPartialExpr l {prf=ItIsConstPartial}
 inlineExprFor (RCLoc i) = do
     inlined <- get InlineMap
     pure $ SortedMap.lookup i inlined
