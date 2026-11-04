@@ -13,16 +13,16 @@ fail() { echo "FAIL  $name ($1)"; }
 # be cloned with it (a call or a capture of the generic one would keep
 # the dictionary alive). A clone is a `rc2_specConst_Main_` function, or the
 # `rc2_raised_` function that `ArityRaise` made of it once the wrapper that kept
-# its name is gone. Invisible to an output diff.
+# its name is gone, or the worker of either. Invisible to an output diff.
 #
 # Asserts that a stage *fired*, so `--directive nospecconstcon` makes
 # it FAIL by design.
 dump="$TMP/${name}_rc2.rcexpr"
-clones="$(grep -cE '^def \{(rc2_raised_)?rc2_specConst_Main_' "$dump" || true)"
+clones="$(grep -cE '^def \{(idris2rc2_worker_)?(rc2_raised_)?rc2_specConst_Main_' "$dump" || true)"
 dispatches="$(awk '/^def /{ins = ($0 ~ /rc2_specConst_Main_/)} ins && /apply /' "$dump" | wc -l)"
 # The continuation's partial application inside a clone must point at a
 # clone, not at the generic lifted lambda (which would keep the dictionary).
-generic="$(awk '/^def /{ins = ($0 ~ /rc2_specConst_Main_/)} ins && /partial Main\.\{twice/' "$dump" | wc -l)"
+generic="$(awk '/^def /{ins = ($0 ~ /rc2_specConst_Main_/)} ins && /partial Main\.\{twice|#Main\.\{twice[^ ]*~closure\(/' "$dump" | wc -l)"
 if [ "$generic" != "0" ]; then
     fail "a clone still holds a partial application of the generic continuation in $dump"
 elif [ "$clones" -ge 2 ] && [ "$dispatches" = "0" ]; then

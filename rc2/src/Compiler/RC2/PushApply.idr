@@ -45,6 +45,7 @@ profitable value =
             RCrash {} => (0, False)
             RUnderApp {} => (1, True)
             RV _ (RCConstClosure {}) => (1, True)
+            RV _ (RCConstPartial {}) => (1, True)
             _ => (1, False)
 
 ||| `apply args` at every tail of `e`: straight onto a local, after a fresh

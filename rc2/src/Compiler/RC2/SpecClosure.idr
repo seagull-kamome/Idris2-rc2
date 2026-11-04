@@ -91,6 +91,7 @@ Bound = SortedMap Int KnownClosure
 lookupKnown : Bound -> RCLocal -> Maybe KnownClosure
 lookupKnown bound (RCLoc i) = lookup i bound
 lookupKnown _ (RCConstClosure n missing) = Just (MkKnownClosure n missing [])
+lookupKnown _ (RCConstPartial n missing caps) = Just (MkKnownClosure n missing caps)
 lookupKnown _ _ = Nothing
 
 ||| Every `Opportunity` in `e`, given `bound` from enclosing `RLet`s.

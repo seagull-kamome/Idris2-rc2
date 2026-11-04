@@ -312,11 +312,11 @@ isLoopCarried target (RLoop _ loopParams _ _ body) = elem target (map fst loopPa
 isLoopCarried target e = any (isLoopCarried target) (children e)
 
 ||| Fresh `buildSplice` ids bound to a constant closure, keyed by id:
-||| `RCConstClosure`'s own name and `missing`, which is that callee's
-||| *whole* remaining arity (it captures nothing at all, see its doc
-||| comment in RCExp.idr).
+||| the closure's function, what it still misses and what it captured (nothing
+||| for an `RCConstClosure`, then `missing` is that callee's whole arity; the
+||| constants of an `RCConstPartial` otherwise).
 ConstClosureArgs : Type
-ConstClosureArgs = SortedMap Int (Name, Nat)
+ConstClosureArgs = SortedMap Int (Name, Nat, List RCLocal)
 
 ||| Rewrite a saturated application of one of `ccs`'s ids into a direct
 ||| call. `ConstFold` does this too, but runs before `buildSplice` mints
@@ -330,14 +330,14 @@ resolveConstClosureApps : ConstClosureArgs -> RCExp -> RCExp
 resolveConstClosureApps ccs e@(RApp fc lazy (RCLoc v) args) =
     case lookup v ccs of
          Nothing => e
-         Just (n, missing) =>
+         Just (n, missing, caps) =>
              if length args == missing
-                then RAppName fc lazy n (forget args)
+                then RAppName fc lazy n (caps ++ forget args)
                 else if length args < missing
                         -- Under-application: still a closure, but built
                         -- directly instead of dispatching to build it.
                         -- See `Compiler.RC2.ConstFold`'s own `RApp` case.
-                        then RUnderApp fc n (minus missing (length args)) (forget args)
+                        then RUnderApp fc n (minus missing (length args)) (caps ++ forget args)
                         else e
 -- A loop parameter starts out as its constant closure but every
 -- `RLoopContinue` rebinds it, so inside the body it is no longer known.
@@ -383,7 +383,7 @@ buildSplice fc reps calleeBody ((paramId, actual@(RCLoc actualId)) :: rest) = do
                                  Just r => r
                                  Nothing => RBoxed
     argRep _ _ = RBoxed
--- `actual` is a constant (`RCEmptyCon`/`RCConstCon`/`RCConstClosure` or a
+-- `actual` is a constant (`RCEmptyCon`/`RCConstCon`/`RCConstClosure`/`RCConstPartial` or a
 -- literal folded by `ConstFold`): no caller local to alias, so it always
 -- gets a fresh declaration. A native-eligible literal (`litRep`) whose
 -- reads are all native at that type is bound `RNative`; the rest stay
@@ -403,7 +403,8 @@ buildSplice fc reps calleeBody ((paramId, actual) :: rest) = do
     -- apply this parameter is a statically-known call, and nothing
     -- re-folds it after this pass.
     let ccs' = case actual of
-                    RCConstClosure n missing => insert f (n, missing) ccs
+                    RCConstClosure n missing => insert f (n, missing, []) ccs
+                    RCConstPartial n missing caps => insert f (n, missing, caps) ccs
                     _ => ccs
     pure (insert paramId f ren, wrap . RLet fc f rep (RV fc actual), promoted', ccs')
   where
@@ -511,6 +512,7 @@ inlineInto tiny defOf eligible tinyOnly self = go empty empty []
         isClosure : SortedSet Int -> RCLocal -> Bool
         isClosure cl (RCLoc i) = contains i cl
         isClosure _ (RCConstClosure {}) = True
+        isClosure _ (RCConstPartial {}) = True
         isClosure _ _ = False
 
     -- Whether the value of an `RLet` is such a closure: a `partial`, possibly
@@ -624,6 +626,7 @@ applyLateInlineOnce tiny early seed roots focus prev dirty defs0 = do
 
         isConstClosure : RCLocal -> Bool
         isConstClosure (RCConstClosure {}) = True
+        isConstClosure (RCConstPartial {}) = True
         isConstClosure _ = False
 
     -- `acc`: the names whose body took a splice, which the next round's `analyse`

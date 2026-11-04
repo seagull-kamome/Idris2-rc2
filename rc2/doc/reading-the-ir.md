@@ -100,7 +100,7 @@ document is about that body.
 
 **Names**: every name shown anywhere in the dump -- a `def` header, a
 `call`/`callRep`/`partial`/`con`/`retpack`/`memoize`/`delay` target, a case-alt's
-own constructor name, or a `#Name@tag`/`#Name/n~closure` constant value
+own constructor name, or a `#Name@tag`/`#Name/n~closure` constant value (`#Name/n~closure(caps)` when the closure captured constants)
 -- goes through `dumpName` (`RCExp.idr`). That's upstream's own `Show
 Name` (`idris2-src/src/Core/Name.idr`), with two adjustments. First, a
 `DN` (display name -- e.g. an interface implementation's method) shows the

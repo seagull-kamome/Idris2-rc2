@@ -547,3 +547,54 @@ definitions go from 13,160 to 12,990.
 
 `Test163WrapperClosure`: closures over a wrapper of `step`; the IR has fewer of them than
 with `--directive noapplyfold`, and the output is the same.
+
+## Closures over constants (`RCConstPartial`)
+
+A `partial f missing caps` whose captured values are all constants (literals,
+`RCEmptyCon`, `RCConstCon`, `RCConstClosure`, or another `RCConstPartial`) is itself a
+constant: `ConstFold` makes it `RCConstPartial f missing caps`, and `Emit.Util`
+(`boxedConstPartialExpr`) stages one immortal `IDRIS2RC2_ConstClosureArgs<n>` (the layout of
+`IDRIS2RC2_Closure`; `arity = filled + missing`, `filled = length caps`, the captures in
+`args`), once per distinct value. The IR dump shows `#f/missing~closure(caps)`. A
+zero-capture closure stays an `RCConstClosure`.
+
+Emission already made such a closure a static (`staticClosure`, `static-closures.md`) when it
+met an `RUnderApp` over constants, so the gain here is not in the allocation but in the IR:
+the closure is a constant value for the passes before `Emit`. A dictionary that is a
+constructor of closures over constants folds to an `RCConstCon`, a `case` on it and the
+`apply` of a field are resolved, and the closures are compared and deduplicated as values.
+
+- An `apply` of one is resolved as for an `RCConstClosure`, with the captures first:
+  `length ys == missing` gives the call `f (caps ++ ys)`, fewer arguments a `partial` that
+  captured `caps ++ ys` (a constant again, when the next round of the fold sees it).
+  An application with more arguments than the closure misses is split into the saturating
+  call and an `apply` of the rest by `KnownPartial`.
+- A constant constructor among the captures (an interface dictionary) keeps the closure an
+  `RUnderApp`: `SpecClosure` specialises the callee on the dictionary at that site
+  (`underAppSites`, `Test131SpecConstConCapture`), which it could not do from inside an
+  `RCConstPartial`.
+- The captures are never renamed or rebuilt: `FunDedup.renameLocalN` changes only the
+  function and what it misses (so `FwdAlias` and the wrapper fold of `ArityRaise` reach it), and
+  a constant inside the captures keeps its function alive, as in `FwdAlias` for a constant
+  constructor.
+- Applying one never changes it: it is immortal, so `idris2rc2_isUnique` is false; the apply
+  that does not reach the last argument copies it, and the one that does `dup`s the captured
+  values and calls the function.
+- The passes that looked at a `partial`'s function and captures look at this form too:
+  `SpecClosure` (`lookupKnown`), `ArityRaise` (the closure tails it raises),
+  `LateInline` (the closure arguments that make a callee worth splicing, and the call of
+  such a parameter), `PushApply`, `CmpMerge` and `FunDedup` (equality).
+
+Together with it, a tagged constructor without fields (`Line`, `Explicit`) that `ConstFold`
+meets as a `con` is the tagged integer `RCEmptyCon`, as `RC.idr`'s `bindOne` made it for an operand:
+it had been a heap cell with no fields, and it kept every constructor holding it from folding.
+This is what lets a dictionary such as `Libraries.Text.PrettyPrint.Prettyprinter.Doc.line` fold.
+
+In the IR of `rc2-norepl` (the CAFs that are a constructor of closures over constants):
+12 CAFs and 271 call sites before, 7 and 31 after; the memoized CAFs go from 276 to 263, the
+`partial` nodes from 5,264 to 5,179, and 87 constant closures over constants appear. The
+tagged nullary `con` nodes (793) are gone.
+
+`Test164ConstPartial`: a record and a list of closures over constants (a lambda that holds
+constants, from applying `add4` step by step); the C has the `constpartial_N` statics (none with
+`--directive noconstfold`) and the output is the same.

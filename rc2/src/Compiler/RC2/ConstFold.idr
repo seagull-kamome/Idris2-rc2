@@ -271,6 +271,7 @@ isConstLocalProof (RCConst _)            = Just ItIsConst2
 isConstLocalProof (RCEmptyCon {})        = Just ItIsEmptyCon2
 isConstLocalProof (RCConstCon {})        = Just ItIsConstCon2
 isConstLocalProof (RCConstClosure {})    = Just ItIsConstClosure2
+isConstLocalProof (RCConstPartial {})    = Just ItIsConstPartial2
 
 ||| Whole-list version of `isConstLocalProof`, collecting each
 ||| element's own proof into the `All`-shaped obligation `RCConstCon`'s
@@ -394,6 +395,16 @@ foldConst caf env (RLet fc var rep value body) =
                 in if mentionsLocal (RCLoc var) body'
                       then RLet fc var rep value' body'
                       else body'
+            RV _ cval@(RCEmptyCon {}) =>
+                let body' = foldConst caf (insertConst var (Element cval ItIsEmptyCon2) env) body
+                in if mentionsLocal (RCLoc var) body'
+                      then RLet fc var rep value' body'
+                      else body'
+            RV _ cval@(RCConstPartial {}) =>
+                let body' = foldConst caf (insertConst var (Element cval ItIsConstPartial2) env) body
+                in if mentionsLocal (RCLoc var) body'
+                      then RLet fc var rep value' body'
+                      else body'
             -- The same for a string a CAF substitution (`cafValueOf`) or an
             -- inlined CAF left as a bare `RCConst`.
             RV _ cval@(RCConst (Str _)) =>
@@ -475,14 +486,18 @@ foldConst _ env (RV fc l) = RV fc (resolveLocal env l)
 -- A `RCon` whose `args` are all -- directly or via `env` -- already
 -- constant folds to `RV` of a single `RCConstCon`. `reuseFrom` is
 -- never folded (already excluded by matching only `Nothing`);
--- zero-arity args are excluded too (NIL/NOTHING/ZERO/UNIT already
--- route through `RCNull`, and C has no zero-length static array). See
+-- a tagged constructor without fields is the tagged integer `RCEmptyCon`
+-- (as `RC.idr`'s `bindOne` makes it for an operand), not a heap cell;
+-- NIL/NOTHING/ZERO/UNIT already route through `RCNull`, and C has no
+-- zero-length static array. See
 -- rc2/doc/const-con-fold.md's "Design" for the full reasoning,
 -- including the field-by-field partial fold case.
 foldConst caf env (RCon fc n ci tag args Nothing) =
     let resolvedArgs = map (resolveLocal env) args
     in case args of
-            [] => RCon fc n ci tag args Nothing
+            [] => case tag of
+                       Just t => if isNullCon ci then RCon fc n ci tag args Nothing else RV fc (RCEmptyCon n ci t)
+                       Nothing => RCon fc n ci tag args Nothing
             _  => case allConstLocal resolvedArgs of
                        Just argsConst => RV fc (RCConstCon n ci tag resolvedArgs {argsConst})
                        Nothing        => RCon fc n ci tag resolvedArgs Nothing
@@ -509,7 +524,20 @@ foldConst caf env (RAppName fc lazy n args) =
 -- capture (`RUnderApp fc n missing (x :: xs)`) falls through
 -- unchanged. See rc2/doc/const-closure-fold.md's "Design" section.
 foldConst _ env (RUnderApp fc n missing []) = RV fc (RCConstClosure n missing)
-foldConst _ env (RUnderApp fc n missing args) = RUnderApp fc n missing (map (resolveLocal env) args)
+foldConst _ env (RUnderApp fc n missing args) =
+    let args' = map (resolveLocal env) args
+    in case allConstLocal args' of
+            Just capsConst => if any isConstCon args'
+                                 then RUnderApp fc n missing args'
+                                 else RV fc (RCConstPartial n missing args' {capsConst})
+            Nothing => RUnderApp fc n missing args'
+  where
+    -- A constant constructor among the captured values (a dictionary) stays an
+    -- `RUnderApp`: `SpecClosure` specialises on it there (`underAppSites`), and
+    -- inside an `RCConstPartial` it would not see it.
+    isConstCon : RCLocal -> Bool
+    isConstCon (RCConstCon {}) = True
+    isConstCon _ = False
 -- Saturating a constant closure is a plain direct call (named, so the later
 -- passes see through it); an under-application builds an `RUnderApp`.
 -- An over-application is left for `ArityRaise.applyFoldApplied`, which knows
@@ -524,6 +552,12 @@ foldConst _ env (RApp fc lazy c args) =
                    then RAppName fc lazy n (forget args')
                    else if length args' < missing
                            then RUnderApp fc n (minus missing (length args')) (forget args')
+                           else RApp fc lazy c' args'
+            RCConstPartial n missing caps =>
+                if length args' == missing
+                   then RAppName fc lazy n (caps ++ forget args')
+                   else if length args' < missing
+                           then RUnderApp fc n (minus missing (length args')) (caps ++ forget args')
                            else RApp fc lazy c' args'
             RCLoc i =>
                 case lookup i env.knownPartials of

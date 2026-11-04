@@ -25,8 +25,11 @@ if [ ! -f "$dump" ]; then
     fail "no IR dump $dump"
     exit 0
 fi
-on_n="$(grep -c 'partial ' "$dump" || true)"
-off_n="$(grep -c 'partial ' "$off" || true)"
+closures() {  # a `partial` node, or a constant closure that captured constants
+    echo $(( $(grep -c 'partial ' "$1" || true) + $(grep -o '~closure(' "$1" | wc -l) ))
+}
+on_n="$(closures "$dump")"
+off_n="$(closures "$off")"
 if [ "$on_n" -lt "$off_n" ]; then
     pass "partial applications: $on_n with the push, $off_n with --directive nopushapply"
 else
