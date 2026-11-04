@@ -238,6 +238,53 @@ yet: `--install` is the first open point.
    upstream sources, and one that lists the `scheme:` declarations without a stub,
    should run when `idris2-src` is updated.
 
+## Profile of the self-built compiler (2026-11-04)
+
+`perf record -e cpu-clock` (user space; `perf_event_paranoid` is 2, so no kernel samples) on the
+`-O2` self-built `idris2-rc2`, building `rc2.ipkg` in a scratch copy (`IDRIS2_CC=true --cg rc2
+--build rc2.ipkg`, so the C compiler is skipped). `perf` came from `nix-shell -p perf`. The generated
+C is built without frame pointers, so a call graph needs `--call-graph dwarf,12288`, which cuts deep
+stacks short: what it says about the callers of a leaf is only partly complete.
+
+Times without `perf` (`.ttc` already built, so the code generation alone): 2m47s with the
+self-built compiler, 1m20s with the Chez-built one. The build from scratch (type check and code
+generation) with the self-built compiler is 4m35s.
+
+Type check alone (`--typecheck rc2.ipkg`, 109 s, flat profile). Memory management is about 56% of
+the samples: `idris2rc2_teardown` 10%, `dup` 8%, `drop` 7%, `malloc` and `free` 15%, glibc's
+internal functions (`_int_malloc`, the chunk functions) 12%, `newConstructor` and `alloc` 4%.
+By inclusive time (dwarf call graph):
+- `TTImp.Elab.Check.check` 27%, `checkApp` 22%, `tryError`/`handle` 13-23%,
+  `solveConstraints` 11%, `AutoSearch.searchType` 12%, `readModule` 13%;
+- `Core.Directory.nsToPath` 8.2% (`Libraries.Utils.Path.parse` 8%) and
+  `Compiler.Inline.compileAndInlineAll` 12.7%: functions of upstream Idris2 that rc2 does not change;
+- `Name.compare`, `UserName.compare`, `memcmp` and `NameMap.lookup` together 5-9%; the callers of
+  `dup` include `Name.compare` (3.8% of the samples), which `dup`s the fields of both names.
+
+Code generation, `--timing 2`, self-built compiler against the Chez-built one:
+
+| pass | self-built | Chez-built |
+|---|---|---|
+| early inline | 68.4 s of 167 s | 31.8 s of 80.5 s |
+| late inline | 10.9 s | 5.2 s |
+| speculative specialization | 9.5 s | 4.2 s |
+| DualABI | 7.6 s | 3.6 s |
+| RC annotate + Reuse + ConAltNative | 5.5 s | not timed |
+| function dedup | 4.2 s | 1.5 s |
+
+The passes are 2.1 to 2.3 times slower, function dedup 2.8 times; the early inline is about 40% of
+the whole run in both. `--timing 3` (Chez-built): 9 outer iterations of the early inline, the
+rounds adding up to 23.5 s. Across the early and late inline, `LI prune` takes 8.0 s over 28 rounds,
+`LI analyse` 5.3 s over 29 and `LI defOf` 0.9 s: about 0.5 s per round on average, however few
+functions a round splices (the first two rounds start from nothing and weigh more).
+`TODO.md` ("Compile time: refactoring ideas, 2026-09-29") records that the analysis already resumes
+from the previous round (`inlining.md`, "Rounds are incremental"), and that making the pruning
+incremental was weighed against its complexity and left, on an estimate of 0.3 s for idris2-lsp.
+The sums above are for another program and for both inline stages; the decision stands.
+
+In the code generation `Prelude.Types.List.reverseOnto` is 3.8% of the samples; in the (cut) call
+graph its callers are `tailRecAppend` and `RC2.lowerProgram`.
+
 ## Reproducing
 
 ```sh
