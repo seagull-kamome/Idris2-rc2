@@ -77,7 +77,7 @@ nothing *inside* it calls that function either.
 A `Name` reachability needs to follow is any name an `RCExp` might call
 directly (`RAppName`, `RAppNameRep`) or reference as a first-class
 value to build a closure over (`RUnderApp`, or a `ConstFold`-folded
-`RCConstClosure`). `usedFunctionNamesD` is just those four `Name`
+`RCConstPartial`). `usedFunctionNamesD` is just those four `Name`
 callbacks handed to `Compiler.RC2.RCExp`'s `foldRCNamesD` -- an
 exhaustive, catch-all-free fold over every `RCExp`/`RCLocal`
 constructor, written once there and shared with

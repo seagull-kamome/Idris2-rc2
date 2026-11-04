@@ -34,7 +34,7 @@ import Data.SortedSet
 
 ||| Every name `d`'s own body directly, saturated-ly calls (`RAppName`
 ||| only) -- see the doc's "Eligibility -- and why it doubles as the
-||| profitability gate" for why `RUnderApp`/`RCConstClosure`/`RCon`/
+||| profitability gate" for why `RUnderApp`/`RCConstPartial`/`RCon`/
 ||| `RAppNameRep` references don't matter here.
 calleesOf : RCDef -> SortedSet Name
 calleesOf = foldRCNamesD ({ onAppName := \n, _ => singleton n } noRCNames)
@@ -313,7 +313,7 @@ isLoopCarried target e = any (isLoopCarried target) (children e)
 
 ||| Fresh `buildSplice` ids bound to a constant closure, keyed by id:
 ||| the closure's function, what it still misses and what it captured (nothing
-||| for an `RCConstClosure`, then `missing` is that callee's whole arity; the
+||| for a zero-capture closure, then `missing` is that callee's whole arity; the
 ||| constants of an `RCConstPartial` otherwise).
 ConstClosureArgs : Type
 ConstClosureArgs = SortedMap Int (Name, Nat, List RCLocal)
@@ -383,7 +383,7 @@ buildSplice fc reps calleeBody ((paramId, actual@(RCLoc actualId)) :: rest) = do
                                  Just r => r
                                  Nothing => RBoxed
     argRep _ _ = RBoxed
--- `actual` is a constant (`RCEmptyCon`/`RCConstCon`/`RCConstClosure`/`RCConstPartial` or a
+-- `actual` is a constant (`RCEmptyCon`/`RCConstCon`/`RCConstPartial` or a
 -- literal folded by `ConstFold`): no caller local to alias, so it always
 -- gets a fresh declaration. A native-eligible literal (`litRep`) whose
 -- reads are all native at that type is bound `RNative`; the rest stay
@@ -403,7 +403,6 @@ buildSplice fc reps calleeBody ((paramId, actual) :: rest) = do
     -- apply this parameter is a statically-known call, and nothing
     -- re-folds it after this pass.
     let ccs' = case actual of
-                    RCConstClosure n missing => insert f (n, missing, []) ccs
                     RCConstPartial n missing caps => insert f (n, missing, caps) ccs
                     _ => ccs
     pure (insert paramId f ren, wrap . RLet fc f rep (RV fc actual), promoted', ccs')
@@ -511,7 +510,6 @@ inlineInto tiny defOf eligible tinyOnly self = go empty empty []
       where
         isClosure : SortedSet Int -> RCLocal -> Bool
         isClosure cl (RCLoc i) = contains i cl
-        isClosure _ (RCConstClosure {}) = True
         isClosure _ (RCConstPartial {}) = True
         isClosure _ _ = False
 
@@ -625,7 +623,6 @@ applyLateInlineOnce tiny early seed roots focus prev dirty defs0 = do
         isPartial _ = False
 
         isConstClosure : RCLocal -> Bool
-        isConstClosure (RCConstClosure {}) = True
         isConstClosure (RCConstPartial {}) = True
         isConstClosure _ = False
 

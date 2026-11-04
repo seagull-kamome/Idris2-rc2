@@ -29,7 +29,7 @@ def Prelude.Types.elemBy  (fun args= ["v10077", "v10078", "v10079"] ret= Boxed)
 
 `v10077` is used *only* as a `case` scrutinee, and its callers pass a
 dictionary `Compiler.RC2.ConstFold` has already folded to a single
-`RCConstCon` whose fields are `RCConstClosure`s. Everything needed to
+`RCConstCon` whose fields are `RCConstPartial`s. Everything needed to
 resolve the dispatch is therefore known at compile time -- it just
 never reaches the callee's own body.
 
@@ -41,7 +41,7 @@ chain finishes the job on its own:
 1. `ConstFold`'s `RConCase` scrutinee resolution folds the `case` away
    against the known `RCConstCon` and binds each alt field to the
    corresponding constant (`insertConArgs`).
-2. Each method field is then an `RCConstClosure`, so `ConstFold`'s
+2. Each method field is then an `RCConstPartial`, so `ConstFold`'s
    `RApp` case rewrites `apply` into a direct `RAppName` call (or an
    `RUnderApp` when under-applied). See `const-closure-fold.md`.
 3. `Inline`/`LateInline`/`DualABI` can then see through the now-named
@@ -366,7 +366,7 @@ the program got worse: 1,031 more definitions, 43 more closures built,
 41 more `apply`s, 594 fewer struct returns. Run before this pass
 instead of in place of it, it saved 3 `apply`s for 232 more definitions.
 
-The case trees have no counterpart of `RCConstCon`/`RCConstClosure`: a
+The case trees have no counterpart of `RCConstCon`/`RCConstPartial`: a
 dictionary can't be one shared static value there. Every copy of a
 method lambda is lifted separately and built as a closure where it is
 not applied at once, and a dictionary reached through another one (a

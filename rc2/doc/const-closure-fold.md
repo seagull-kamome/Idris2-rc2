@@ -1,4 +1,6 @@
-# Constant closure folding (`RCConstClosure`)
+# Constant closure folding (`RCConstPartial`)
+
+The zero-capture closure of this document is `RCConstPartial n missing []`: it was a constructor of its own (`RCConstClosure`) until it was merged with the closure over constants (last section). The statics keep their `constclosure_N` names and the dump prints it as `~closure`.
 
 An interface-dictionary-shaped CAF -- a record of closures, one per
 method, each closure a bare, zero-filled partial application of a
@@ -20,15 +22,15 @@ pre-existing bug this extension surfaced.
 `RCConst`/`RCEmptyCon`/`RCConstCon`:
 
 ```idris2
-RCConstClosure : Name -> (missing : Nat) -> RCLocal
+RCConstPartial : Name -> (missing : Nat) -> (caps : List RCLocal) -> RCLocal
 ```
 
 Unlike `RCConstCon`, this is a true leaf: a zero-filled closure has no
 captured arguments at all, so there's nothing nested to recurse into.
-`IsConstClosureLocal` is its own narrow witness type (mirroring
+`IsConstPartialLocal` is its own narrow witness type (mirroring
 `IsConstLocal`'s reasoning for `RCConstCon`), and `IsAnyConstLocal`
-gains a fifth constructor, `ItIsConstClosure2`, so a dictionary field
-folding to `RCConstClosure` satisfies the same `All IsAnyConstLocal
+gains a fifth constructor, `ItIsConstPartial2`, so a dictionary field
+folding to `RCConstPartial` satisfies the same `All IsAnyConstLocal
 args` obligation `RCConstCon` already requires of its own fields. Only
 ever constructed by `Compiler.RC2.ConstFold`.
 
@@ -38,11 +40,11 @@ The fold is a single `foldConst` clause (`ConstFold.idr:419`) that
 turns a literal, zero-args `RUnderApp` into the constant, as an `RV`:
 
 ```idris2
-foldConst _ env (RUnderApp fc n missing []) = RV fc (RCConstClosure n missing)
+foldConst _ env (RUnderApp fc n missing []) = RV fc (RCConstPartial n missing [])
 ```
 
 An `RLet` whose value folds to that `RV` is then classified by its
-`RV _ cval@(RCConstClosure {})` arm (`ConstFold.idr:328-332`, shown in
+`RV _ cval@(RCConstPartial {})` arm (`ConstFold.idr:328-332`, shown in
 full under "Gap: a `let`-rebinding ..." below): it inserts the constant
 into `env` and drops the `RLet` once `body` no longer references the
 variable. There is no `RLet` arm matching `RUnderApp` itself -- the
@@ -58,24 +60,24 @@ keeps as an `RUnderApp` with only its captured args resolved, so the
 that could ever be non-constant.
 
 Beyond this one clause, the `RV` arm and the `isConstLocalProof` case
-that recognises `RCConstClosure` as an `IsAnyConstLocal`, **no other
+that recognises `RCConstPartial` as an `IsAnyConstLocal`, **no other
 code in `ConstFold.idr` changed**. `RCon`'s own folding case
 (`ConstFold.idr:390-396`, `allConstLocal` over the constructor's resolved `args`) is
 untouched: it already only cared whether each field satisfies
 `IsAnyConstLocal`, not which of the five (now six) constant shapes
 that field takes. An interface dictionary is, structurally, just a
-`RCon` whose every field happens to resolve to a `RCConstClosure`
+`RCon` whose every field happens to resolve to a `RCConstPartial`
 instead of a `RCConst`/`RCEmptyCon` -- the existing machinery folds it
 into a `RCConstCon` with zero new cross-definition analysis, exactly
 the way it already folded `[1,2,3,4,5]` or `Just 42`.
 
 ### Staging (`Compiler.RC2.Emit.Util`)
 
-A new `boxedConstClosureExpr` (`Emit/Util.idr:809-826`) stages a
-`RCConstClosure` the first time it's seen and returns a reference to
+A new `boxedConstPartialExpr` (`Emit/Util.idr:809-826`) stages a
+`RCConstPartial` the first time it's seen and returns a reference to
 the staged static on every later reference, deduplicating against the
 same `ConstConDef` state `boxedConstConExpr` itself already uses --
-once `Eq`/`Ord RCLocal` cover `RCConstClosure` (both extended by this
+once `Eq`/`Ord RCLocal` cover `RCConstPartial` (both extended by this
 change), two dictionary fields folding to the same `(Name, missing)`
 pair collide onto the same map key automatically, no separate dedup
 table needed. Simpler than `boxedConstConExpr`: a zero-filled closure
@@ -121,7 +123,7 @@ immortal (`REFCOUNT_MAX`) header -- `idris2rc2_isUnique` is a bare
 (`IDRIS2RC2_REFCOUNT_MAX`) `RCConstCon`'s own staged statics, the
 small-int cache, and `ConstDef` values already use -- ownership
 analysis (`Compiler.RC2.RC`'s `annotate`) needs no changes of its own
-beyond treating `RCConstClosure` as immortal in the same handful of
+beyond treating `RCConstPartial` as immortal in the same handful of
 classification helpers `RCConstCon` already needed one-line additions
 to (`splitBorrows`/`dropIfLastUse`/`isBoxedOperand` in `RC.idr`, plus
 `localRepIn` in `Util.idr`): `idris2rc2_dup`/`idris2rc2_drop`'s own
@@ -155,9 +157,9 @@ inspected `RCExp` nodes themselves -- it never looked inside an
 `RCLocal` constant form ever carried a `Name` of its own (`RCConstCon`
 carries a *constructor* name, a different namespace from `defs`'s
 function-name keys, correctly excluded already). It became a real,
-confirmed correctness gap the moment `RCConstClosure` existed -- a
+confirmed correctness gap the moment `RCConstPartial` existed -- a
 folded dictionary's only remaining reference to one of its own methods
-is the `Name` embedded inside a `RCConstClosure` field, invisible to a
+is the `Name` embedded inside a `RCConstPartial` field, invisible to a
 walker that never looks past the enclosing `RCon`/`RCConstCon`'s own
 `args` list at the `RCLocal` level. `DeadCode.pruneDeadDefs` would
 therefore prune a method reachable *only* through a folded dictionary
@@ -166,7 +168,7 @@ field as dead code, even though the immortal static literal
 in its own C initializer.
 
 **Fix**: a new `usedFunctionNamesL : RCLocal -> SortedSet Name`
-recurses into `RCConstClosure` (`singleton n`) and `RCConstCon`
+recurses into `RCConstPartial` (`singleton n`) and `RCConstCon`
 (`concatMap usedFunctionNamesL` over its `args`), and
 `usedFunctionNamesR` was rewritten from a function with a trailing
 `_ = empty` catch-all into one genuinely exhaustive over every `RCExp`
@@ -244,13 +246,13 @@ cost -- the one allocation-per-call this document is about. Dispatch
 ### Saturated application of a folded closure is now a direct call
 
 The half of that gap that turns out not to be hard at all:
-`RCConstClosure` is a true leaf with **no captured values**, so its
+`RCConstPartial` is a true leaf with **no captured values**, so its
 `missing` is the callee's whole remaining arity, and an application
 supplying exactly that many arguments leaves nothing deferred. It is
 a plain direct call. `foldConst`'s own `RApp` case rewrites it:
 
 ```idris
-RApp fc lazy (RCConstClosure n missing) args   -- length args == missing
+RApp fc lazy (RCConstPartial n missing []) args   -- length args == missing
   ==> RAppName fc lazy n args
 ```
 
@@ -283,7 +285,7 @@ concrete instance is known".
 ## Follow-up (commit `0e7c755`): alias propagation, and the general call-argument case
 
 The original pass above (commit `a01eaa2`) was scoped and verified
-against interface dictionaries -- a `RCConstClosure` field sitting
+against interface dictionaries -- a `RCConstPartial` field sitting
 inside a `RCon`/`RCConstCon`. A second look this session, re-verifying
 the feature end to end, found one real completeness gap and one
 untested-but-already-working generalization.
@@ -304,13 +306,13 @@ RV _ cval@(RCConstCon {}) =>
 ```
 
 (`ConstFold.idr:316-320`). No equivalent arm existed for
-`RCConstClosure`, so a chain like `let a = someTopLevelFn in let b = a
+`RCConstPartial`, so a chain like `let a = someTopLevelFn in let b = a
 in MkDict a b` folded `a` correctly but silently stopped propagating at
 `b`, even though `b` denotes the exact same immortal value -- `b`
 stayed a real runtime local, and `MkDict a b`'s own `b` field never
 reached `RCConstCon` folding's `allConstLocal` check. Not a
 correctness bug (the generated code was still valid, just a missed
-fold), but a real gap in `RCConstClosure`'s completeness as first
+fold), but a real gap in `RCConstPartial`'s completeness as first
 committed.
 
 The fix is structurally identical to the `RCConstCon` arm -- a second
@@ -318,8 +320,8 @@ The fix is structurally identical to the `RCConstCon` arm -- a second
 constructor it matches:
 
 ```idris2
-RV _ cval@(RCConstClosure {}) =>
-    let body' = foldConst (insert var (Element cval ItIsConstClosure2) env) body
+RV _ cval@(RCConstPartial {}) =>
+    let body' = foldConst (insert var (Element cval ItIsConstPartial2) env) body
     in if contains (RCLoc var) (freeLocalsR body')
           then RLet fc var rep value' body'
           else body'
@@ -328,7 +330,7 @@ RV _ cval@(RCConstClosure {}) =>
 (`ConstFold.idr:328-332`, immediately following the `RCConstCon` arm).
 This same arm also records a bare `let a = someTopLevelFn`:
 `foldConst`'s `RUnderApp fc n missing []` clause has already folded
-that value to `RV fc (RCConstClosure n missing)`, so it lands here too.
+that value to `RV fc (RCConstPartial n missing [])`, so it lands here too.
 
 **Verification methodology.** Getting a genuine, *surviving* `let b =
 a` (a plain local-to-local alias) into rc2's own IR turned out to be
@@ -347,7 +349,7 @@ Lifted-level inliner, which does not honour upstream's `%noinline` flag
 -- then splices `mkAlias`'s body (bare parameter passthrough) into the
 call site, turning `b`'s own value into exactly `RV fc (RCLoc a)`
 before `ConstFold` ever runs. That resolves through `env` into `RV fc
-(RCConstClosure ...)`, landing precisely on the new arm. Confirmed
+(RCConstPartial ...)`, landing precisely on the new arm. Confirmed
 structurally: without the arm, the test's own `MkDict a b` construction
 stays a genuine `RCon` in the generated `.c` (a real
 `idris2rc2_newConstructor(2, 1)` call inside `Main_main`, one field
@@ -358,17 +360,17 @@ allocating call at all.
 
 ### Generalization: the fold is not specific to constructor fields
 
-The original design section above frames `RCConstClosure` folding
+The original design section above frames `RCConstPartial` folding
 entirely in terms of `RCon`'s own `allConstLocal` check over
 constructor fields (interface dictionaries, `{__mainExpression:0}`'s
 continuation). Nothing in the fold itself is actually specific to that
-position, though: `RUnderApp _ n missing []` -> `RCConstClosure`
+position, though: `RUnderApp _ n missing []` -> `RCConstPartial`
 happens once, uniformly, in `foldConst`'s own `RUnderApp` clause (the
 `RLet` value classification then records the result in `env`), before any
 particular *consumer* of the bound variable is considered. Whatever
 later reads that binding -- a constructor field, an ordinary function
 call argument, anything -- reads it as whatever `resolveLocal`
-resolves it to, `RCConstClosure` included.
+resolves it to, `RCConstPartial` included.
 
 `Test115ConstFoldClosure/ConstFoldClosure.idr` confirms this for the case that
 originally motivated caring about any of this: a zero-filled closure
@@ -415,7 +417,7 @@ top-level function. It considered two fix directions and dropped both:
    anything below -- it simply turned out not to be needed.
 
 Direction 1's blocker turned out to be stale, and this document's own
-`RCConstClosure` fold -- direction 1, in effect, applied automatically
+`RCConstPartial` fold -- direction 1, in effect, applied automatically
 wherever a zero-filled closure over a named function appears, not
 hand-triggered per call site -- fully resolves the motivating problem,
 confirmed empirically this session:
@@ -441,24 +443,24 @@ of how many distinct functions a generic helper is ever called with.
 
 ## Files
 
-- `rc2/src/Compiler/RC2/RCExp.idr` -- `RCLocal`'s new `RCConstClosure`
-  case, `IsConstClosureLocal`, `IsAnyConstLocal`'s fifth constructor,
+- `rc2/src/Compiler/RC2/RCExp.idr` -- `RCLocal`'s new `RCConstPartial`
+  case, `IsConstPartialLocal`, `IsAnyConstLocal`'s fifth constructor,
   and the `Eq`/`Ord`/`Show` additions.
 - `rc2/src/Compiler/RC2/ConstFold.idr` -- the `foldConst` clause for
-  `RUnderApp fc n missing []` (folds to `RV fc (RCConstClosure ..)`),
-  the `RLet` value-classification arm `RV _ (RCConstClosure {})` (puts
+  `RUnderApp fc n missing []` (folds to `RV fc (RCConstPartial ..)`),
+  the `RLet` value-classification arm `RV _ (RCConstPartial {})` (puts
   that constant into `env`, and propagates an already-folded closure
   constant through a further `let`-rebinding; commit `0e7c755`), and
   `isConstLocalProof`'s new case.
-- `rc2/src/Compiler/RC2/Emit/Util.idr` -- `boxedConstClosureExpr`, the
-  `constDefKey` fix in `boxedConstExpr`, and the `RCConstClosure` cases
+- `rc2/src/Compiler/RC2/Emit/Util.idr` -- `boxedConstPartialExpr`, the
+  `constDefKey` fix in `boxedConstExpr`, and the `RCConstPartial` cases
   added to `constConFieldExpr`/`inlineExprFor`/`repOfLocal`/`varName`.
 - `rc2/src/Compiler/RC2/DeadCode.idr` -- `usedFunctionNamesL`, and the
   exhaustive rewrite of `usedFunctionNamesR`.
 - `rc2/src/Compiler/RC2/RC.idr` -- `annotate`'s `splitBorrows`/
   `dropIfLastUse`/`isBoxedOperand`/`(RV fc v)` cases, extended to treat
-  `RCConstClosure` as immortal.
-- `rc2/src/Compiler/RC2/Util.idr` -- `localRepIn`'s `RCConstClosure`
+  `RCConstPartial` as immortal.
+- `rc2/src/Compiler/RC2/Util.idr` -- `localRepIn`'s `RCConstPartial`
   case (always `RBoxed`).
 - `rc2/support/rc2/runtime.c` -- the defensive `REFCOUNT_MAX` guard in
   `idris2rc2_trampoline`.
@@ -469,7 +471,7 @@ of how many distinct functions a generic helper is ever called with.
   this fold; the relevant sections here are:
   - §1 (was `Test69ConstFoldClosureDict`) -- structural regression: a
     3-method `Greeter Dog` instance dictionary folds into a single
-    `RCConstCon` of three `RCConstClosure` fields, confirmed via
+    `RCConstCon` of three `RCConstPartial` fields, confirmed via
     `--directive dumprcexpr` and by grepping the generated `.c` for the
     absence of any `idris2rc2_mkClosure` call building the dictionary.
   - §2 (was `Test71ConstFoldClosureDeadCodeSurvival`) -- the `DeadCode`
@@ -477,7 +479,7 @@ of how many distinct functions a generic helper is ever called with.
     dictionary field, with a second-hop helper it alone calls, both of
     which must survive `pruneDeadDefs`.
   - §3 (was `Test72ConstFoldClosureAliasFold`, commit `0e7c755`) -- the
-    `RCConstClosure` mirror-arm fix: a `%noinline`-mediated `let`-alias
+    `RCConstPartial` mirror-arm fix: a `%noinline`-mediated `let`-alias
     of an already-folded closure still folds `MkDict a b` into a single
     immortal `RCConstCon`.
   - §4 (was `Test73ConstFoldClosureCallArg`, commit `0e7c755`) -- the
@@ -528,7 +530,7 @@ is `partial R m (caps ++ arguments)`, and `partial R (k + m) caps` applied to
 the same `k` arguments is the same closure. So `applyFoldApplied` now renames every
 closure over a bare wrapper to a closure over what it wraps, missing `k + m`
 (`wrapperClosure` in `ArityRaise.idr`, through `FunDedup.renameNamesG`): a `partial`,
-and a constant closure (`RCConstClosure W k` becomes `RCConstClosure R (k + m)`).
+and a constant closure (`RCConstPartial W k` becomes `RCConstPartial R (k + m)`).
 A wrapper of a wrapper is followed to the end. The captured values are the same
 and keep their order, so nothing is added to or taken from what the closure
 owns. A wrapper that no `partial`, constant closure, call or `delay` names any more
@@ -551,12 +553,12 @@ with `--directive noapplyfold`, and the output is the same.
 ## Closures over constants (`RCConstPartial`)
 
 A `partial f missing caps` whose captured values are all constants (literals,
-`RCEmptyCon`, `RCConstCon`, `RCConstClosure`, or another `RCConstPartial`) is itself a
+`RCEmptyCon`, `RCConstCon`, `RCConstPartial`, or another `RCConstPartial`) is itself a
 constant: `ConstFold` makes it `RCConstPartial f missing caps`, and `Emit.Util`
 (`boxedConstPartialExpr`) stages one immortal `IDRIS2RC2_ConstClosureArgs<n>` (the layout of
 `IDRIS2RC2_Closure`; `arity = filled + missing`, `filled = length caps`, the captures in
 `args`), once per distinct value. The IR dump shows `#f/missing~closure(caps)`. A
-zero-capture closure stays an `RCConstClosure`.
+zero-capture closure stays an `RCConstPartial`.
 
 Emission already made such a closure a static (`staticClosure`, `static-closures.md`) when it
 met an `RUnderApp` over constants, so the gain here is not in the allocation but in the IR:
@@ -564,7 +566,7 @@ the closure is a constant value for the passes before `Emit`. A dictionary that 
 constructor of closures over constants folds to an `RCConstCon`, a `case` on it and the
 `apply` of a field are resolved, and the closures are compared and deduplicated as values.
 
-- An `apply` of one is resolved as for an `RCConstClosure`, with the captures first:
+- An `apply` of one is resolved as for an `RCConstPartial`, with the captures first:
   `length ys == missing` gives the call `f (caps ++ ys)`, fewer arguments a `partial` that
   captured `caps ++ ys` (a constant again, when the next round of the fold sees it).
   An application with more arguments than the closure misses is split into the saturating

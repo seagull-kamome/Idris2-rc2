@@ -51,7 +51,7 @@ foldKnownPartials = go empty
              Nothing => pure e
     go kp e@(RApp fc lazy (RCConstPartial n missing caps) args) =
         let as = forget args in
-        if missing > 0 && length as > missing
+        if missing > 0 && length as > missing && not (null caps)
            then do
                r <- freshVarId
                case fromList (drop missing as) of

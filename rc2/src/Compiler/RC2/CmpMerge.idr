@@ -63,7 +63,6 @@ eqLocal _ (RCConst a) (RCConst b) = eqConst a b
 eqLocal _ (RCEmptyCon n1 _ t1) (RCEmptyCon n2 _ t2) = n1 == n2 && t1 == t2
 eqLocal env (RCConstCon n1 _ t1 a1) (RCConstCon n2 _ t2 a2) =
     n1 == n2 && t1 == t2 && eqLocals env a1 a2
-eqLocal _ (RCConstClosure n1 m1) (RCConstClosure n2 m2) = n1 == n2 && m1 == m2
 eqLocal env (RCConstPartial n1 m1 c1) (RCConstPartial n2 m2 c2) =
     n1 == n2 && m1 == m2 && eqLocals env c1 c2
 eqLocal _ _ _ = False

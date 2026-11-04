@@ -17,7 +17,7 @@ module Main
 -- argument copy and a function-pointer-table hop per call, for callees
 -- known at compile time. With it, `step` is cloned with `ops`
 -- substituted, which folds the destructuring `case` away and leaves
--- each field an `RCConstClosure` for ConstFold's own `RApp` case to
+-- each field an `RCConstPartial` for ConstFold's own `RApp` case to
 -- turn into a direct call.
 --
 -- `%noinline` keeps `Compiler.RC2.Inline`/`LateInline` from removing

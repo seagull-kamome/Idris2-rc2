@@ -264,13 +264,13 @@ IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(19)
 IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(20)
 #undef IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR
 
-// A zero-filled (Compiler.RC2.ConstFold's RCConstClosure-folded)
+// A zero-filled (Compiler.RC2.ConstFold's RCConstPartial with no captures)
 // closure constant's own static storage -- shares just
 // IDRIS2RC2_Closure's own leading header/arity/filled/fn member
 // sequence and omits the trailing flexible `args[]` array entirely
 // (always empty here, by construction: `filled` is always 0 for a
 // value with this type). See Compiler.RC2.EmitUtil's
-// boxedConstClosureExpr for the full rationale. Never heap-allocated,
+// boxedConstPartialExpr for the full rationale. Never heap-allocated,
 // sizeof()'d, or handed to anything assuming the real IDRIS2RC2_Closure
 // layout -- an IDRIS2RC2_Value* pointing at one is only ever read as
 // far as these same leading fields (which is all any code path that

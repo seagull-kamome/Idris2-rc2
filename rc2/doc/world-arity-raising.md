@@ -34,7 +34,7 @@ argument, dispatches through `apply`, and frees the closure again. The
 unknown.
 
 A tail may also be a constant closure, one that captures nothing
-(`#Main.{sumPos:0}/1~closure`, `RCConstClosure`), and a function may
+(`#Main.{sumPos:0}/1~closure`, `RCConstPartial`), and a function may
 pattern-match on its explicit arguments before choosing which closure to
 return. A small `Core` clone shows both:
 

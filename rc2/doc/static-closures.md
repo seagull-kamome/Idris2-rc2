@@ -9,14 +9,14 @@ constants is a file-scope static, immortal like an `RCConstCon`, instead of an
 `pure ()` in `Control.Task` is a tail call of `pure` with the unit and the world.
 At the IR it is an `RAppName`; a tail call becomes a closure for the trampoline
 only in `Emit` (`tryBuildClosureInto`), so `ConstFold` never sees a closure there.
-`RCConstClosure` also holds no captured values, and giving it some means changing
+`RCConstPartial` also holds no captured values, and giving it some means changing
 every place that matches an `RCLocal` (about 55). The `Emit` rule needs only the
 captured values at the point where the closure is built.
 
 ## The rule
 
 Every captured value is `RCNull`, `RCErased`, `RCWorld`, a constant form
-(`RCConstCon`, `RCConstClosure`) or a literal (`RCConst`, rendered as a boxed
+(`RCConstCon`, `RCConstPartial`) or a literal (`RCConst`, rendered as a boxed
 constant: an immediate integer, or a static such as a string), and its C expression
 is an address, `NULL` or `IDRIS2RC2_IMM_*`. Anything else, `RCEmptyCon` among them
 (its expression is a `mk...` call), keeps the heap closure. Then `makeClosureInto` stages

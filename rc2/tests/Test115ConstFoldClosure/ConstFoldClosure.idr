@@ -4,7 +4,7 @@ module Test115ConstFoldClosure.ConstFoldClosure
 -- This module was licensed by BSD3.
 
 -- Merged regression suite for Compiler.RC2.ConstFold's closure- and
--- CAF-folding (RCConstClosure / whole-program CafTable / RConCase
+-- CAF-folding (RCConstPartial / whole-program CafTable / RConCase
 -- scrutinee fold). Eight formerly separate tests, one section each,
 -- every original doc comment kept verbatim. `main` runs all sections
 -- in order; the saved .expected is their concatenation.
@@ -38,7 +38,7 @@ import Decidable.Equality
 -- zero-filled closure over one of the three method implementations
 -- below (`greet_Dog`/`loud_Dog`/`cnt_Dog`, Idris2's own generated
 -- names) -- since `isConstLocalProof` now recognises each of those as
--- `RCConstClosure`, ConstFold's existing `RCon`-folding logic
+-- `RCConstPartial`, ConstFold's existing `RCon`-folding logic
 -- (unmodified -- see ConstFold.idr's own module note) folds the
 -- *whole* dictionary into a single immortal `RCConstCon`, with no code
 -- of its own having to know anything about interfaces specifically.
@@ -146,7 +146,7 @@ useGreeter71 x = greet71 x ++ " / " ++ loud71 x
 -- Section 3: let-bound closure-alias fold
 --            (was Test72ConstFoldClosureAliasFold)
 -- ============================================================
--- Regression test for the `RV _ (RCConstClosure {})` arm added to
+-- Regression test for the `RV _ (RCConstPartial {})` arm added to
 -- Compiler.RC2.ConstFold's `RLet` value-classification (mirroring the
 -- pre-existing `RCConstCon` arm right above it): a `let`-bound alias
 -- of an already-folded closure constant (`let b = a`) must itself
@@ -164,7 +164,7 @@ useGreeter71 x = greet71 x ++ " / " ++ loud71 x
 -- `Compiler.Inline` concept) then splices `mkAlias`'s body (bare
 -- parameter passthrough) into the call site, turning `b`'s own value
 -- into exactly `RV fc (RCLoc a)` before ConstFold ever runs -- which
--- folds through `env` into `RV fc (RCConstClosure ...)`, landing
+-- folds through `env` into `RV fc (RCConstPartial ...)`, landing
 -- precisely on the new arm.
 --
 -- Confirmed structurally: without the new arm, `dict`'s own
@@ -201,7 +201,7 @@ sectionAliasFold =
 -- Section 4: folded closure in a call-argument position
 --            (was Test73ConstFoldClosureCallArg)
 -- ============================================================
--- Regression test for `Compiler.RC2.ConstFold`'s `RCConstClosure`
+-- Regression test for `Compiler.RC2.ConstFold`'s `RCConstPartial`
 -- folding (rc2/doc/const-closure-fold.md) when a zero-filled closure
 -- flows into an ordinary CALL ARGUMENT position, not just a
 -- constructor/dictionary field (Section 1's own shape) -- this is the
@@ -238,7 +238,7 @@ useIt xs = map double xs
 --
 -- Confirmed by hand via `--directive dumprcexpr`: `Main.useDict74`'s
 -- own dump references the folded `Main.dict74` dictionary directly as a
--- `RCConstCon`/`RCConstClosure` literal, never a `RAppName ...
+-- `RCConstCon`/`RCConstPartial` literal, never a `RAppName ...
 -- "Main.dict74" []` call.
 
 record Pair74 where
@@ -346,7 +346,7 @@ sumFirst (S k) (More x rest) = x + sumFirst k rest
 -- chain fully resolve), `main` would still produce the correct answer
 -- but `--directive dumprcexpr` would show a residual `RAppName
 -- "Main.capB"`/`"Main.capA"` reference instead of `main` applying a
--- single folded `RCConstClosure` directly (confirmed by hand: with the
+-- single folded `RCConstPartial` directly (confirmed by hand: with the
 -- cap actually at 4, `Main.capA`/`capB`/`capC` disappear from the dump
 -- entirely, pruned by `Compiler.RC2.DeadCode` once nothing calls them
 -- by name anymore).
@@ -394,13 +394,13 @@ capC = capB
 --
 -- Before the fix, `foldConst`'s top-level `RUnderApp fc n missing args`
 -- arm only resolved `args`, never reclassifying the whole node into
--- `RCConstClosure` -- so `cafValueOf`'s `MkRCFun [] _ _ (RV _ cval)`
+-- `RCConstPartial` -- so `cafValueOf`'s `MkRCFun [] _ _ (RV _ cval)`
 -- pattern (RC2.idr) never matched the `csegen` CAF, it never entered
 -- `CafTable`, and both call sites below kept a real `RAppName ...
 -- {csegen:N} []` / `call {csegen:N} []` CAF lookup instead of
 -- referencing the shared closure constant directly. Confirmed by hand
 -- via `--directive dumprcexpr` post-fix: the CAF's own definition now
--- dumps as a `RCConstClosure` value (the `~closure` `Show` form), and
+-- dumps as a `RCConstPartial` value (the `~closure` `Show` form), and
 -- both call sites reference it directly rather than via a repeated
 -- `RAppName`/`call {csegen:N} []`.
 

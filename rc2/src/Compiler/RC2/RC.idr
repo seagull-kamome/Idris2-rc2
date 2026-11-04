@@ -579,7 +579,6 @@ mutual
     -- Same reasoning as the RCConstCon intercept just above -- an
     -- immortal folded closure is never tracked in natives/owned either,
     -- and would otherwise get a wasted (though harmless) RDup here.
-    annotate natives owned e@(RV _ (RCConstClosure {})) = pure e
     annotate natives owned e@(RV _ (RCConstPartial {})) = pure e
     -- `RCConst`/`RCEmptyCon`/`RCNull` need the exact same three
     -- intercepts, for the exact same reason -- `Compiler.RC2.ConstFold`

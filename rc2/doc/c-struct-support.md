@@ -420,7 +420,7 @@ annotate natives owned (RStructSet fc structVar sf value _) =
 `dropIfLastUse natives owned vars` returns the operands of `vars` that
 this use is the last one of: still in `owned`, not a native local, and
 not an immortal operand (`RCNull`/`RCConst`/`RCEmptyCon`/`RCConstCon`/
-`RCConstClosure`). It walks `vars` left to right and removes each hit
+`RCConstPartial`). It walks `vars` left to right and removes each hit
 from `owned`, so a local that occurs twice in one node (for example the
 same local as `structVar` and `value`) is dropped once. It never
 inserts a `dup`: an operand that is still alive afterwards needs no

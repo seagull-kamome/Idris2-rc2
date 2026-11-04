@@ -198,7 +198,7 @@ double-drop; costs nothing to guard against, should never actually
 fire in practice).
 
 `consumedOperands` only considers `RCLoc` operands: a constant-shaped
-`RCLocal` (`RCEmptyCon`/`RCConstCon`/`RCConstClosure`, or an `RCConst` that
+`RCLocal` (`RCEmptyCon`/`RCConstCon`/`RCConstPartial`, or an `RCConst` that
 `litRep` can't place natively) is never a real refcounted value with a `drop`
 to balance, and `Emit.Util`'s `varName` has no rendering for one (an
 "unreachable" placeholder), which is what a constant field of a sunk `RCon`

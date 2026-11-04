@@ -1,6 +1,6 @@
 ||| Constant folding: constant `ExtPrim` calls (`prim__codegen`),
 ||| arithmetic/comparisons (RPrimVal/RCmpCase), constructors/closures
-||| (RCConstCon/RCConstClosure), whole-program CAF-boundary crossing,
+||| (RCConstCon/RCConstPartial), whole-program CAF-boundary crossing,
 ||| and RConCase scrutinee resolution. Runs between Compiler.RC2.Inline
 ||| and Phase 2 annotation. Four distinct designs live in one module --
 ||| see rc2/doc/const-con-fold.md, const-closure-fold.md,
@@ -172,7 +172,7 @@ useInfo = go (MkUseInfo empty empty empty)
 |||
 ||| `consts` values carry an `IsAnyConstLocal` proof (`Subset`, erased
 ||| at runtime) so they can only ever be one of `RCLocal`'s constant
-||| forms -- `RCConstCon`/`RCConstClosure` included, see
+||| forms -- `RCConstCon`/`RCConstPartial` included, see
 ||| `rc2/doc/const-con-fold.md`/`const-closure-fold.md` -- never a live
 ||| `RCLoc`. `aliases` maps a folded-away constructor field's own id to
 ||| the local the constructor was built from, and `knownCons` the
@@ -270,7 +270,6 @@ isConstLocalProof RCWorld                = Just ItIsWorld2
 isConstLocalProof (RCConst _)            = Just ItIsConst2
 isConstLocalProof (RCEmptyCon {})        = Just ItIsEmptyCon2
 isConstLocalProof (RCConstCon {})        = Just ItIsConstCon2
-isConstLocalProof (RCConstClosure {})    = Just ItIsConstClosure2
 isConstLocalProof (RCConstPartial {})    = Just ItIsConstPartial2
 
 ||| Whole-list version of `isConstLocalProof`, collecting each
@@ -343,7 +342,7 @@ foldConst : CafTable -> Env -> RCExp -> RCExp
 -- `[1,2,3,4,5]`'s own ANF folds inside-out), then the *fold result*
 -- (not the original shape) is classified -- see
 -- rc2/doc/const-con-fold.md's Bug #1 for why that distinction matters.
--- A `RPrimVal`/`RCConstCon`/`RCConstClosure` result means "a known
+-- A `RPrimVal`/`RCConstCon`/`RCConstPartial` result means "a known
 -- constant": insert into `env`, drop the `RLet` if `body` (post-fold)
 -- does not reference the variable.
 foldConst caf env (RLet fc var rep value body) =
@@ -390,11 +389,6 @@ foldConst caf env (RLet fc var rep value body) =
             -- that shape to this same `RV` form first). See
             -- rc2/doc/const-closure-fold.md's "Gap: a let-rebinding of
             -- an already-folded closure didn't propagate".
-            RV _ cval@(RCConstClosure {}) =>
-                let body' = foldConst caf (insertConst var (Element cval ItIsConstClosure2) env) body
-                in if mentionsLocal (RCLoc var) body'
-                      then RLet fc var rep value' body'
-                      else body'
             RV _ cval@(RCEmptyCon {}) =>
                 let body' = foldConst caf (insertConst var (Element cval ItIsEmptyCon2) env) body
                 in if mentionsLocal (RCLoc var) body'
@@ -518,12 +512,11 @@ foldConst caf env (RAppName fc lazy n args) =
                        Nothing               => RAppName fc lazy n []
             _  => RAppName fc lazy n args'
 -- A literal, zero-args `RUnderApp` denotes the same constant closure
--- value as `RCConstClosure` -- folds unconditionally so a CAF whose
+-- value as `RCConstPartial` -- folds unconditionally so a CAF whose
 -- whole body is a bare zero-capture closure reference (no `RLet`
 -- wrapper) is recognised as constant by `cafValueOf` too. A real
 -- capture (`RUnderApp fc n missing (x :: xs)`) falls through
 -- unchanged. See rc2/doc/const-closure-fold.md's "Design" section.
-foldConst _ env (RUnderApp fc n missing []) = RV fc (RCConstClosure n missing)
 foldConst _ env (RUnderApp fc n missing args) =
     let args' = map (resolveLocal env) args
     in case allConstLocal args' of
@@ -547,12 +540,6 @@ foldConst _ env (RApp fc lazy c args) =
     let c' = resolveLocal env c
         args' = map (resolveLocal env) args
     in case c' of
-            RCConstClosure n missing =>
-                if length args' == missing
-                   then RAppName fc lazy n (forget args')
-                   else if length args' < missing
-                           then RUnderApp fc n (minus missing (length args')) (forget args')
-                           else RApp fc lazy c' args'
             RCConstPartial n missing caps =>
                 if length args' == missing
                    then RAppName fc lazy n (caps ++ forget args')
@@ -610,7 +597,7 @@ foldConst caf env (RCmpCase fc op args postDrop t f) =
 -- rc2/doc/const-caf-fold.md's "RConCase scrutinee resolution" for the
 -- full design, and its "Bugs found" for why `RC.idr`'s `annotate`
 -- needed three added intercepts once this could produce a bare `RV`
--- of a non-`RCConstCon`/`RCConstClosure` constant form.
+-- of a non-`RCConstCon`/`RCConstPartial` constant form.
 foldConst caf env (RConCase fc sc alts mDef) =
     case resolveLocal env sc of
          RCConstCon _ _ tag args =>
@@ -719,7 +706,7 @@ foldConst _ _ e = e
 ||| spliced into every call site by `Compiler.RC2.Inline`'s own
 ||| `isCallFree`, before `ConstFold` ever runs, but a string a fold itself
 ||| produced (`prim__codegen`, `target-os`) is not -- along with the
-||| `RCConstCon`/`RCConstClosure` shapes `Inline` can't reach. See `rc2/doc/const-caf-fold.md`'s "Design" for the
+||| `RCConstCon`/`RCConstPartial` shapes `Inline` can't reach. See `rc2/doc/const-caf-fold.md`'s "Design" for the
 ||| fixpoint algorithm this feeds.
 export
 cafValueOf : RCDef -> Maybe (Subset RCLocal IsAnyConstLocal)
@@ -758,7 +745,7 @@ foldConstDef _ _ d@(MkRCForeign _ _ _) = d
 ||| sites always pass is the *whole* rewrite -- `resolveLocal`
 ||| substitutes it, the `RConCase` case folds the destructuring away
 ||| against it, and the `RApp` case then turns each method field (now
-||| an `RCConstClosure`) into a direct call. See
+||| an `RCConstPartial`) into a direct call. See
 ||| `rc2/doc/constant-constructor-specialization.md`'s "Why nothing new
 ||| is needed downstream".
 export

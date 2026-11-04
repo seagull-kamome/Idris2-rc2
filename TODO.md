@@ -14,7 +14,7 @@ were found and already fixed.
 `idris2rc2_drop(NULL)`を出し、IRのダンプにも`postDrop= [[erased]]`と残っていた。
 
 案: これらのフィールドの型を`List Int`(変数ID)か、`RCLoc`だけを表す型にして、定数を入れられなく
-する。パスが定数を入れる間違いが型エラーになり、Emitの`varName`の定数の分岐(`RCConst`・`RCConstCon`・`RCConstClosure`は
+する。パスが定数を入れる間違いが型エラーになり、Emitの`varName`の定数の分岐(`RCConst`・`RCConstCon`・`RCConstPartial`は
 `/* [rc2] unreachable ... */`を返す)と、各パスの`RCLoc`の場合分けも要らなくなる。`RCExp`の
 構成子の型が変わるので、`postDrop`などを読み書きする全パス(`RC`・`DualABI`・`Loop`・`MutualLoop`・
 `DupMerge`・`PushDown`・`Reuse`・`DeadVars`・`FunDedup`・`Emit`)に影響する。`RCConstCon`の

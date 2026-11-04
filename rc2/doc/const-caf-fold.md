@@ -1,6 +1,6 @@
 # Whole-program CAF folding and `RConCase` scrutinee resolution
 
-`Compiler.RC2.ConstFold`'s `RCConstCon`/`RCConstClosure` folding (see
+`Compiler.RC2.ConstFold`'s `RCConstCon`/`RCConstPartial` folding (see
 `rc2/doc/const-con-fold.md`/`rc2/doc/const-closure-fold.md`) used to
 fold *only within one definition's own body*, via a single pass with a
 fresh, purely-local `env` per definition (`foldConstDef`, called once
@@ -57,7 +57,7 @@ list); a non-empty `args'` is an ordinary call and is left alone but
 for having its own operands resolved, same as every other node. A
 resolved CAF reference becomes a bare `RV fc cval`, which flows into
 `env` through the very same `RLet`/`RV` classification arms
-`RCConstCon`/`RCConstClosure` folding already had (`ConstFold.idr:
+`RCConstCon`/`RCConstPartial` folding already had (`ConstFold.idr:
 237-258`) -- no separate mechanism needed for what happens after
 substitution.
 
@@ -97,7 +97,7 @@ down to a bare `RV fc cval`. A bare `RPrimVal` body is deliberately
 *not* matched here: a CAF that simple is already spliced into every
 call site by `Compiler.RC2.InlineCExp`'s own `isCallFree (LPrimVal _ _) =
 True` before `ConstFold` ever runs, so by the time `cafValueOf` looks,
-it's gone; only the `RCConstCon`/`RCConstClosure` shapes `Inline` can't
+it's gone; only the `RCConstCon`/`RCConstPartial` shapes `Inline` can't
 reach (`isCallFree`'s own `LCon`/`LUnderApp` cases, see
 `const-con-fold.md`/`const-closure-fold.md`) still need this route.
 
@@ -228,7 +228,7 @@ never needs a dup, never tracked as owned/borrowed":
 
 ```idris2
 annotate natives owned e@(RV _ (RCConstCon {})) = pure e
-annotate natives owned e@(RV _ (RCConstClosure {})) = pure e
+annotate natives owned e@(RV _ (RCConstPartial {})) = pure e
 ```
 
 (`RC.idr:474,478`, predating this change). The other three forms
@@ -265,7 +265,7 @@ idris2rc2_dup(/* [rc2] unreachable RCConst varName */)
 substitutes for the actual variable name `RDup`'s emission expects.
 
 **Fix**: add the same three intercepts already present for
-`RCConstCon`/`RCConstClosure`:
+`RCConstCon`/`RCConstPartial`:
 
 ```idris2
 annotate natives owned e@(RV _ (RCConst _)) = pure e
@@ -358,7 +358,7 @@ that folding never happens):
   folds, it's proof the new fixpoint loop did it, not `Inline`.
   Confirmed by hand via `--directive dumprcexpr`: `Main.useDict74`'s own
   dump references `Main.dict74` directly as a `RCConstCon`/
-  `RCConstClosure` literal, never a `RAppName ... "Main.dict74" []` call.
+  `RCConstPartial` literal, never a `RAppName ... "Main.dict74" []` call.
 - **§6 (was `Test75ConstFoldConCaseScrutinee`)** -- `directCase`'s scrutinee is
   a known-constant `RCConstCon` bound by a `let` immediately above the
   `case`, so the whole case (tag dispatch included) must fold away to
@@ -394,7 +394,7 @@ that folding never happens):
   `Main.capA`/`capB`/`capC` disappear from `--directive dumprcexpr`'s
   own output entirely (pruned by `Compiler.RC2.DeadCode` once nothing
   calls them by name any more), leaving `main` applying a single
-  folded `RCConstClosure` directly.
+  folded `RCConstPartial` directly.
 
 ## Scope / limitations
 
@@ -445,7 +445,7 @@ that folding never happens):
 
 1. `--directive dumprcexpr` (see `rc2/doc/reading-the-ir.md`) on each
    new test, before and after the change, to confirm exactly what
-   folded (a `RCConstCon`/`RCConstClosure` literal replacing a
+   folded (a `RCConstCon`/`RCConstPartial` literal replacing a
    `RAppName` call; a `case` collapsing to its one surviving alt's
    body) rather than inferring it indirectly from program output.
 2. Read the generated C directly to confirm the *absence* of what

@@ -11,7 +11,7 @@ module Test115ConstFoldClosure.ConstFoldClosureCallthrough
 -- output on every iteration AND valgrind-cleanliness.
 --
 -- `Greeter Dog`'s own dictionary is built exactly once, folded to a
--- single immortal `RCConstCon` referencing two `RCConstClosure`
+-- single immortal `RCConstCon` referencing two `RCConstPartial`
 -- fields, and that one static is what `loopCall`'s own self-tail loop
 -- (`Compiler.RC2.Loop`) reads on every one of its 500 iterations --
 -- `idris2rc2_applyClosure`'s own non-unique dispatch path
