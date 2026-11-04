@@ -1509,7 +1509,7 @@ generateCSourceFile defs0 exports noMain directEntryPoint dropUnimplementableFor
      -- (exact arity/`Rep`s) by the loop above, so only names outside
      -- that set need this generic fallback declaration. `max` resolves
      -- an arity-bearing `RAppName` sighting against an arity-0
-     -- `RUnderApp`/`RCConstClosure` one for the same name in favour of
+     -- `RUnderApp`/`RCConstPartial` one for the same name in favour of
      -- the real arity, regardless of which order they were seen in.
      let locallyOwnedFns = SortedSet.fromList $ mapMaybe (\(n, d) => case d of MkRCFun{} => Just n; MkRCForeign{} => Just n; _ => Nothing) defs
      let externalFnArity = foldl (\acc, (n, ar) => insertWith max n ar acc) Data.SortedMap.empty (concatMap (externalFunctionRefsD . snd) defs)

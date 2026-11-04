@@ -26,7 +26,7 @@ import Data.SortedSet
 ||| Every `defs`-keyed function `Name` reachability follows from a def
 ||| -- a direct call (`RAppName`/`RAppNameRep`), a closure-building
 ||| reference (`RUnderApp`), or a `ConstFold`-folded closure
-||| (`RCConstClosure`). Just the `Name` callbacks of `RCExp.idr`'s own
+||| (`RCConstPartial`). Just the `Name` callbacks of `RCExp.idr`'s own
 ||| exhaustive `foldRCNamesD`, so a new `RCExp` constructor forces one
 ||| update there, not one here too. `RCon`/`RCConstCon`'s own `Name` (a
 ||| *constructor*, a different namespace from `defs`'s function-name

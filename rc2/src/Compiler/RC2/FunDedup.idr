@@ -34,7 +34,6 @@ ClosureRename : Type
 ClosureRename = Name -> Nat -> (Name, Nat)
 
 renameLocalN : ClosureRename -> RCLocal -> RCLocal
-renameLocalN cl (RCConstClosure n missing) = uncurry RCConstClosure (cl n missing)
 renameLocalN cl (RCConstPartial n missing caps {capsConst}) =
     let (n', missing') = cl n missing in RCConstPartial n' missing' caps {capsConst}
 renameLocalN _ l = l
@@ -284,7 +283,6 @@ eqL env (RCLoc a) (RCLoc b) =
          (Just b', Just a') => a' == a && b' == b
          (Nothing, Nothing) => a == b
          _ => False
-eqL env (RCConstClosure n1 m1) (RCConstClosure n2 m2) = m1 == m2 && eqName env n1 n2
 eqL env (RCConstPartial n1 m1 c1) (RCConstPartial n2 m2 c2) = m1 == m2 && eqName env n1 n2 && length c1 == length c2 && all id (zipWith (eqL env) c1 c2)
 eqL _ x y = x == y
 

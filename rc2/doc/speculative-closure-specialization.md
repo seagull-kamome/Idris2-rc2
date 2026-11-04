@@ -113,7 +113,7 @@ Given `%spec` can't reach the motivating case (closedness) and has no
 profitability gate even where it can fire, this section designs an
 rc2-side mechanism operating on `RCExp` after the point `Compiler.RC2.ConstFold`
 already runs, reusing the same "is this closure argument a compile-time
-constant" detection `RCConstClosure` (`rc2/doc/const-closure-fold.md`)
+constant" detection `RCConstPartial` (`rc2/doc/const-closure-fold.md`)
 already provides -- which captures exactly the "code pointer invariant,
 environment may differ" property `%spec`'s own closedness check cannot,
 since `ConstFold`/`InlineCExp`'s own reasoning already operates after
@@ -307,7 +307,7 @@ included.
 
 **Finding a known closure at a use site (`lookupKnown`).** Either
 `RCLoc i` traced through `Bound` to an enclosing `RUnderApp` (the
-general, non-zero-capture case), or a bare `RCConstClosure n missing`
+general, non-zero-capture case), or a bare `RCConstPartial n missing`
 sitting directly in the argument position, no `Bound` lookup needed --
 this is what a *zero*-capture `RUnderApp` already becomes by the time
 this pass runs: `ConstFold`'s own narrower constant-closure folding
@@ -529,7 +529,7 @@ to the work list if it is not there already.
 For the redirect to recognise the forwarded value, the clone rebinds
 `v` at entry, and only if it has forwarding sites:
 - with no captures (a constant closure such as `compare`), `v` is
-  simply the constant, `RCConstClosure target missing`;
+  simply the constant, `RCConstPartial target missing`;
 - with captures, `v` is `let v = partial target missing [captured..]`.
 
 `redirectCallSitesTable` then treats a forwarding site like any other
@@ -645,11 +645,11 @@ callers, so none of them is inlined before this pass.
 - `rc2/doc/loop-in-case-sinking.md` -- the design this one's own "Level
   1" grew out of, and the "related, larger idea" section whose nested-
   loop dependency this design was specifically shaped to avoid.
-- `rc2/doc/const-closure-fold.md` -- `RCConstClosure`, the existing
+- `rc2/doc/const-closure-fold.md` -- `RCConstPartial`, the existing
   "is this closure a compile-time constant" detection step 1 reuses
   for the zero-capture case (`SpecClosure.idr`'s own `lookupKnown`
   handles the non-zero-capture case itself, via `Bound`/`RUnderApp`
-  tracing -- `RCConstClosure` alone doesn't cover it, see that
+  tracing -- `RCConstPartial` alone doesn't cover it, see that
   function's own doc comment).
 - `rc2/src/Compiler/RC2/InlineCExp.idr` -- Criterion A / existing splicing
   machinery; investigated as a candidate for step 2's own "re-fold"

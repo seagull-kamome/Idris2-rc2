@@ -6,7 +6,7 @@ module Main
 -- closure is now a direct call").
 --
 -- `ops` is a record of plain top-level functions, so each field folds
--- to an `RCConstClosure` (a bare name reference, zero captured
+-- to an `RCConstPartial` (a bare name reference, zero captured
 -- values) and every `ops.f`/`ops.g` call site applies it with exactly
 -- its whole arity. Before the rewrite each of those was an
 -- `idris2rc2_applyClosure(((IDRIS2RC2_Value*)&constclosure_N), arg)`

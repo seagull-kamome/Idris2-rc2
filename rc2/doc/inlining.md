@@ -398,7 +398,7 @@ with this pass's own behaviour if it resurfaces.
 whether the callee reads the parameter natively, and bound the fresh
 `RLet` `RNative ty` when it does. Its *constant* clause -- the one
 taking an argument `Compiler.RC2.ConstFold` already folded to an
-`RCConst`/`RCEmptyCon`/`RCConstCon`/`RCConstClosure` -- skipped that
+`RCConst`/`RCEmptyCon`/`RCConstCon`/`RCConstPartial` -- skipped that
 question entirely and always bound `RBoxed`.
 
 For a native-eligible literal (`Types.litRep`) that meant a fresh box
@@ -715,7 +715,7 @@ An inlined-away original definition is never explicitly deleted here;
 prunes it on its own once nothing reaches it anymore, the same as any
 other unreachable definition -- unless something *else* still
 references it (e.g. as a stored closure value, `RUnderApp`/
-`RCConstClosure`, not a direct call), in which case it correctly
+`RCConstPartial`, not a direct call), in which case it correctly
 survives; this pass only ever removes the one call site it can prove
 is the *only* one, never the definition itself.
 
@@ -894,7 +894,7 @@ unused worker/wrapper split) that this pass can never see, so that
 call stays exactly where it was. Also deliberately not a merge of this
 pass's own eligibility graph with `pruneDeadDefs`'s own reachability
 one into a single graph: `pruneDeadDefs`'s `usedFunctionNamesD` counts
-`RUnderApp`/`RCConstClosure` references (a value only ever *stored* as
+`RUnderApp`/`RCConstPartial` references (a value only ever *stored* as
 a closure, never `RAppName`-called) as genuine uses, on top of
 `RAppName`/`RAppNameRep`, precisely so a function reachable only that
 way survives -- `analyse`'s own `calleesOf`/`callOccurrencesOf`
@@ -1148,7 +1148,7 @@ historical baseline of ~66.7x).
 ### Fixed: constant closures and loop parameters (2026-09-26)
 
 `buildSplice` records every argument that is a constant closure
-(`RCConstClosure`) in `ConstClosureArgs`. `resolveConstClosureApps` then
+(`RCConstPartial`) in `ConstClosureArgs`. `resolveConstClosureApps` then
 rewrites an `apply` of that id in the spliced body into a direct call.
 That id can also be one of the callee's loop parameters, though: its
 constant is only the loop's *initial* value, and every

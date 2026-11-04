@@ -86,7 +86,7 @@ and `arity`/`filled` (one byte each) came after it:
 A heap closure always has room for its full arity, so it takes
 16 + 8·arity bytes, 8 fewer than before. `IDRIS2RC2_ConstClosure`, the
 static form of a closure with nothing filled yet, has the same leading
-fields. Its initializer (`boxedConstClosureExpr`) now names them, so it
+fields. Its initializer (`boxedConstPartialExpr`) now names them, so it
 no longer depends on their order.
 
 Whether the 8 bytes pay off depends on the allocator. glibc hands out

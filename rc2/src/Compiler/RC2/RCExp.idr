@@ -29,7 +29,7 @@ import Decidable.Equality
 -- own `argsConst` field needs `IsAnyConstLocal`; `IsAnyConstLocal`'s own
 -- constructors index into `RCLocal`'s) -- forward-declared here instead
 -- of grouping everything below into one `mutual` block, since
--- `IsConstLocal`/`IsConstClosureLocal` only ever reference `RCLocal`,
+-- `IsConstLocal`/`IsConstPartialLocal` only ever reference `RCLocal`,
 -- never the reverse, and don't need forward declaring at all.
 data RCLocal : Type
 data IsAnyConstLocal : RCLocal -> Type
@@ -71,22 +71,11 @@ data RCLocal : Type where
      RCConstCon : Name -> ConInfo -> (tag : Maybe Int)
                -> (args : List RCLocal) -> {0 argsConst : All IsAnyConstLocal args}
                -> RCLocal
-     ||| A zero-filled closure over a named top-level function --
-     ||| `Compiler.RC2.ConstFold`'s own fold of a literal, zero-args
-     ||| `RUnderApp fc n missing []` (a bare reference to `n`, no
-     ||| captured values) into a constant, the same way `RCConstCon`
-     ||| folds a constructor of provably-constant fields. Unlike
-     ||| `RCConstCon`, this is a true leaf: a zero-filled closure has
-     ||| no captured args at all, so there's no nested `RCLocal` to
-     ||| recurse into. Only ever constructed by
-     ||| `Compiler.RC2.ConstFold`.
-     RCConstClosure : Name -> (missing : Nat) -> RCLocal
      ||| A closure over a named top-level function that has captured
      ||| constants only (`partial f missing caps`, every element of `caps`
-     ||| one of `RCLocal`'s constant forms): `Compiler.RC2.ConstFold`
-     ||| folds it like a zero-filled `RCConstClosure`, to one immortal
-     ||| static (`doc/const-closure-fold.md`, "Closures over constants").
-     ||| `caps` is never empty (that is `RCConstClosure`).
+     ||| one of `RCLocal`s constant forms, possibly none):
+     ||| `Compiler.RC2.ConstFold` folds it to one immortal static
+     ||| (`doc/const-closure-fold.md`).
      RCConstPartial : Name -> (missing : Nat) -> (caps : List RCLocal)
                    -> {0 capsConst : All IsAnyConstLocal caps}
                    -> RCLocal
@@ -103,20 +92,8 @@ public export
 data IsConstLocal : RCLocal -> Type where
      ItIsConstCon : IsConstLocal (RCConstCon n ci t args)
 
-||| Witness that `l` is `RCConstClosure` -- the closure-emission
-||| analogue of `IsConstLocal` just above, kept as its own separate
-||| type rather than widening `IsConstLocal` itself: `boxedConstConExpr`
-||| only ever handles `RCConstCon`, so adding a `RCConstClosure` case
-||| to `IsConstLocal` would force a spurious `impossible` arm into code
-||| that was never about this shape. `Compiler.RC2.Emit.Util`'s
-||| `boxedConstClosureExpr` requires this one instead, for the same
-||| coverage-checker reason `IsConstLocal` exists at all.
-public export
-data IsConstClosureLocal : RCLocal -> Type where
-     ItIsConstClosure : IsConstClosureLocal (RCConstClosure n missing)
-
 ||| Witness that `l` is `RCConstPartial`: the same role as
-||| `IsConstClosureLocal`, for `Compiler.RC2.Emit.Util`'s
+||| `IsConstLocal`, for `Compiler.RC2.Emit.Util`'s
 ||| `boxedConstPartialExpr`.
 public export
 data IsConstPartialLocal : RCLocal -> Type where
@@ -139,7 +116,6 @@ data IsAnyConstLocal : RCLocal -> Type where
      ItIsConst2       : IsAnyConstLocal (RCConst c)
      ItIsEmptyCon2    : IsAnyConstLocal (RCEmptyCon n ci i)
      ItIsConstCon2    : IsAnyConstLocal (RCConstCon n ci t args)
-     ItIsConstClosure2 : IsAnyConstLocal (RCConstClosure n missing)
      ItIsConstPartial2 : IsAnyConstLocal (RCConstPartial n missing caps)
 
 export
@@ -152,7 +128,6 @@ Eq RCLocal where
   (RCConst c1) == (RCConst c2) = c1 == c2
   (RCEmptyCon n1 _ t1) == (RCEmptyCon n2 _ t2) = n1 == n2 && t1 == t2
   (RCConstCon n1 _ t1 a1) == (RCConstCon n2 _ t2 a2) = n1 == n2 && t1 == t2 && a1 == a2
-  (RCConstClosure n1 m1) == (RCConstClosure n2 m2) = n1 == n2 && m1 == m2
   (RCConstPartial n1 m1 c1) == (RCConstPartial n2 m2 c2) = n1 == n2 && m1 == m2 && c1 == c2
   _ == _ = False
 
@@ -167,7 +142,6 @@ Ord RCLocal where
       tagOf (RCConst _)        = 2
       tagOf (RCEmptyCon {})    = 3
       tagOf (RCConstCon {})    = 4
-      tagOf (RCConstClosure {}) = 5
       tagOf RCErased           = 6
       tagOf RCWorld            = 7
       tagOf (RCConstPartial {}) = 8
@@ -184,8 +158,6 @@ Ord RCLocal where
         compare n1 n2 <+> compare t1 t2
       sameCtor (RCConstCon n1 _ t1 a1) (RCConstCon n2 _ t2 a2) =
         compare n1 n2 <+> compare t1 t2 <+> compare a1 a2
-      sameCtor (RCConstClosure n1 m1) (RCConstClosure n2 m2) =
-        compare n1 n2 <+> compare m1 m2
       sameCtor (RCConstPartial n1 m1 c1) (RCConstPartial n2 m2 c2) =
         compare n1 n2 <+> compare m1 m2 <+> compare c1 c2
       sameCtor _ _ = EQ
@@ -226,8 +198,7 @@ Show RCLocal where
   show (RCConst c) = "#" ++ show c
   show (RCEmptyCon n _ t) = "#" ++ dumpName n ++ "@" ++ show t
   show (RCConstCon n _ t args) = "#" ++ dumpName n ++ "@" ++ show t ++ "(" ++ show args ++ ")"
-  show (RCConstClosure n m) = "#" ++ dumpName n ++ "/" ++ show m ++ "~closure"
-  show (RCConstPartial n m caps) = "#" ++ dumpName n ++ "/" ++ show m ++ "~closure(" ++ show caps ++ ")"
+  show (RCConstPartial n m caps) = "#" ++ dumpName n ++ "/" ++ show m ++ "~closure" ++ (if null caps then "" else "(" ++ show caps ++ ")")
 
 ||| The type of a native value: one of upstream's `PrimType`s, or a raw C
 ||| pointer (`Ptr`, `AnyPtr`, a struct pointer), held as an
@@ -862,7 +833,7 @@ record RCNameFold m where
   ||| `tag` distinguishes the untagged ones that carry a runtime
   ||| name string (`doc/constructor-layout.md`).
   onCon : Name -> (tag : Maybe Int) -> m
-  ||| `RCConstClosure` -- a `ConstFold`-folded zero-capture closure.
+  ||| `RCConstPartial` -- a `ConstFold`-folded closure over constants.
   onConstClosure : Name -> m
 
 ||| An `RCNameFold` contributing nothing anywhere -- start from this
@@ -875,7 +846,6 @@ noRCNames = MkRCNameFold (\_,_ => neutral) (\_ => neutral) (\_ => neutral) (\_,_
 
 export
 foldRCNamesL : Monoid m => RCNameFold m -> RCLocal -> m
-foldRCNamesL nf (RCConstClosure n _)      = nf.onConstClosure n
 foldRCNamesL nf (RCConstPartial n _ caps) = nf.onConstClosure n <+> concatMap (foldRCNamesL nf) caps
 foldRCNamesL nf (RCConstCon n _ tag args) = nf.onCon n tag <+> concatMap (foldRCNamesL nf) args
 foldRCNamesL _  (RCLoc _)                 = neutral

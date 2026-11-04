@@ -62,7 +62,6 @@ closureTailsWithPrefixCheck w (RConCase _ _ alts mDef) =
 closureTailsWithPrefixCheck w (RConstCase _ _ alts mDef) =
     foldr (\(MkRConstAlt _ b), acc => closureTailsWithPrefixCheck w b ++ acc) (maybe [] (closureTailsWithPrefixCheck w) mDef) alts
 closureTailsWithPrefixCheck _ (RUnderApp _ g 1 xs) = [(TPartial g xs, False)]
-closureTailsWithPrefixCheck _ (RV _ (RCConstClosure g 1)) = [(TPartial g [], False)]
 closureTailsWithPrefixCheck _ (RV _ (RCConstPartial g 1 caps)) = [(TPartial g caps, False)]
 closureTailsWithPrefixCheck _ (RAppName _ Nothing h _) = [(TCall h, False)]
 closureTailsWithPrefixCheck _ (RCrash _ _) = [(TCrash, False)]
@@ -127,7 +126,6 @@ raiseTails ts w (RConstCase fc sc alts mDef) =
     RConstCase fc sc (map (\(MkRConstAlt c b) => MkRConstAlt c (raiseTails ts w b)) alts)
       (map (raiseTails ts w) mDef)
 raiseTails _ w (RUnderApp fc g 1 xs) = RAppName fc Nothing g (xs ++ [RCLoc w])
-raiseTails _ w (RV fc (RCConstClosure g 1)) = RAppName fc Nothing g [RCLoc w]
 raiseTails _ w (RV fc (RCConstPartial g 1 caps)) = RAppName fc Nothing g (caps ++ [RCLoc w])
 raiseTails ts w e@(RAppName fc Nothing h ys) = case lookup h ts of
     Just t => RAppName fc Nothing t (ys ++ [RCLoc w])
@@ -316,7 +314,7 @@ foldAppliedExp ws nat e = here (mapChildren (foldAppliedExp ws nat) e)
     isLoc _ _ = False
 
     here : RCExp -> RCExp
-    here e@(RApp fc Nothing (RCConstClosure n k) ys) = fromMaybe e $ do
+    here e@(RApp fc Nothing (RCConstPartial n k []) ys) = fromMaybe e $ do
         (g, m) <- lookup n ws
         guard (length ys == k + m)
         pure (RAppName fc Nothing g (forget ys))

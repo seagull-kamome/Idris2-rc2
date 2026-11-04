@@ -319,7 +319,7 @@ program-fixpoint-style passes.)
    -- a no-op in whole-program mode (the subtraction always empties the
    set there, since ownership is total), real once `defs` narrows.
 2. **Direct cross-module function calls.** The exact same story for
-   `RAppName`/`RUnderApp`/`RCConstClosure` references to another
+   `RAppName`/`RUnderApp`/`RCConstPartial` references to another
    module's own top-level function (`declarationsOf`'s `MkRCFun` case
    is equally `defs`-local-only) -- found via `Prelude.Num` calling
    `Prelude.EqOrd`'s own comparison functions directly by name: a C
@@ -337,7 +337,7 @@ program-fixpoint-style passes.)
    arity, since a saturated direct call's own argument count always
    matches the callee's real arity), falling back to arity 0 only for a
    name referenced solely as a function-pointer value
-   (`RUnderApp`/`RCConstClosure`, always consumed through an explicit
+   (`RUnderApp`/`RCConstPartial`, always consumed through an explicit
    erased-signature cast already, so the declared arity there is moot).
 3. **`%foreign` declarations with no rc2-usable calling convention.**
    `Prelude.IO.prim__threadWait` is declared

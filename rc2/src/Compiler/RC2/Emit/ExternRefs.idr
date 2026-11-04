@@ -46,7 +46,7 @@ untaggedConstructorRefsD =
     foldRCNamesD $ { onCon := \n, tag => maybe (singleton n) (const empty) tag } noRCNames
 
 ||| Every function `Name` a def's C references but might not define:
-||| `RAppName` calls, `RUnderApp` closure builds, `RCConstClosure`s. A no-op
+||| `RAppName` calls, `RUnderApp` closure builds, `RCConstPartial`s. A no-op
 ||| set in whole-program mode; matters once `defs` is one module's subset.
 ||| An `RAppName` carries the callee's true arity; a closure-value reference
 ||| gets 0 (consumed through an erased-signature cast). Why not bare K&R `()`

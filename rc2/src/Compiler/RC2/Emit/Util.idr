@@ -317,8 +317,7 @@ varName (RCEmptyCon _ _ tag) = "idris2rc2_mkBits32(\{show tag})"
 -- repOfLocal/inlineExprFor always intercept a RCConstCon first.
 varName (RCConstCon {}) = "/* [rc2] unreachable RCConstCon varName */"
 -- Unreachable in practice, same reasoning as RCConstCon above:
--- repOfLocal/inlineExprFor always intercept a RCConstClosure first.
-varName (RCConstClosure {}) = "/* [rc2] unreachable RCConstClosure varName */"
+-- repOfLocal/inlineExprFor always intercept a RCConstPartial first.
 varName (RCConstPartial {}) = "/* [rc2] unreachable RCConstPartial varName */"
 
 ------------------------------------------------------------------------
@@ -840,8 +839,8 @@ boxedConstExpr c = do
         PrT t => pure $ cPrimType t
         WorldVal => pure "(NULL /* World */)"
 
-||| Dedupe-then-reference skeleton shared by `boxedConstClosureExpr`/
-||| `boxedConstConExpr`: reuse `l`'s own already-staged file-scope
+||| Dedupe-then-reference skeleton shared by `boxedConstConExpr`/
+||| `boxedConstPartialExpr`: reuse `l`'s own already-staged file-scope
 ||| static from `ConstConDef`'s own name cache if one exists, otherwise
 ||| mint a fresh `prefix`-named one, ask `mkDef` for its own C
 ||| definition text (called only on this fresh-staging path, never on a
@@ -862,25 +861,6 @@ stageConstCon l nmPrefix mkDef = do
              (names', defs') <- get ConstConDef
              put ConstConDef (insert l nm names', defs' ++ [def])
              pure "((IDRIS2RC2_Value*)&\{nm})"
-
-||| The boxed C expression for a folded zero-filled closure constant
-||| (an `RCConstClosure` -- see `Compiler.RC2.ConstFold`), staged as an
-||| `IDRIS2RC2_ConstClosure` (idris2rc2_datatypes.h) -- a named type that
-||| deliberately does NOT mirror `IDRIS2RC2_Closure`'s real
-||| flexible-array-member layout (no static-initializer syntax for one
-||| in C anyway, and it would be empty here regardless: `filled` is
-||| always `0`, by construction -- this only ever comes from a literal,
-||| zero-args `RUnderApp`) -- just the leading `header; arity; filled;
-||| fn` fields, in the same order. Sound since nothing ever reads
-||| `->args[i]` for `i < filled` when `filled == 0`, and nothing computes
-||| `sizeof(IDRIS2RC2_Closure)` against this particular static.
-export
-boxedConstClosureExpr : {auto a : Ref ArgCounter Nat}
-                     -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-                     -> (l : RCLocal) -> {0 prf : IsConstClosureLocal l} -> Core String
-boxedConstClosureExpr l@(RCConstClosure n missing) {prf=ItIsConstClosure} =
-    stageConstCon l "constclosure_" $ \nm =>
-        pure "static IDRIS2RC2_ConstClosure const \{nm} = { .header = IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CLOSURE), .arity = \{show missing}, .filled = 0, .fn = (IDRIS2RC2_Value *(*)())\{cName n} };"
 
 mutual
     ||| C initializer text for one `RCConstCon` field: `l` is always
@@ -904,7 +884,6 @@ mutual
     constConFieldExpr (RCConst c)          = boxedConstExpr c
     constConFieldExpr (RCEmptyCon _ _ tag) = pure "idris2rc2_mkBits32(\{show tag})"
     constConFieldExpr l@(RCConstCon {})    = boxedConstConExpr l {prf=ItIsConstCon}
-    constConFieldExpr l@(RCConstClosure {}) = boxedConstClosureExpr l {prf=ItIsConstClosure}
     constConFieldExpr l@(RCConstPartial {}) = boxedConstPartialExpr l {prf=ItIsConstPartial}
     constConFieldExpr (RCLoc _) {prf=_} impossible
 
@@ -930,8 +909,7 @@ mutual
     ||| fixed-size mirror of `IDRIS2RC2_Constructor`'s own layout (see
     ||| `emitRC`'s `RCon` case for the dynamic-allocation equivalent) --
     ||| a flexible array member has no static-initializer syntax in
-    ||| plain C. Unlike `boxedConstClosureExpr`'s always-empty trailing
-    ||| array, the field count varies per constructor (`Cons` has 2,
+    ||| plain C. The field count varies per constructor (`Cons` has 2,
     ||| `Just` has 1, ...), so `idris2rc2_datatypes.h` pre-declares one fixed-size
     ||| named type per field count from 1 (a genuinely zero-arity
     ||| `RCConstCon` can't happen -- `ConstFold`'s own `RCon`-folding
@@ -960,8 +938,7 @@ mutual
             pure "static \{tyName} const \{nm} = { IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CONSTRUCTOR), \{show arity}, \{tagField}, { \{showSep ", " slots} } };"
 
     ||| The boxed C expression for a closure over constants only (an
-    ||| `RCConstPartial`), staged like `boxedConstClosureExpr` but with the
-    ||| captured values in `args`: `IDRIS2RC2_ConstClosureArgs<n>`, laid out as
+    ||| `RCConstPartial`), staged as `IDRIS2RC2_ConstClosureArgs<n>`, laid out as
     ||| `IDRIS2RC2_Closure` with `n` elements in its array (a struct of that
     ||| shape in place for more than 20, as `staticClosure` below). Immortal, so
     ||| no `drop` frees it, and an `apply` of it never grows it in place
@@ -971,13 +948,16 @@ mutual
                           -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                           -> (l : RCLocal) -> {0 prf : IsConstPartialLocal l} -> Core String
     boxedConstPartialExpr l@(RCConstPartial n missing caps {capsConst}) {prf=ItIsConstPartial} =
-        stageConstCon l "constpartial_" $ \nm => do
+        stageConstCon l (if null caps then "constclosure_" else "constpartial_") $ \nm => do
             argExprs <- constConFieldExprsFor caps capsConst
             let filled = length caps
-            let tyName = if filled <= 20
+            let tyName = if filled == 0
+                            then "IDRIS2RC2_ConstClosure"
+                            else if filled <= 20
                             then "IDRIS2RC2_ConstClosureArgs\{show filled}"
                             else "struct { IDRIS2RC2_Header header; uint8_t arity; uint8_t filled; void *fn; IDRIS2RC2_Value *args[\{show filled}]; }"
-            pure "static \{tyName} const \{nm} = { .header = IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CLOSURE), .arity = \{show (filled + missing)}, .filled = \{show filled}, .fn = (IDRIS2RC2_Value *(*)())\{cName n}, .args = { \{showSep ", " argExprs} } };"
+            let argsInit = if filled == 0 then "" else ", .args = { \{showSep ", " argExprs} }"
+            pure "static \{tyName} const \{nm} = { .header = IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CLOSURE), .arity = \{show (filled + missing)}, .filled = \{show filled}, .fn = (IDRIS2RC2_Value *(*)())\{cName n}\{argsInit} };"
 
 ||| `Just` the C expression text standing in for `l`'s never-declared
 ||| variable if it's an InlineMap-registered local, or an RCConst (see
@@ -1009,7 +989,6 @@ inlineExprFor (RCConst c) = (\e => Just (e, [])) <$> case litRep c of
 -- the InlineMap/RNative detour (see repOfLocal above).
 inlineExprFor (RCEmptyCon {}) = pure Nothing
 inlineExprFor l@(RCConstCon {}) = (\e => Just (e, [])) <$> boxedConstConExpr l {prf=ItIsConstCon}
-inlineExprFor l@(RCConstClosure {}) = (\e => Just (e, [])) <$> boxedConstClosureExpr l {prf=ItIsConstClosure}
 inlineExprFor l@(RCConstPartial {}) = (\e => Just (e, [])) <$> boxedConstPartialExpr l {prf=ItIsConstPartial}
 inlineExprFor (RCLoc i) = do
     inlined <- get InlineMap

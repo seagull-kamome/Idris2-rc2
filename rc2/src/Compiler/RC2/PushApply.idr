@@ -44,7 +44,6 @@ profitable value =
         Nothing => case e of
             RCrash {} => (0, False)
             RUnderApp {} => (1, True)
-            RV _ (RCConstClosure {}) => (1, True)
             RV _ (RCConstPartial {}) => (1, True)
             _ => (1, False)
 

@@ -13,7 +13,7 @@ import Test87SpecConstCon.ConstConForwarding
 -- called with a dictionary `Compiler.RC2.ConstFold` has already folded
 -- to a single `RCConstCon`, gets a clone with that constant
 -- substituted. The substitution folds the `case` away and leaves each
--- method field as an `RCConstClosure`, which ConstFold's own `RApp`
+-- method field as an `RCConstPartial`, which ConstFold's own `RApp`
 -- case then turns into a direct call instead of a boxed
 -- `idris2rc2_applyClosure` dispatch.
 --
@@ -60,7 +60,7 @@ ltFlip : Int -> Int -> Bool
 ltFlip a b = a > b
 
 -- Every field is a plain top-level name, so each folds to an
--- `RCConstClosure` with zero captured values and the record itself to
+-- `RCConstPartial` with zero captured values and the record itself to
 -- one `RCConstCon`.
 plain : Cmp Int
 plain = MkCmp eqInt ltInt

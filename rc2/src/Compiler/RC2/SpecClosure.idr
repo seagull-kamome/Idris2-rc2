@@ -90,7 +90,6 @@ Bound = SortedMap Int KnownClosure
 ||| use site" paragraph.
 lookupKnown : Bound -> RCLocal -> Maybe KnownClosure
 lookupKnown bound (RCLoc i) = lookup i bound
-lookupKnown _ (RCConstClosure n missing) = Just (MkKnownClosure n missing [])
 lookupKnown _ (RCConstPartial n missing caps) = Just (MkKnownClosure n missing caps)
 lookupKnown _ _ = Nothing
 
@@ -258,7 +257,7 @@ buildClone callee argPos paramVar targetName missing capturedCount args retRep b
     -- parameters, bound once at entry and dropped again by
     -- `dropDeadEntryClosure` once every site is redirected.
     fwdVar <- freshVarId
-    let known = if capturedCount == 0 then RCConstClosure targetName missing else RCLoc fwdVar
+    let known = if capturedCount == 0 then RCConstPartial targetName missing [] {capsConst=[]} else RCLoc fwdVar
         body'' = rewriteForward known body'
         body''' = if countUsesR (RCLoc fwdVar) body'' > 0
                      then RLet EmptyFC fwdVar RBoxed (RUnderApp EmptyFC targetName missing (map RCLoc capturedParams)) body''
