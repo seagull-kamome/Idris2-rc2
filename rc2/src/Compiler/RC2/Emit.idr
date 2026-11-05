@@ -1033,6 +1033,16 @@ emitRC sink (RCon fc n coninfo tag args reuseFrom) _ = do
                 pure (S k)) 0 args
             finalizeSink fc sink "(IDRIS2RC2_Value*)\{constr}"
 
+emitRC sink (RStackCon fc n coninfo tag args) _ = do
+    checkConLayout n (length args) (Just tag)
+    nm <- the (Core String) (pure "stackcon_\{!(getNextCounter)}")
+    argParts <- traverse rcVarToBoxedC args
+    let argStrs = map fst argParts
+    emit fc " // stack constructor \{show n}"
+    emit fc "IDRIS2RC2_ConstConstructor\{show (length args)} \{nm} = { IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CONSTRUCTOR), \{show (length args)}, \{show tag}, { \{showSep ", " argStrs} } };"
+    removeVars (concatMap snd argParts)
+    finalizeSink fc sink "(IDRIS2RC2_Value*)&\{nm}"
+
 emitRC sink (ROp fc _ op args postDrop) _ = do
     -- Reached only when Compiler.RC2.Types decided this op's result
     -- stays Boxed (comparisons, or a non-numeric op) -- operands may

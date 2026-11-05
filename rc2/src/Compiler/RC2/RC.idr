@@ -789,6 +789,7 @@ mutual
     -- Only produced by Compiler.RC2.DualABI (doc/struct-return.md), same
     -- reasoning as RAppNameRep above.
     annotate natives owned e@(RRetPack _ _ _ _) = pure e
+    annotate natives owned e@(RStackCon _ _ _ _ _) = pure e
     -- RMemoize only ever wraps a whole top-level 0-argument definition's
     -- entire body (Compiler.RC2.RC2's own insertMemoize, inserted right
     -- after ConstFold, strictly before this pass runs -- see

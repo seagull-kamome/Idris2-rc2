@@ -66,6 +66,8 @@ mutual
         ++ maybe "" (\r => " reuse= " ++ show r) reuseFrom ++ "\n"
   prettyExp d (RRetPack _ n tag fields) =
       indent d ++ "retpack " ++ dumpName n ++ " tag= " ++ show tag ++ " " ++ show fields ++ "\n"
+  prettyExp d (RStackCon _ n ci tag args) =
+      indent d ++ "stackcon " ++ dumpName n ++ " " ++ show ci ++ " tag= " ++ show tag ++ " " ++ show args ++ "\n"
   prettyExp d (ROp _ lazy op args postDrop) =
       indent d ++ lazyPrefix lazy ++ "op " ++ show op ++ " " ++ show (toList args)
         ++ postDropNote postDrop ++ "\n"

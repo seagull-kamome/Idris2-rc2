@@ -138,6 +138,11 @@ export
 isNullCon : ConInfo -> Bool
 isNullCon ci = ci == NIL || ci == NOTHING || ci == ZERO || ci == UNIT
 
+||| The most fields an `IDRIS2RC2_ConstConstructor<n>` (idris2rc2_datatypes.h) has.
+export
+maxConstConFields : Nat
+maxConstConFields = 20
+
 ||| Whether a local can hold a refcounted heap value: only a variable can.
 ||| Every other form is a constant, `NULL`, or an immortal static.
 export

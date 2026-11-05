@@ -78,6 +78,7 @@ history, not there.
   merging functions whose bodies are equal up to the numbering of their locals,
   `fwd-alias.md` for pointing every reference at the target of a function that only
   forwards its parameters to another,
+  `stack-con.md` for building a constructor that never leaves its function in the C frame,
   `concurrency.md` for the runtime's
   multi-step move to thread-safety -- atomic reference count, then real
   OS thread spawning (`refc_fork`) and Mutex/Condition, then the
