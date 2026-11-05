@@ -59,26 +59,107 @@ paramDeps p = go
 ||| passed on is safe when the parameter it goes to is).
 nonEscaping : List (Name, RCDef) -> SortedSet ParamKey
 nonEscaping defs =
-    let known : SortedSet ParamKey := fromList (map fst start)
+    let start = concatMap entries defs
+        known : SortedSet ParamKey := fromList (map fst start)
         dependents : SortedMap ParamKey (List ParamKey) :=
             foldl (\m, (k, ds) => foldl (\m2, d => insert d (k :: fromMaybe [] (lookup d m2)) m2) m ds) (the (SortedMap ParamKey (List ParamKey)) empty) start
         unknown : List ParamKey := concatMap (\(_, ds) => filter (\d => not (contains d known)) ds) start
         escaping = spread dependents unknown (the (SortedSet ParamKey) empty)
     in fromList (filter (\k => not (contains k escaping)) (map fst start))
   where
-    start : List (ParamKey, List ParamKey)
-    start = concatMap entries defs
-      where
-        entries : (Name, RCDef) -> List (ParamKey, List ParamKey)
-        entries (n, MkRCFun args _ _ body) =
-            mapMaybe (\(i, (p, _)) => map (\ds => ((n, i), ds)) (paramDeps p body)) (zip [0 .. length args] args)
-        entries _ = []
+    entries : (Name, RCDef) -> List (ParamKey, List ParamKey)
+    entries (n, MkRCFun args _ _ body) =
+        mapMaybe (\(i, (p, _)) => map (\ds => ((n, i), ds)) (paramDeps p body)) (zip [0 .. length args] args)
+    entries _ = []
 
     spread : SortedMap ParamKey (List ParamKey) -> List ParamKey -> SortedSet ParamKey -> SortedSet ParamKey
     spread _ [] seen = seen
     spread dependents (b :: rest) seen =
         if contains b seen then spread dependents rest seen
         else spread dependents (fromMaybe [] (lookup b dependents) ++ rest) (insert b seen)
+
+||| The parameters, and the fields of parameters, that no callee lets leave the
+||| frame.
+record Safe where
+  constructor MkSafe
+  params : SortedSet ParamKey
+  ||| A function, a parameter and a field position: what the binder of that
+  ||| field in a `case` on the parameter is used for keeps it in the frame.
+  fields : SortedSet (Name, Nat, Nat)
+
+||| Whether the local `b` stays in the frame in `body`: read by a `case`, or passed to a
+||| parameter in `params`.
+kept : SortedSet ParamKey -> Int -> RCExp -> Bool
+kept params b = go
+  where
+    isB : RCLocal -> Bool
+    isB = (== RCLoc b)
+
+    toParams : Name -> List RCLocal -> Bool
+    toParams g args = all (\(i, a) => not (isB a) || contains (g, i) params) (zip [0 .. length args] args)
+
+    go : RCExp -> Bool
+    go (RDup _ _ _ k) = go k
+    go (RDrop _ _ k) = go k
+    go (RFree _ _ k) = go k
+    go (RReleaseReuse _ _ k) = go k
+    go (RReuseOffer _ sc ds us k) = not (isB sc || any isB ds || any isB us) && go k
+    go (RConCase _ _ alts mDef) = all go (map (\(MkRConAlt _ _ _ _ body) => body) alts ++ maybe [] pure mDef)
+    go (RAppName _ lazy g args) = if any isB args then isNothing lazy && toParams g args else True
+    go (RAppNameRep _ g _ _ pd args) = not (any isB pd) && toParams g args
+    go e = not (any isB (directReads e)) && all go (children e)
+
+||| For the parameter `p`: the field positions whose binder, in a `case` on `p`, leaves the
+||| frame, and the parameters `p` is passed to.
+fieldUses : SortedSet ParamKey -> Int -> RCExp -> (SortedSet Nat, List ParamKey)
+fieldUses params p = go
+  where
+    isP : RCLocal -> Bool
+    isP = (== RCLoc p)
+
+    both : List (SortedSet Nat, List ParamKey) -> (SortedSet Nat, List ParamKey)
+    both = foldl (\(s, ds), (s', ds') => (union s s', ds ++ ds')) (empty, [])
+
+    badFields : RConAlt -> SortedSet Nat
+    badFields (MkRConAlt _ _ _ as body) =
+        fromList (mapMaybe (\(k, b) => if b /= 0 && not (kept params b body) then Just k else Nothing) (zip [0 .. length as] as))
+
+    go : RCExp -> (SortedSet Nat, List ParamKey)
+    go (RConCase _ sc alts mDef) =
+        let here = if isP sc then foldl union empty (map badFields alts) else empty
+        in both ((here, []) :: map go (map (\(MkRConAlt _ _ _ _ body) => body) alts ++ maybe [] pure mDef))
+    go (RAppName _ _ g args) = (empty, mapMaybe (\(i, a) => if isP a then Just (g, i) else Nothing) (zip [0 .. length args] args))
+    go (RAppNameRep _ g _ _ _ args) = (empty, mapMaybe (\(i, a) => if isP a then Just (g, i) else Nothing) (zip [0 .. length args] args))
+    go e = both (map go (children e))
+
+||| The fields of the parameters in `params` that no callee lets leave the frame, for each
+||| position a stack constructor can have (a greatest fixed point over the parameters each
+||| one is passed to).
+safeFields : SortedSet ParamKey -> List (Name, RCDef) -> SortedSet (Name, Nat, Nat)
+safeFields params defs =
+    let uses = concatMap entries defs
+        callers : SortedMap ParamKey (List ParamKey) :=
+            foldl (\m, (k, (_, ds)) => foldl (\m2, d => insert d (k :: fromMaybe [] (lookup d m2)) m2) m ds)
+                  (the (SortedMap ParamKey (List ParamKey)) empty) uses
+    in fromList (concatMap (\k => map (\(f, i) => (f, i, k)) (safeAt uses callers k)) [0 .. minus maxConstConFields 1])
+  where
+    entries : (Name, RCDef) -> List (ParamKey, (SortedSet Nat, List ParamKey))
+    entries (n, MkRCFun args _ _ body) =
+        mapMaybe (\(i, (p, _)) => if contains (n, i) params then Just ((n, i), fieldUses params p body) else Nothing)
+                 (zip [0 .. length args] args)
+    entries _ = []
+
+    spread : SortedMap ParamKey (List ParamKey) -> List ParamKey -> SortedSet ParamKey -> SortedSet ParamKey
+    spread _ [] seen = seen
+    spread callers (b :: rest) seen =
+        if contains b seen then spread callers rest seen
+        else spread callers (fromMaybe [] (lookup b callers) ++ rest) (insert b seen)
+
+    safeAt : List (ParamKey, (SortedSet Nat, List ParamKey)) -> SortedMap ParamKey (List ParamKey) -> Nat -> List ParamKey
+    safeAt uses callers k =
+        let seeds = mapMaybe (\(key, (bad, ds)) => if contains k bad || any (\d => not (contains d params)) ds then Just key else Nothing) uses
+            unsafe = spread callers seeds (the (SortedSet ParamKey) empty)
+        in filter (\key => not (contains key unsafe)) (map fst uses)
 
 isBoxed : Rep -> Bool
 isBoxed RBoxed = True
@@ -100,7 +181,7 @@ asCon _ = Nothing
 
 ||| `body` with the stack constructor `v` (owning `fs`) in place of the heap one,
 ||| or `Nothing` when `v` is used in a way a stack constructor cannot be.
-rewriteUses : SortedSet ParamKey -> Int -> List RCLocal -> RCExp -> Maybe RCExp
+rewriteUses : Safe -> Int -> List RCLocal -> RCExp -> Maybe RCExp
 rewriteUses ok v fs = go
   where
     isV : RCLocal -> Bool
@@ -125,12 +206,38 @@ rewriteUses ok v fs = go
     okCall : RCExp -> Maybe ()
     okCall (RAppName _ Nothing g args) = do
         i <- argIndex args
-        guard (contains (g, i) ok)
+        guard (contains (g, i) ok.params)
     okCall (RAppNameRep _ g _ _ pd args) = do
         guard (not (any isV pd))
         i <- argIndex args
-        guard (contains (g, i) ok)
+        guard (contains (g, i) ok.params)
     okCall _ = Nothing
+
+    ||| Whether the stack constructor `y`, whose field `k` is `v`, keeps that field in the
+    ||| frame in `rest`: a `case` on `y` in this function must not bind it (the field's own
+    ||| fields are released when `y` dies, while a binder could still read them), and a
+    ||| callee must keep it (`Safe`'s `fields`).
+    fieldKept : Int -> Nat -> RCExp -> Bool
+    fieldKept y k = keep
+      where
+        isY : RCLocal -> Bool
+        isY = (== RCLoc y)
+
+        unbound : RConAlt -> Bool
+        unbound (MkRConAlt _ _ _ as body) = case drop k as of
+            (b :: _) => b == 0 || not (contains (RCLoc b) (mentionedLocals body))
+            [] => True
+
+        toFields : Name -> List RCLocal -> Bool
+        toFields g args = all (\(i, a) => not (isY a) || contains (g, i, k) ok.fields) (zip [0 .. length args] args)
+
+        keep : RCExp -> Bool
+        keep (RConCase _ sc alts mDef) =
+            (not (isY sc) || all unbound alts)
+              && all keep (map (\(MkRConAlt _ _ _ _ b) => b) alts ++ maybe [] pure mDef)
+        keep (RAppName _ _ g args) = not (any isY args) || toFields g args
+        keep (RAppNameRep _ g _ _ pd args) = not (any isY pd) && (not (any isY args) || toFields g args)
+        keep e = not (any isY (directReads e)) && all keep (children e)
 
     peelWrappers : RCExp -> Maybe (RCExp -> RCExp, RCExp)
     peelWrappers (RDup fc x n k) = if isV x then Nothing else map (\(w, c) => (RDup fc x n . w, c)) (peelWrappers k)
@@ -157,6 +264,12 @@ rewriteUses ok v fs = go
         alts' <- traverse (\(MkRConAlt n ci t as b) => MkRConAlt n ci t as <$> go b) alts
         mDef' <- traverse go mDef
         pure (RConCase fc sc alts' mDef')
+    go (RLet fc y RBoxed sc@(RStackCon _ _ _ _ args) rest) =
+        if any isV args
+           then do k <- argIndex args
+                   guard (fieldKept y k rest)
+                   RLet fc y RBoxed sc <$> go rest
+           else RLet fc y RBoxed sc <$> go rest
     go (RLet fc y rep value body) = do
         (wrap, core) <- peelWrappers value
         if takesV core
@@ -186,7 +299,7 @@ runHasCon e = isJust (asCon e)
 mutual
   ||| Walks a body, replacing every qualifying `let v = con ..`. `noFlat` is set
   ||| inside a value already moved out in front of its `let`.
-  stackWalk : SortedSet ParamKey -> SortedMap Int Rep -> Bool -> RCExp -> RCExp
+  stackWalk : Safe -> SortedMap Int Rep -> Bool -> RCExp -> RCExp
   stackWalk ok env noFlat (RLet fc x rep value body) =
       let env' = insert x rep env
           tryFlat = not noFlat && runHasCon value
@@ -209,7 +322,7 @@ mutual
 
   ||| The statements `flatten` put in front of the `let` of `x` (their values already
   ||| walked), each tried as a stack constructor; `True` when one became one.
-  stackChain : SortedSet ParamKey -> SortedMap Int Rep -> Int -> RCExp -> (RCExp, Bool)
+  stackChain : Safe -> SortedMap Int Rep -> Int -> RCExp -> (RCExp, Bool)
   stackChain ok env x (RDup fc a n k) = mapFst (RDup fc a n) (stackChain ok env x k)
   stackChain ok env x (RDrop fc vs k) = mapFst (RDrop fc vs) (stackChain ok env x k)
   stackChain ok env x (RLet fc y rep v inner) =
@@ -220,7 +333,7 @@ mutual
   stackChain _ _ _ e = (e, False)
 
   ||| `let y = v in inner`, as a stack constructor when `y` qualifies.
-  letWith : SortedSet ParamKey -> SortedMap Int Rep -> FC -> Int -> Rep -> RCExp -> RCExp -> (RCExp, Bool)
+  letWith : Safe -> SortedMap Int Rep -> FC -> Int -> Rep -> RCExp -> RCExp -> (RCExp, Bool)
   letWith ok env fc v rep value body =
       case tryStack of
            Just e => (e, True)
@@ -252,10 +365,11 @@ sizeAtMost n e = go [e] n
 export
 applyStackCon : List (Name, RCDef) -> List (Name, RCDef)
 applyStackCon defs =
-    let ok = nonEscaping defs
+    let params = nonEscaping defs
+        ok = MkSafe params (safeFields params defs)
     in map (\(n, d) => (n, convert ok d)) defs
   where
-    convert : SortedSet ParamKey -> RCDef -> RCDef
+    convert : Safe -> RCDef -> RCDef
     convert ok (MkRCFun args r w body) =
         if sizeAtMost maxBodySize body
            then MkRCFun args r w (stackWalk ok (fromList args) False body)
