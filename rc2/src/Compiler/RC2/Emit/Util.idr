@@ -932,7 +932,7 @@ mutual
             -- An untagged constructor carries its name in one extra slot
             -- after its fields, as `idris2rc2_newConstructor` lays it out.
             let slots = maybe (argExprs ++ ["(IDRIS2RC2_Value *)(void *)idris2rc2_constr_\{cName n}"]) (const argExprs) tag
-            let tyName = if isJust tag && arity >= 1 && arity <= 20
+            let tyName = if isJust tag && arity >= 1 && arity <= maxConstConFields
                             then "IDRIS2RC2_ConstConstructor\{show arity}"
                             else "struct { IDRIS2RC2_Header header; uint16_t arity; int16_t tag; IDRIS2RC2_Value *args[\{show (length slots)}]; }"
             pure "static \{tyName} const \{nm} = { IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CONSTRUCTOR), \{show arity}, \{tagField}, { \{showSep ", " slots} } };"

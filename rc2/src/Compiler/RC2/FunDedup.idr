@@ -64,6 +64,7 @@ renameNamesG f cl = go
     go (RLet fc var rep value body) = RLet fc var rep (go value) (go body)
     go (RCon fc n ci tag args reuseFrom) = RCon fc n ci tag (ls args) (map l reuseFrom)
     go (RRetPack fc n tag fields) = RRetPack fc n tag (ls fields)
+    go (RStackCon fc n ci tag args) = RStackCon fc n ci tag (ls args)
     go (ROp fc lazy op args postDrop) = ROp fc lazy op (map l args) (ls postDrop)
     go (RExtPrim fc lazy p args postDrop) = RExtPrim fc lazy p (ls args) (ls postDrop)
     go (RStructGet fc sv sf postDrop) = RStructGet fc (l sv) sf (ls postDrop)
@@ -121,6 +122,7 @@ where
   go (RLet _ _ _ value body) = go value || go body
   go (RCon _ _ _ _ args reuseFrom) = ls args || maybe False l reuseFrom
   go (RRetPack _ _ _ fields) = ls fields
+  go (RStackCon _ _ _ _ args) = ls args
   go (ROp _ _ _ args postDrop) = any l args || ls postDrop
   go (RExtPrim _ _ _ args postDrop) = ls args || ls postDrop
   go (RStructGet _ sv _ postDrop) = l sv || ls postDrop

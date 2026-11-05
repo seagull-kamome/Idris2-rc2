@@ -83,6 +83,7 @@ mutual
   mapLocalsRCExp f g (RCon fc n ci tag args reuseFrom) =
       RCon fc n ci tag (map f args) (map f reuseFrom)
   mapLocalsRCExp f g (RRetPack fc n tag fields) = RRetPack fc n tag (map f fields)
+  mapLocalsRCExp f g (RStackCon fc n ci tag args) = RStackCon fc n ci tag (map f args)
   mapLocalsRCExp f g (ROp fc lazy op args postDrop) =
       ROp fc lazy op (map f args) (map f postDrop)
   mapLocalsRCExp f g (RExtPrim fc lazy p args postDrop) =

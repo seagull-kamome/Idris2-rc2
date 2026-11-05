@@ -47,6 +47,7 @@ import Compiler.RC2.KnownPartial
 import Compiler.RC2.PushApply
 import Compiler.RC2.FunDedup
 import Compiler.RC2.FwdAlias
+import Compiler.RC2.StackCon
 import Compiler.RC2.PushDown
 import Compiler.RC2.Emit
 import Compiler.RC2.Emit.Util
@@ -248,7 +249,7 @@ inlineNamed disabled keep main defs =
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "notinyinline", "nopushapply", "nosink", "nocmpmerge", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nonullparams", "nostructreturn", "nomutualstruct", "nodeadcode", "nopushdown", "nodupmerge", "nodeadvars", "noconstalias", "noleaftail", "nofwdalias", "nofundedup", "noreusenested", "noreuserecheck"]
+    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "notinyinline", "nopushapply", "nosink", "nocmpmerge", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nonullparams", "nostructreturn", "nomutualstruct", "nodeadcode", "nopushdown", "nodupmerge", "nodeadvars", "noconstalias", "noleaftail", "nofwdalias", "nofundedup", "noreusenested", "noreuserecheck", "nostackcon"]
 
 ||| Stages that are off unless asked for with `--directive <name>`. They
 ||| travel to `toRCDefs` in the same list as the disables above.
@@ -499,9 +500,12 @@ toRCDefs directives incremental roots thunks preFolded0 = do
                            pure (map (\(n, d) => (n, applyCancelDupDrop d)) erased)
     -- rc2/doc/fun-dedup.md: functions with equal bodies become one. Not in
     -- incremental mode, where a module only sees its own definitions.
-    if ("nofundedup" `elem` directives) || incremental
-       then pure cancelled
-       else logTime 2 "rc2: Function dedup" $ pure (dedupFuns roots cancelled)
+    deduped <- if ("nofundedup" `elem` directives) || incremental
+                  then pure cancelled
+                  else logTime 2 "rc2: Function dedup" $ pure (dedupFuns roots cancelled)
+    if "nostackcon" `elem` directives
+       then pure deduped
+       else logTime 2 "rc2: Stack constructors" $ pure (applyStackCon deduped)
 
 ||| `%cg rc2 inlineRuntime=<code>` companion to upstream's own
 ||| file-path-based `Compiler.Common.getExtraRuntime` -- splices the

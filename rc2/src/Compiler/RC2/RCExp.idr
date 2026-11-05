@@ -369,6 +369,11 @@ data RCExp : Type where
      ||| `Compiler.RC2.DualABI`. The fields are consumed like `RCon`
      ||| arguments; `[]` is a nullary constructor.
      RRetPack   : FC -> Name -> (tag : Int) -> List RCLocal -> RCExp
+     ||| A tagged constructor of at most twenty fields built in the stack frame,
+     ||| not on the heap, with an immortal header. Only produced by
+     ||| `Compiler.RC2.StackCon`, last before `Emit`: its value is read by a
+     ||| `case` and by callees that do not let it escape (`doc/stack-con.md`).
+     RStackCon  : FC -> Name -> ConInfo -> (tag : Int) -> List RCLocal -> RCExp
      ||| `postDrop`: Boxed operands to drop once read, one entry per
      ||| *occurrence* in `args`. Decided by Phase 2 (`annotate`), always
      ||| `[]` after Phase 1. Canonical explanation every other
@@ -504,6 +509,7 @@ freeLocalsR (RLet _ var _ value body) =
 -- again would only be redundant, never additive.
 freeLocalsR (RCon _ _ _ _ args _) = fromList args
 freeLocalsR (RRetPack _ _ _ fields) = fromList fields
+freeLocalsR (RStackCon _ _ _ _ args) = fromList args
 freeLocalsR (ROp _ _ _ args _) = fromList (toList args)
 freeLocalsR (RExtPrim _ _ _ args _) = fromList args
 freeLocalsR (RStructGet _ structVar _ _) = singleton structVar
@@ -557,6 +563,7 @@ mentionedLocalsAcc acc (RLet _ _ _ value body) =
 mentionedLocalsAcc acc (RCon _ _ _ _ args reuseFrom) =
     insertAll args (maybe acc (\r => insert r acc) reuseFrom)
 mentionedLocalsAcc acc (RRetPack _ _ _ fields) = foldl (\a, f => insert f a) acc fields
+mentionedLocalsAcc acc (RStackCon _ _ _ _ args) = insertAll args acc
 mentionedLocalsAcc acc (ROp _ _ _ args postDrop) = insertAll (toList args) (insertAll postDrop acc)
 mentionedLocalsAcc acc (RExtPrim _ _ _ args postDrop) = insertAll args (insertAll postDrop acc)
 mentionedLocalsAcc acc (RStructGet _ structVar _ postDrop) = insert structVar (insertAll postDrop acc)
@@ -642,6 +649,7 @@ ownedUsedGo targets wanted st@(_, found) e =
     -- they'd be redundant there).
     step (RCon _ _ _ _ args _) = hits st args
     step (RRetPack _ _ _ fields) = hits st fields
+    step (RStackCon _ _ _ _ args) = hits st args
     step (ROp _ _ _ args _) = hits st (toList args)
     step (RExtPrim _ _ _ args _) = hits st args
     step (RStructGet _ structVar _ _) = hit st structVar
@@ -710,6 +718,7 @@ mentionsLocal l (RLet _ var _ value body) =
     mentionsLocal l value || (l /= RCLoc var && mentionsLocal l body)
 mentionsLocal l (RCon _ _ _ _ args _) = elem l args
 mentionsLocal l (RRetPack _ _ _ fields) = elem l fields
+mentionsLocal l (RStackCon _ _ _ _ args) = elem l args
 mentionsLocal l (ROp _ _ _ args _) = elem l (toList args)
 mentionsLocal l (RExtPrim _ _ _ args _) = elem l args
 mentionsLocal l (RStructGet _ structVar _ _) = structVar == l
@@ -751,6 +760,7 @@ countUsesR l (RApp _ _ c args) = length (filter (== l) (c :: forget args))
 countUsesR l (RLet _ _ _ value body) = countUsesR l value + countUsesR l body
 countUsesR l (RCon _ _ _ _ args _) = length (filter (== l) args)
 countUsesR l (RRetPack _ _ _ fields) = length (filter (== l) fields)
+countUsesR l (RStackCon _ _ _ _ args) = length (filter (== l) args)
 countUsesR l (ROp _ _ _ args _) = length (filter (== l) (toList args))
 countUsesR l (RExtPrim _ _ _ args _) = length (filter (== l) args)
 countUsesR l (RStructGet _ structVar _ _) = if structVar == l then 1 else 0
@@ -783,6 +793,7 @@ usedConstructorsR : RCExp -> SortedSet Name
 usedConstructorsR (RLet _ _ _ value body) = union (usedConstructorsR value) (usedConstructorsR body)
 usedConstructorsR (RCon _ n _ _ _ _) = singleton n
 usedConstructorsR (RRetPack _ n _ _) = singleton n
+usedConstructorsR (RStackCon _ n _ _ _) = singleton n
 usedConstructorsR (RCmpCase _ _ _ _ t f) = union (usedConstructorsR t) (usedConstructorsR f)
 usedConstructorsR (RConCase _ _ alts mDef) =
     let altsCons = map (\(MkRConAlt _ _ _ _ body) => usedConstructorsR body) alts
@@ -877,6 +888,7 @@ foldRCNamesR nf = go
     go (RLet _ _ _ value body) = go value <+> go body
     go (RCon _ n _ tag args reuseFrom) = nf.onCon n tag <+> ls args <+> maybe neutral l reuseFrom
     go (RRetPack _ n tag fields) = nf.onCon n (Just tag) <+> ls fields
+    go (RStackCon _ n _ tag args) = nf.onCon n (Just tag) <+> ls args
     go (ROp _ _ _ args postDrop) = ls (toList args) <+> ls postDrop
     go (RExtPrim _ _ _ args postDrop) = ls args <+> ls postDrop
     go (RStructGet _ structVar _ postDrop) = l structVar <+> ls postDrop
@@ -929,6 +941,7 @@ directReads (RForce _ _ v pd) = v :: pd
 directReads (RApp _ _ c args) = c :: forget args
 directReads (RCon _ _ _ _ args _) = args
 directReads (RRetPack _ _ _ fields) = fields
+directReads (RStackCon _ _ _ _ args) = args
 directReads (ROp _ _ _ args pd) = toList args ++ pd
 directReads (RExtPrim _ _ _ args pd) = args ++ pd
 directReads (RStructGet _ sv _ pd) = sv :: pd
