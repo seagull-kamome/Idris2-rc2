@@ -11,8 +11,10 @@ fail() { echo "FAIL  $name ($1)"; }
 # (rc2/doc/stack-con.md): `once` and `twoLets` (whose fields are built in two
 # `let`s inside the value) pass their `MkP` to `glue`, which only cases it. `twice`
 # shares its `MkP` (a `dup`), `kept` stores one and `withDouble` holds a `Double`
-# literal, boxed afresh when read, so those stay on the heap. `--directive
-# nostackcon` has none.
+# literal, boxed afresh when read, so those stay on the heap. `nested` builds its
+# `MkW` in the frame and the `MkP` in its field too: `glueW` only passes that field to
+# `glue`. `leaky` builds its `MkV` in the frame but not the `MkP` in it: `keepP` returns
+# that field. `--directive nostackcon` has none.
 here="$(cd "$(dirname "$0")" && pwd)"
 rc2="$here/../../build/exec/idris2-rc2"
 on="$TMP/${name}_rc2.rcexpr"
@@ -29,10 +31,10 @@ if ! "$rc2" --cg rc2 --directive dumprcexpr --directive nostackcon "$here/$name.
 fi
 a="$(grep -c '^ *stackcon ' "$on" || true)"
 b="$(grep -c '^ *stackcon ' "$off.rcexpr" || true)"
-if [ "$a" = "2" ] && [ "$b" = "0" ]; then
+if [ "$a" = "5" ] && [ "$b" = "0" ]; then
     pass "stack constructors -- $a with the pass, $b with --directive nostackcon"
 else
-    fail "stack constructors: $a with the pass (want 2), $b without (want 0)"
+    fail "stack constructors: $a with the pass (want 5), $b without (want 0)"
 fi
 if "$off" | cmp -s - "$here/$name.expected"; then
     pass "nostackcon -- same output"

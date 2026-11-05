@@ -51,11 +51,26 @@ statements build a constructor, and kept only if one became a stack constructor.
 4000 nodes is left alone: each constructor looks through the rest of its function. Each stack constructor
 adds its cell (8 bytes plus 8 per field) to the C frame.
 
+## A constructor in the field of another
+
+A constructor `a` whose only read is being a field `k` of a stack constructor `b` goes on the stack
+too when `b`'s readers keep that field in the frame:
+
+- a `case` on `b` in the same function must not bind field `k`: `b`'s death releases `a`'s fields
+  (the `drop` of `a` among `b`'s fields becomes a `drop` of `a`'s own), and a binder could still
+  read them after that;
+- a callee must keep field `k` of its parameter in the frame (`safeFields`): in its `case` on the
+  parameter, the binder of field `k` is only read by a `case` or passed to a parameter that does not
+  escape, and where the parameter is passed on, the same holds for the callee it goes to (a
+  greatest fixed point for each field position).
+
 ## Measured
 
-On `rc2-norepl` (final IR, 2026-11-05): 316 constructors are built in the frame, and the build takes as
-long as before (10.5 minutes, C compilation included).
+On `rc2-norepl` (final IR, 2026-11-05): 316 constructors are built in the frame, and 337 with the
+constructors in the field of another (21 more); the build takes as long as before (10.5 minutes, C
+compilation included).
 
 `Test167StackCon`: `once` and `twoLets` (its fields built in two `let`s inside the value) pass a fresh `MkP` to
 `glue`, which only cases it; `twice` shares it, `kept` stores it and `withDouble` holds a `Double` literal, so
-those stay on the heap.
+those stay on the heap. `nested` builds its `MkW` and the `MkP` in its field in the frame (`glueW` only
+passes that field on to `glue`); `leaky` builds its `MkV` there but not the `MkP` in it, which `keepP` returns.
