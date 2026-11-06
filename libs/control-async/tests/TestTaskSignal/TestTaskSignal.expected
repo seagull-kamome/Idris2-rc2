@@ -1,0 +1,8 @@
+before the wait: USR1
+raised by a task: USR2
+task ends first: finished
+signal first: signal USR1
+lost race: timer
+taken later: USR2
+two waits: USR1 USR1
+bad signal: error
