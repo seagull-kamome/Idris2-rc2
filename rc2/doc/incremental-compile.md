@@ -139,33 +139,31 @@ the root term itself was never part of any module's own `toIR`, so it
 never got compiled by any `incCompileFile` call.
 
 C's cross-module linkage is **static** (ordinary linker symbol
-resolution), and rc2 doesn't need an equivalent detour: `main`'s own
-body is already just an ordinary top-level Idris definition
-(`Main.main`, called with a Boxed `%World` token) that lands in the
-`Main` module's own `toIR` like any other definition -- it gets
-compiled into `Main.o` by the very same per-module `incCompileFile`
-call as everything else `Main.idr` defines. The only thing missing is
-the literal C `int main(void)` entry point that calls it, which is
-pure boilerplate with no dependence on the `ClosedTerm` Chez's
-`compileExprInc` needs -- except that the whole-program footer's own
-call, `__mainExpression_0()`, names a wrapper that is no module's
-`toIR` member, so the `Main` module's footer must call `Main.main`
-directly instead (`directEntryPoint`; see bugs 3 and 4 under
-"End-to-end verification"). `Emit.idr`'s `generateCSourceFile` already has
-exactly the parameter to control this: `noMain`, added earlier for the
-`%export`-as-library scenario (`rc2/doc/export-support.md`, "Linking
-as a library"). Incremental mode reuses it verbatim: pass
-`noMain = currentNS coreDefs /= mainNS` (the module's own *declared*
-namespace read off `Ctxt`, not one derived from the file path; see bug
-1 under "End-to-end verification") when generating a module's own
-`.c` -- true for every module except the one literally named `Main`
-(same check `Idris.ProcessIdr.processMod` already makes
-at its own `ns /= nsAsModuleIdent mainNS` guard).
+resolution). `main`'s own body is an ordinary top-level definition
+(`<Module>.main`, called with a Boxed `%World` token) that lands in its
+module's own `toIR` and is compiled into that module's `.o` by the same
+per-module `incCompileFile` call as everything else. What is missing is
+the C `int main()` that calls it, and the whole-program footer's own call,
+`__mainExpression_0()`, names a wrapper that is no module's `toIR`
+member.
 
-Consequence: rc2's final whole-program `compileExpr`, in incremental
-mode, does **no C code generation at all** -- it degenerates to a pure
-link step over `allIncData`'s accumulated `.o` files (`Main.o` already
-contains `main()`). This is simpler than Chez's own final step.
+Upstream says which module is the entry: the package's `main` field. Its
+build hands `compileExpr` the term `unsafePerformIO _ <Module>.main`
+(`Idris.Package.compileMain`). So:
+
+- A module defining `main` gets a function `idris2rc2_entry_<name>()` in
+  its `.c` (`generateCSourceFile`'s `entryHelper`) that makes the call,
+  which only that module can do, as the arity of `main` is 0 or 1 (bugs 3
+  and 4 under "End-to-end verification"). No module writes a C `main()`.
+- The final `compileExpr` writes a small `<outfile>_main.c` with the
+  `main()` that calls the function of the entry module (`entryOf`), and
+  links it with the archive of the module objects. A term of any other
+  shape (`:exec` of an expression) takes the whole-program path. With
+  `--directive nomain` no `main()` is written, as in a whole-program
+  build.
+
+The entry module can therefore be named anything. Before, only a module
+named `Main` got a `main()` (`noMain = currentNS /= mainNS`).
 
 ## Which existing passes need to change -- and which don't
 
@@ -285,7 +283,7 @@ Only `DeadCode.pruneDeadDefs` and the top-level driver
      Chez -- record that the module was incrementally compiled with no
      actual output, still needed for `missingIncremental`'s later
      check to pass).
-   - Otherwise: decide `noMain` from the module's declared namespace
+   - Otherwise: a module defining `main` also gets its entry function
      (see above); output paths come from `sourcefile`
      (`getObjFileName`/`getTTCFileName`); run `lowerProgram (nub ("nodeadcode" :: disabledStages)) True roots Nothing` over the module's definitions;
      `generateCSourceFile` into the ttc build directory's own
@@ -662,7 +660,9 @@ the next. `rc2/tests/verify.sh` stayed at 111/0/0 after every one.
    `directEntryPoint : Maybe String` parameter: `Nothing` keeps
    today's whole-program footer verbatim; `Just call` (`incCompile`'s
    own `Main`-module case only) splices a complete call expression
-   instead, built by `incCompile` itself from whatever it finds.
+   instead, built by `incCompile` itself from whatever it finds. (Since
+   then it is `entryHelper`, a function instead of a `main()`, for any
+   module defining `main`; see above.)
 4. **`Main.main`'s own real arity isn't reliably 1.** (Since then `idris2rc2_freshWorld()` is gone: the `%World` token is C `NULL`, `RCWorld` in the IR, and the calls below pass `NULL`.) First attempt at
    (3) hardcoded `"\{cname}(idris2rc2_freshWorld())"` (build one fresh
    `%World` token -- a small new `idris2rc2_freshWorld()` runtime

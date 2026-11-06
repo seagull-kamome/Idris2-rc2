@@ -904,14 +904,49 @@ resolveIncObj mod = do
         | Nothing => throw (InternalError "[rc2] incremental compile: missing object file \{mod}")
     pure fname
 
+||| The `main` function a package build hands over: `compileMain` wraps it as
+||| `unsafePerformIO _ main`. Any other term has no entry function, and the
+||| link takes the whole-program path.
+entryOf : {auto c : Ref Ctxt Defs} -> ClosedTerm -> Core (Maybe Name)
+entryOf (App _ (App _ (Ref _ _ run) _) (Ref _ _ entry)) = do
+    run' <- getFullName run
+    entry' <- getFullName entry
+    pure $ case (run', entry') of
+                (NS _ (UN (Basic "unsafePerformIO")), NS _ (UN (Basic "main"))) => Just entry'
+                _ => Nothing
+entryOf _ = pure Nothing
+
+||| The C file of an incremental link: the `main()` that runs the entry
+||| function of the module defining `main`.
+entrySource : (multithreaded : Bool) -> (helper : String) -> String
+entrySource multithreaded helper = """
+    #include <idris2rc2_runtime.h>
+    #include <idris_support.h>
+
+    IDRIS2RC2_Value *\{helper}(void);
+
+    int main(int argc, char *argv[])
+    {
+        idris2rc2_rtInit();
+        \{ifThenElse multithreaded "idris2rc2_enableMultiThreading();" ""}
+        idris2_setArgs(argc, argv);
+        IDRIS2RC2_Value *mainExprVal = \{helper}();
+        idris2rc2_trampoline(mainExprVal);
+        idris2rc2_rtFinish();
+        return 0;
+    }
+    """
+
 ||| Final incremental-mode link (`rc2/doc/incremental-compile.md`): no
-||| C codegen at all here -- every module's own `incCompile` call
-||| already produced its own `.o` (the `Main` module's own `.o` already
-||| contains `main()`, see that doc's own "no root-term recompile step"
-||| section), so this just resolves and links every accumulated
-||| per-module object plus their combined `%foreign` library list.
+||| C codegen for the modules here -- every module's own `incCompile` call
+||| already produced its own `.o`, and a module defining `main` has the
+||| function that runs it -- so this writes the small `main()` that calls
+||| the one the root term names, then resolves and links it with every
+||| accumulated per-module object plus their combined `%foreign` library
+||| list.
 ||| Falls back to `compileExprWhole` (same as Chez's own
-||| `compileExprInc`) if `allIncData` has no entry for `rc2` -- some
+||| `compileExprInc`) if the root term is not a package's `main` (`entryOf`),
+||| or if `allIncData` has no entry for `rc2` -- some
 ||| import lacks incremental compile data for this codegen, most likely
 ||| because `prelude`/`base`/`contrib`/`network` haven't themselves
 ||| been rebuilt with `--inc rc2` yet (see the doc's own "practical
@@ -929,6 +964,8 @@ compileExprInc c s tmpDir outputDir tm outfile = do
         | Nothing => do
             coreLift $ putStrLn "Missing incremental compile data, reverting to whole program compilation"
             compileExprWhole c s tmpDir outputDir tm outfile
+    Just entry <- entryOf tm
+      | Nothing => compileExprWhole c s tmpDir outputDir tm outfile
     directiveList <- getDirectives (Other "rc2")
     let dumpCC = "dumpcc" `elem` directiveList
     objs <- traverse resolveIncObj (nub mods)
@@ -945,8 +982,18 @@ compileExprInc c s tmpDir outputDir tm outfile = do
     Just _ <- logTime 2 "rc2: incremental archive" $
         archiveObjectFiles (filter (/= "") objs) outar dumpCC
       | Nothing => pure Nothing
+    let mainC = outputDir </> outfile ++ "_main.c"
+    let mainO = outputDir </> outfile ++ "_main.o"
+    mainObjs <- if "nomain" `elem` directiveList
+                   then pure (Just (the (List String) []))
+                   else do
+                     Right () <- coreLift $ writeFile mainC (entrySource ("multithreaded" `elem` directiveList) (entryHelperName entry))
+                       | Left err => throw (FileErr mainC err)
+                     map (\_ => [mainO]) <$> logTime 2 "rc2: incremental main" (compileCObjectFile mainC mainO dumpCC)
+    let Just mainObjs' = mainObjs
+        | Nothing => pure Nothing
     logTime 2 "rc2: incremental link" $
-        compileCFile [outar] outexec (nub libs) dumpCC
+        compileCFile (mainObjs' ++ [outar]) outexec (nub libs) dumpCC
 
 export
 compileExpr : Ref Ctxt Defs
@@ -970,12 +1017,8 @@ compileExpr c s tmpDir outputDir tm outfile = do
 ||| ConstFold/MutualLoop/Loop/DualABI need no change to run correctly
 ||| against this narrower def list, why DeadCode must always be
 ||| skipped here (`"nodeadcode"`, forced regardless of any user
-||| `--directive` setting), and why `noMain` alone (already built for
-||| the `%export`-as-library case) is enough to decide whether this
-||| particular module's own `.c` needs the C `main()` entry point --
-||| true only for the module literally named `Main`, which needs no
-||| special handling here beyond that flag: its own `Main.main` is
-||| just another definition already in `toIR` like everything else.
+||| `--directive` setting), and how a module defining `main` gets the
+||| function that runs it instead of a C `main()`.
 incCompile : Ref Ctxt Defs -> Ref Syn SyntaxInfo ->
              (sourceFile : String) -> Core (Maybe (String, List String))
 incCompile c s sourceFile = do
@@ -988,17 +1031,7 @@ incCompile c s sourceFile = do
             -- `incCompile` -- `missingIncremental`'s later check needs
             -- *some* entry to exist, not necessarily a nonempty one).
        else do
-         -- `ctxtPathToNS sourceFile` would derive the namespace from the
-         -- *file path* (e.g. "Hello" for a file named Hello.idr) -- wrong
-         -- here, since Idris2 lets a file's own `module Main` declaration
-         -- differ from its filename precisely for the entry-point case
-         -- (the same special-case `Idris.ProcessIdr.processMod`'s own
-         -- `ns /= nsAsModuleIdent mainNS` check guards against). What
-         -- `noMain` actually needs is the module's own *declared*
-         -- namespace, already recorded on `Ctxt` by the time `incCompile`
-         -- runs (elaboration of this module has already finished).
          coreDefs <- get Ctxt
-         let noMain = currentNS coreDefs /= mainNS
          directiveList <- rc2Directives
          let disabledStages = nub ("nodeadcode" :: filter (`elem` directiveList) stageDirectiveNames)
          (_, namedInl) <- inlineNamed disabledStages Nothing Nothing ndefs
@@ -1009,20 +1042,13 @@ incCompile c s sourceFile = do
                               else logTime 2 "rc2: Dead arguments" $ applyDeadArgs roots Nothing namedInl
          (_, namedIn) <- raiseNamed disabledStages Nothing namedDead
          (defs, _) <- lowerProgram (disabledStages ++ targetOsDirectives directiveList) True roots Nothing namedIn
-         -- `Main.main`'s compiled arity is 0 or 1 (a CAF still waiting for the
-         -- world, vs. a function taking it), so the entry call is built from
-         -- the real `MkRCFun` arity, never hardcoded. Arity 0 must go through
-         -- `idris2rc2_applyClosure`: a bare call only builds the closure and
-         -- runs nothing. See rc2/doc/incremental-compile.md, "Bugs found while
-         -- implementing" item 4.
-         let mainMainName = NS mainNS (UN (Basic "main"))
-         directEntryPoint <- the (Core (Maybe String)) $
-             if noMain
-                then pure Nothing
-                else case lookup mainMainName defs of
-                          Just (MkRCFun [] _ _ _) => pure (Just "idris2rc2_applyClosure(\{cName mainMainName}(), NULL)")
-                          Just (MkRCFun _ _ _ _) => pure (Just "\{cName mainMainName}(NULL)")
-                          _ => throw $ InternalError "[rc2] incremental compile: Main module has no Main.main function"
+         let ownMain = NS (currentNS coreDefs) (UN (Basic "main"))
+         let entryCall : RCDef -> Maybe String
+             entryCall (MkRCFun [] _ _ _) = Just "idris2rc2_applyClosure(\{cName ownMain}(), NULL)"
+             entryCall (MkRCFun _ _ _ _) = Just "\{cName ownMain}(NULL)"
+             entryCall _ = Nothing
+         let entryHelper : Maybe (String, String)
+             entryHelper = (\call => (entryHelperName ownMain, call)) <$> (lookup ownMain defs >>= entryCall)
          when ("dumprcexpr" `elem` directiveList) $ do
              rcexprFile <- getTTCFileName sourceFile "rcexpr"
              coreLift_ $ writeFile rcexprFile
@@ -1036,7 +1062,7 @@ incCompile c s sourceFile = do
          outO <- getTTCFileName sourceFile "o"
          objRel <- getObjFileName sourceFile "o"
          foreignLibs <- logTime 2 "rc2: incremental C generation" $
-             generateCSourceFile defs [] noMain directEntryPoint True injectedRuntime externStructs directiveList outC
+             generateCSourceFile defs [] True entryHelper True injectedRuntime externStructs directiveList outC
          Just _ <- logTime 2 "rc2: incremental C compile" $
              compileCObjectFile outC outO ("dumpcc" `elem` directiveList)
            | Nothing => pure Nothing

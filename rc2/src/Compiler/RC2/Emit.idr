@@ -1482,24 +1482,24 @@ flushStagedDecls outn h = do
 ||| (`rc2/doc/export-support.md` "Linking as a library").
 ||| `dropUnimplementableForeign`: see `hasUsableForeignImpl`; `True`
 ||| (incremental) drops such a declaration silently instead of erroring.
-||| `directEntryPoint`: `Nothing` calls `__mainExpression_0()`; `Just call`
-||| splices a complete C call expression verbatim (`incCompile`'s Main
-||| module, which alone knows `Main.main`'s real arity -- hardcoding either
-||| arity broke the other). Never `Just` together with `noMain`. See
-||| `rc2/doc/incremental-compile.md` "Bugs found while implementing".
+||| `entryHelper`: `Nothing` writes a `main()` that calls `__mainExpression_0()`
+||| (unless `noMain`); `Just (name, call)` writes no `main()` but a function `name` returning the
+||| complete C call expression `call` (`incCompile`, for a module defining
+||| `main`, which alone knows its real arity -- hardcoding either arity
+||| broke the other). See `rc2/doc/incremental-compile.md`.
 export
 generateCSourceFile : {auto c : Ref Ctxt Defs}
                    -> List (Name, RCDef)
                    -> (exports : List (Name, String, List CFType, CFType))
                    -> (noMain : Bool)
-                   -> (directEntryPoint : Maybe String)
+                   -> (entryHelper : Maybe (String, String))
                    -> (dropUnimplementableForeign : Bool)
                    -> (injectedRuntime : String)
                    -> (externStructs : SortedSet String)
                    -> (directiveList : List String)
                    -> (outn : String)
                    -> Core (List String)
-generateCSourceFile defs0 exports noMain directEntryPoint dropUnimplementableForeign injectedRuntime externStructs directiveList outn =
+generateCSourceFile defs0 exports noMain entryHelper dropUnimplementableForeign injectedRuntime externStructs directiveList outn =
   do let defs = if dropUnimplementableForeign then filter hasUsableForeignImpl defs0 else defs0
      _ <- newRef ArgCounter 0
      _ <- newRef FunctionDefinitions []
@@ -1579,13 +1579,10 @@ generateCSourceFile defs0 exports noMain directEntryPoint dropUnimplementableFor
          put OutfileText DList.Nil
          emitExportWrapper n exportedCName fargs ret
          flushEmitBuffer outn h) exports
-     -- The process entry point: boxes nothing further, just calls the
-     -- entry point then trampolines its result. Skipped when `noMain`
-     -- (see this function's own doc comment above for why) so a
-     -- `%export`ed program can link this `.c` as a library alongside a
-     -- caller-supplied `main` instead. `directEntryPoint`'s own doc
-     -- comment above has the full story on the two shapes `entryCall`
-     -- can take.
+     -- The process entry point: calls `__mainExpression_0()` and trampolines
+     -- its result. Skipped when `noMain`, so a `%export`ed program can link
+     -- this `.c` as a library alongside a caller-supplied `main`, and when
+     -- `entryHelper` is given (see this function's own doc comment).
      --
      -- `idris2rc2_rtInit()` / `idris2rc2_rtFinish()` (support/rc2/
      -- runtime.c) bracket the whole run: rtInit adopts the environment
@@ -1593,8 +1590,8 @@ generateCSourceFile defs0 exports noMain directEntryPoint dropUnimplementableFor
      -- before any Idris code runs, rtFinish flushes stdio after. A
      -- `noMain` build gets no `main()` here, so its hand-written driver
      -- (doc/export-support.md) is responsible for calling both.
-     let entryCall : String = fromMaybe "__mainExpression_0()" directEntryPoint
-     when (not noMain) $ emit EmptyFC """
+     whenJust entryHelper $ \(name, call) => emit EmptyFC "\nIDRIS2RC2_Value *\{name}(void)\n{\n    return \{call};\n}\n"
+     when (not noMain && isNothing entryHelper) $ emit EmptyFC """
 
        // main function
        int main(int argc, char *argv[])
@@ -1608,7 +1605,7 @@ generateCSourceFile defs0 exports noMain directEntryPoint dropUnimplementableFor
                          "idris2_setArgs(argc, argv);"
                          ""
            }
-           IDRIS2RC2_Value *mainExprVal = \{entryCall};
+           IDRIS2RC2_Value *mainExprVal = __mainExpression_0();
            idris2rc2_trampoline(mainExprVal);
            idris2rc2_rtFinish();
            return 0;
