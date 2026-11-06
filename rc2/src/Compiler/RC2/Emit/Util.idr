@@ -108,6 +108,12 @@ cName (CaseBlock x y) = "case__" ++ cCleanString (show x) ++ "_" ++ cCleanString
 cName (WithBlock x y) = "with__" ++ cCleanString (show x) ++ "_" ++ cCleanString (show y)
 cName (Resolved i) = "fn__" ++ cCleanString (show i)
 
+||| The C function a module defining `main` gets for running it, which the
+||| `main()` written at the link of an incremental build calls.
+export
+entryHelperName : Name -> String
+entryHelperName n = "idris2rc2_entry_" ++ cName n
+
 ||| Fails unless `IDRIS2RC2_Constructor`'s 16-bit fields can hold the
 ||| constructor's field count and tag (`rc2/doc/constructor-layout.md`).
 export
