@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e # exit on any error
+DIR=$(dirname "$(readlink -f -- "$0")")
+#MIMALLOC=$(nix-build '<nixpkgs>' -A mimalloc --no-out-link)/lib/libmimalloc.so 
+MIMALLOC=/usr/lib/libmimalloc.so 
+
+if [ -f ${MIMALLOC} ]; then
+  LD_PRELOAD=${MIMALLOC} "$DIR/idris2-rc2-norepl.bin" "$@"
+else
+  "$DIR/idris2-rc2-norepl.bin" "$@"
+fi;
+

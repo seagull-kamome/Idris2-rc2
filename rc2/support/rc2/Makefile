@@ -78,6 +78,14 @@ install: $(TARGET)
 	for f in $(APP_FILES); do install $(APPDIR)/idris2-rc2_app/$$f $(PREFIX)/bin/idris2-rc2_app/$$f || exit 1; done
 	install -m 755 $(APPDIR)/idris2-rc2 $(PREFIX)/bin/
 
+
+.PHONY: install_norepl
+install_norepl: $(TARGET)
+	echo Installing to ${PREFIX} ...
+	install -m 755 $(APPDIR)/idris2-rc2-norepl $(PREFIX)/bin/idris2-rc2-norepl.bin
+	install -m 744 idris2-rc2-norepl $(PREFIX)/bin/
+
+
 .PHONY: clean
 clean:
 	$(RM) $(OBJS) $(TARGET)

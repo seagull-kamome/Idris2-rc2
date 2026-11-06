@@ -12,3 +12,5 @@ modules = NoRepl.SchemeStubs,
 
 main = NoRepl.Main
 executable = "idris2-rc2-norepl"
+postinstall = "make -C support/rc2 install_norepl"
+
