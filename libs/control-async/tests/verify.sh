@@ -65,6 +65,7 @@ TESTS=(
     "TestTaskMVar||Control.Task.MVar: lock between tasks on four threads, waits, the line, waits and modifications given up"
     "TestTaskRef||Control.Task.Ref: no update lost with actions on four threads, each ticket handed out once"
     "TestTaskSignal||Control.Task.Signal: a signal raised before the wait, one raised by a task, untilSignals, a wait given up by a lost race, two waits for one signal, a bad signal"
+    "TestTaskSemaphore||Control.Task.Semaphore: at most the permits run at once on four threads, a wait for a release, the order of the line, try versions, a wait or a holder that is given up losing no permit"
 )
 
 # Tests that need liburing's headers (liburing.h); skipped the same way.
