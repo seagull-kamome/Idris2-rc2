@@ -68,6 +68,14 @@ adapts that same upstream mechanism to rc2's C backend.
   into incremental mode (`setIncrementalCG`, which itself checks
   `incCompileFile` isn't `Nothing` before allowing this); equivalently,
   `IDRIS2_INC_CGS=rc2` (`docs/source/backends/incremental.rst`).
+
+  Build a package with `IDRIS2_INC_CGS=rc2` or `opts = "--inc rc2"` in
+  the `.ipkg`, not with `--inc rc2` on the command line: `Idris.Driver`
+  applies the command line options, and the package build applies them
+  again (`prepareCompilation`), and `setIncrementalCG` does not drop a
+  duplicate, so `rc2` is listed twice and `incCompile` runs twice for
+  every module. With the environment variable `prelude` built in 18 s,
+  against 28 s with the flag.
   `Idris.Package.installFrom` already copies each module's incremental
   object file on `install` generically, keyed purely off `incExt` --
   nothing rc2-specific needed there.
@@ -261,7 +269,8 @@ Only `DeadCode.pruneDeadDefs` and the top-level driver
    `moduleRoots` still reads the bodies before the CSE, as those are the
    ones other modules copy in.
 
-   Measured with `--inc rc2` on the compiler itself (`rc2-norepl` and
+   Measured with `--inc rc2` on the command line (every module compiled
+   twice, see above) on the compiler itself (`rc2-norepl` and
    what it depends on, clang): prelude 28 s, base 232 s, linear 11 s,
    contrib 134 s, network 8 s, `idris2` 758 s, `rc2` 133 s, `rc2-norepl`
    562 s, 31 minutes in all, against 625 s for the whole program in one
