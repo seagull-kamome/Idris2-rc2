@@ -16,6 +16,7 @@ rc2向けの協調型タスクです。spawn/both/raceとキャンセルを備�
 | `Control.Task.Uring` | rc2baseの`System.Linux.Uring`の上の、`io_uring`のイベントソース（使うときだけliburingが必要です） |
 | `Control.Task.Pool`、`Control.Task.Waiters` | 並列モードでアクションを動かすワーカースレッドと、次のプリミティブが共有する待ちリスト |
 | `Control.Task.Signal` | `signalfd`でシグナルを待つ(`awaitSignals`、`untilSignals`、`blockSignals`)。ワーカースレッドを使うときは、スケジューラの開始前にシグナルをブロックする |
+| `Control.Task.Semaphore` | タスク用の計数セマフォ(`acquireN`、`releaseN`、`withPermit`)。到着順に許可を渡し、待ちは取り消せる |
 | `Control.Task.Ref`、`MVar`、`Chan` | 複数スレッドのタスクの間で共有する状態 |
 | `Network.Async` | スレッドをブロックせず、スケジューラ上でディスクリプタを待つ`accept`、`connect`、`recv`、`send` |
 

@@ -1,0 +1,8 @@
+limit: peak<=3 True, peak>=2 True, free 3
+wait: 1
+line: ["served before A: 0", "A", "B"]
+try: (True, (False, 0))
+given-up wait: (False, 1)
+given-up holder: 1
+head: (False, (False, 1))
+many: (0, (2, 2))
