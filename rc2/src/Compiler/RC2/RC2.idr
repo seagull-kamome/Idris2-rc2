@@ -33,6 +33,7 @@ import Compiler.RC2.ArityRaise
 import Compiler.RC2.ArityRaiseCExp
 import Compiler.RC2.ClosureCtx
 import Compiler.RC2.DeadArgs
+import Compiler.RC2.IncCse
 import Compiler.RC2.Trmc
 import Compiler.RC2.CC
 import Compiler.RC2.CmpMerge
@@ -979,7 +980,7 @@ incCompile : Ref Ctxt Defs -> Ref Syn SyntaxInfo ->
              (sourceFile : String) -> Core (Maybe (String, List String))
 incCompile c s sourceFile = do
     cdata <- getIncCompileData False Cases
-    let ndefs = namedDefs cdata
+    ndefs <- incrementalCse !(currentNS <$> get Ctxt) (namedDefs cdata)
     if isNil ndefs
        then pure (Just ("", []))
             -- No code to generate, but still record that the module
@@ -1000,7 +1001,7 @@ incCompile c s sourceFile = do
          let noMain = currentNS coreDefs /= mainNS
          directiveList <- rc2Directives
          let disabledStages = nub ("nodeadcode" :: filter (`elem` directiveList) stageDirectiveNames)
-         (_, namedInl) <- inlineNamed disabledStages Nothing Nothing (namedDefs cdata)
+         (_, namedInl) <- inlineNamed disabledStages Nothing Nothing ndefs
          exportNames <- traverse (\(n, _) => getFullName n) (exported cdata)
          roots <- moduleRoots exportNames (namedDefs cdata)
          (_, namedDead) <- if "nodeadargs" `elem` disabledStages
@@ -1026,7 +1027,7 @@ incCompile c s sourceFile = do
              rcexprFile <- getTTCFileName sourceFile "rcexpr"
              coreLift_ $ writeFile rcexprFile
                  ("-- " ++ directiveText directiveList ++ "\n" ++
-                  prettyProgram (collectLazyCAFs (namedDefs cdata)) defs)
+                  prettyProgram (collectLazyCAFs ndefs) defs)
          extraRuntimeFiles <- getExtraRuntime directiveList
          let inlineRuntime = getInlineRuntime directiveList
          let injectedRuntime = extraRuntimeFiles ++ (if inlineRuntime == "" then "" else "\n" ++ inlineRuntime)

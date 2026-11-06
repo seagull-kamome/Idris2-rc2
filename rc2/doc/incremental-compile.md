@@ -249,6 +249,25 @@ Only `DeadCode.pruneDeadDefs` and the top-level driver
    left every module without code. `DeadArgs` runs here with the same
    `roots`, so only the helpers nobody outside can call lose parameters.
 
+   `getIncCompileData` also skips the CSE (`Compiler.Opts.CSE`) that the
+   whole-program path runs, and Idris' inlining copies an interface
+   dictionary into every use. `Compiler.RC2.IncCse` runs the same CSE
+   over the module's definitions: on `Compiler.RC2.FunDedup` (a
+   `SortedMap` keyed by `Name`) `redirections` arrived with 1.37 million
+   nodes and the module took over ten minutes, with about 220,000 lifted
+   lambdas, mostly wrappers of the `Eq Name`/`Ord Name` methods. The
+   shared terms become definitions named `csegen`, which every module
+   numbers from 0, so they are qualified by the module's namespace.
+   `moduleRoots` still reads the bodies before the CSE, as those are the
+   ones other modules copy in.
+
+   Measured with `--inc rc2` on the compiler itself (`rc2-norepl` and
+   what it depends on, clang): prelude 28 s, base 232 s, linear 11 s,
+   contrib 134 s, network 8 s, `idris2` 758 s, `rc2` 133 s, `rc2-norepl`
+   562 s, 31 minutes in all, against 625 s for the whole program in one
+   go. The compiler built this way writes the same C as the whole-program
+   one (`TestIntegers`, byte for byte) in the same time.
+
 2. **New `incCompile` function** (`Compiler.RC2.RC2`, mirrors Chez's
    `incCompile`):
    - `cdata <- getIncCompileData False Cases` -- the named case trees,
