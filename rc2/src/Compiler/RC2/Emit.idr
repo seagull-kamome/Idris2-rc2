@@ -147,6 +147,25 @@ emitAppFFIInlineInto : EmitDeps (Sink -> TailPositionStatus -> FC -> List String
 emitRC : EmitDeps (Sink -> RCExp -> TailPositionStatus -> Core ())
 
 mutual
+    ||| A `let var = case sc of K .. f .. => <dup/drop>; f` that only
+    ||| projects field `f` out of a Boxed `sc`: declare `var` as that
+    ||| field itself, so the field needs neither a second variable nor a
+    ||| copy. `False` when the shape does not match, nothing emitted.
+    emitFieldProjection : EmitDeps (Int -> RCLocal -> RConAlt -> Core Bool)
+    emitFieldProjection var sc (MkRConAlt _ _ _ args body) = do
+        scRep <- repOfLocal sc
+        case (scRep, projectChain var body) of
+             (RRet _ _, _) => pure False
+             (_, Just (f, chain)) =>
+                 if f == 0 || not (f `elem` args) then pure False else do
+                     _ <- foldlC (\k, arg => do
+                         when (arg /= 0) $
+                             emit emptyFC "IDRIS2RC2_Value *\{varName (RCLoc (if arg == f then var else arg))} = ((IDRIS2RC2_Constructor*)\{varName sc})->args[\{show k}];"
+                         pure (S k)) 0 args
+                     _ <- peelWrappers chain
+                     pure True
+             _ => pure False
+
     ||| Declare an `RLet`'s own binding: record its `Rep` (so later *uses*
     ||| of `var` can look it up), then either inline it (a literal, or an
     ||| `RInlineNative`), declare a plain native C scalar, or build/copy
@@ -157,10 +176,16 @@ mutual
     ||| standing between it and a closure-shaped tail expression still
     ||| needs its binding declared exactly as it would be anywhere else,
     ||| it just isn't the end of that search.
+    |||
+    ||| A `let` that only projects a field out of a single-alt case goes
+    ||| through `emitFieldProjection` instead.
     declareLet : EmitDeps (FC -> Int -> Rep -> RCExp -> Core ())
     declareLet fc var rep value = do
         update RepMap (insert var rep)
-        case (rep, value) of
+        projected <- case (rep, value) of
+             (RBoxed, RConCase _ sc [alt] Nothing) => emitFieldProjection var sc alt
+             _ => pure False
+        unless projected $ case (rep, value) of
              (RNative _, RPrimVal _ c) => update InlineMap (insert var (nativeLitExpr c, []))
              (RInlineNative ty, _) => inlineNative ty var value
              -- Routed through `emitInto`, not straight to

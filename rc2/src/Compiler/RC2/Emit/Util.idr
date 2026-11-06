@@ -1520,6 +1520,24 @@ splitLast xs = case reverse xs of
     [] => Nothing
     (l :: ls) => Just (reverse ls, l)
 
+renameLoc : (from : Int) -> (to : Int) -> RCLocal -> RCLocal
+renameLoc from to (RCLoc x) = if x == from then RCLoc to else RCLoc x
+renameLoc _ _ l = l
+
+||| When `chain` is nothing but `RDup`/`RDrop` wrappers around a final
+||| `RV` of a `RCLoc`: that local, and `chain` with every mention of it
+||| renamed to `to`.
+export
+projectChain : (to : Int) -> RCExp -> Maybe (Int, RCExp)
+projectChain to (RV fc (RCLoc x)) = Just (x, RV fc (RCLoc to))
+projectChain to (RDup fc v extra cont) = do
+    (f, cont') <- projectChain to cont
+    pure (f, RDup fc (renameLoc f to v) extra cont')
+projectChain to (RDrop fc vs cont) = do
+    (f, cont') <- projectChain to cont
+    pure (f, RDrop fc (map (renameLoc f to) vs) cont')
+projectChain _ _ = Nothing
+
 ||| `conAltCondExpr` for a struct scrutinee (`doc/struct-return.md`):
 ||| only the tag, since a struct holds no NULL or tagged-pointer form.
 export
@@ -1556,7 +1574,8 @@ conAltCondExpr sc' (MkRConAlt name coninfo tag args body) = do
 ||| `emitConCaseInto` and `emitConstCaseInto` (`RCmpCase` has exactly two
 ||| alts, rendered directly). With no default the last alt skips its
 ||| condition; under `SinkReturn` the else-chaining and braces go too
-||| (`chainsWithElse`). See `rc2/doc/case-hoisting-scope.md`.
+||| (`chainsWithElse`), and with no conditional alt at all the lone body
+||| is emitted bare, under any sink. See `rc2/doc/case-hoisting-scope.md`.
 ||| `condExpr`'s second component is a pending drop owed by the condition
 ||| string (InlineMap-sourced); discharge it right after the condition is
 ||| embedded (read-before-drop, see `Compiler.RC2.Emit`'s `emitRC`).
@@ -1583,7 +1602,7 @@ emitAltChain sink condExpr renderBody renderDefault alts = do
                pure "") "" condAlts
     let trailing : Maybe (Core ()) = maybe renderDefault (Just . renderBody) tailAlt
     whenJust trailing $ \body =>
-        if chained
+        if chained && not (null condAlts)
            then do
                emit emptyFC "\{finalEls}{"
                increaseIndentation

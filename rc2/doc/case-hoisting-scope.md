@@ -45,7 +45,12 @@ other alts also drop their `else`-chaining (`chainsWithElse`) and the
 trailing piece drops its braces and extra indentation, since this case is
 always the last thing in its C block. A 2-alt tail case with no default
 (`Bool`-shaped) becomes `if (...) { ...; return ...; } ...; return ...;`,
-and a single-alt one has no `if` at all.
+and a single-alt one has no `if` at all. A case with no conditional alt
+at all (a lone alt, or a lone default) has no braces either, under any
+sink: its locals are declared in the enclosing C block (variable ids are
+unique, so nothing clashes). `Emit.emitFieldProjection` goes one step
+further for a `let` that only projects a field out of a single-alt case,
+declaring that field as the `let`'s own variable.
 
 **Two ways to actually hoist that remaining cost were considered:**
 
