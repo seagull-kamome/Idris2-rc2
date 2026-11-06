@@ -269,13 +269,29 @@ Only `DeadCode.pruneDeadDefs` and the top-level driver
    `moduleRoots` still reads the bodies before the CSE, as those are the
    ones other modules copy in.
 
-   Measured with `--inc rc2` on the command line (every module compiled
-   twice, see above) on the compiler itself (`rc2-norepl` and
-   what it depends on, clang): prelude 28 s, base 232 s, linear 11 s,
-   contrib 134 s, network 8 s, `idris2` 758 s, `rc2` 133 s, `rc2-norepl`
-   562 s, 31 minutes in all, against 625 s for the whole program in one
-   go. The compiler built this way writes the same C as the whole-program
-   one (`TestIntegers`, byte for byte) in the same time.
+   Measured with `IDRIS2_INC_CGS=rc2` on the compiler itself (clang):
+   prelude 17 s, base 141 s, linear 7 s, contrib 81 s, network 4 s,
+   `idris2` 837 s, `rc2` 161 s, 21 minutes for all of them, against 625 s
+   for `rc2-norepl` and its own modules in one whole-program build. The
+   last step, the program's own modules, then takes about 10 s: the C of
+   `NoRepl.Driver` is 447 KB (230 KB of object code), the rest 2 KB, and
+   the library archive it links is 79 MB. An earlier measurement took
+   562 s for that step and wrote a 108 MB C file: a module's C had failed
+   to compile (an untagged constructor named only in a `case` alternative
+   had no `extern` declaration), the build went on without incremental
+   data for that module and everything importing it, and the link fell
+   back to the whole program. Such a failure does not stop the build; look
+   for `error:` in its output.
+
+   `rc2-norepl` itself still cannot be linked this way: a `C` `main()` is
+   written only for a module named `Main`, so the program's entry module
+   must be called that; `NoRepl.SchemeStubs` gives `%foreign_impl`
+   to declarations of another package, which needs the whole program; and
+   the object files leave `Prelude.Types`' `unpack` helper `go` undefined,
+   which other modules call directly (`Core.Case.CaseTree`, with `unpack`'s
+   body inlined) although `Prelude.Types` has `%transform "fastUnpack"
+   unpack = fastUnpack`: the rule seems not to have fired in the module
+   that calls it. Why is not yet explained.
 
 2. **New `incCompile` function** (`Compiler.RC2.RC2`, mirrors Chez's
    `incCompile`):

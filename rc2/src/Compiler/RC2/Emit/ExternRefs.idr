@@ -25,12 +25,14 @@ import Data.SortedSet
 %default covering
 
 ||| Every untagged constructor `Name` a def's own generated C
-||| dereferences via `->name = idris2rc2_constr_<name>` -- both a
+||| refers to as `idris2rc2_constr_<name>` -- both a
 ||| dynamic `RCon` construction (`Compiler.RC2.Emit`'s own
 ||| `createCFunctions` `RCon` case, `when (Nothing == tag) ...`) and a
 ||| `ConstFold`-folded `RCConstCon` literal
 ||| (`Emit.Util.boxedConstConExpr`'s own `nameField`) set this field
-||| exactly when the constructor's own `tag` is `Nothing`. Whole-program
+||| exactly when the constructor's own `tag` is `Nothing`; a case
+||| alternative on such a constructor compares against it
+||| (`Emit.Util.conAltCondExpr`). Whole-program
 ||| compilation never needs this -- every `MkRCCon` the program could
 ||| possibly reference already sits in the very same `defs` list
 ||| `collectDeclarations` forward-declares from -- only matters once a
@@ -43,7 +45,10 @@ import Data.SortedSet
 export
 untaggedConstructorRefsD : RCDef -> SortedSet Name
 untaggedConstructorRefsD =
-    foldRCNamesD $ { onCon := \n, tag => maybe (singleton n) (const empty) tag } noRCNames
+    foldRCNamesD $ { onCon := untagged, onConAlt := untagged } noRCNames
+  where
+    untagged : Name -> Maybe Int -> SortedSet Name
+    untagged n = maybe (singleton n) (const empty)
 
 ||| Every function `Name` a def's C references but might not define:
 ||| `RAppName` calls, `RUnderApp` closure builds, `RCConstPartial`s. A no-op

@@ -846,6 +846,9 @@ record RCNameFold m where
   onCon : Name -> (tag : Maybe Int) -> m
   ||| `RCConstPartial` -- a `ConstFold`-folded closure over constants.
   onConstClosure : Name -> m
+  ||| An alternative of an `RConCase`: an untagged one is matched against
+  ||| the runtime name string of its constructor.
+  onConAlt : Name -> (tag : Maybe Int) -> m
 
 ||| An `RCNameFold` contributing nothing anywhere -- start from this
 ||| and override only the fields a given walker cares about (record
@@ -853,7 +856,7 @@ record RCNameFold m where
 public export
 noRCNames : Monoid m => RCNameFold m
 noRCNames = MkRCNameFold (\_,_ => neutral) (\_ => neutral) (\_ => neutral) (\_,_ => neutral)
-                         (\_,_ => neutral) (\_ => neutral)
+                         (\_,_ => neutral) (\_ => neutral) (\_,_ => neutral)
 
 export
 foldRCNamesL : Monoid m => RCNameFold m -> RCLocal -> m
@@ -897,7 +900,7 @@ foldRCNamesR nf = go
     go (RCmpCase _ _ args postDrop whenTrue whenFalse) =
         ls (toList args) <+> ls postDrop <+> go whenTrue <+> go whenFalse
     go (RConCase _ sc alts mDef) =
-        l sc <+> concatMap (\(MkRConAlt _ _ _ _ body) => go body) alts <+> maybe neutral go mDef
+        l sc <+> concatMap (\(MkRConAlt n _ tag _ body) => nf.onConAlt n tag <+> go body) alts <+> maybe neutral go mDef
     go (RConstCase _ sc alts mDef) =
         l sc <+> concatMap (\(MkRConstAlt _ body) => go body) alts <+> maybe neutral go mDef
     go (RPrimVal _ _) = neutral
