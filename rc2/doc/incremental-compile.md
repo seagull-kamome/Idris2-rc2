@@ -241,18 +241,25 @@ Only `DeadCode.pruneDeadDefs` and the top-level driver
    `incremental : Bool` for the stages that need the whole program, which
    `incCompile` does not have: function dedup is skipped.)
 
+   Two passes need the names that must survive, `roots`, which
+   `incCompile` fills with `DeadArgs.moduleRoots`: every function other
+   modules can name, the exports, and what the bodies other modules copy
+   in (`%inline` and the like) call. `lowerProgram` takes them too: its
+   `LateInline` prunes whatever `roots` does not reach, so an empty list
+   left every module without code. `DeadArgs` runs here with the same
+   `roots`, so only the helpers nobody outside can call lose parameters.
+
 2. **New `incCompile` function** (`Compiler.RC2.RC2`, mirrors Chez's
    `incCompile`):
-   - `cdata <- getIncCompileData False Lifted` -- same `UsePhase` the
-     whole-program path already uses (`toRCDefs` only ever needs
-     `LiftedDef`s, never ANF/VMCode).
+   - `cdata <- getIncCompileData False Cases` -- the named case trees,
+     which `toRCDefs` lifts itself.
    - If `namedDefs cdata` is empty: return `Just ("", [])` (matches
      Chez -- record that the module was incrementally compiled with no
      actual output, still needed for `missingIncremental`'s later
      check to pass).
    - Otherwise: decide `noMain` from the module's declared namespace
      (see above); output paths come from `sourcefile`
-     (`getObjFileName`/`getTTCFileName`); run `lowerProgram (nub ("nodeadcode" :: disabledStages)) True [] Nothing` over the module's definitions;
+     (`getObjFileName`/`getTTCFileName`); run `lowerProgram (nub ("nodeadcode" :: disabledStages)) True roots Nothing` over the module's definitions;
      `generateCSourceFile` into the ttc build directory's own
      `<modpath>.c` (`getTTCFileName sourcefile "c"`); `compileCObjectFile`
      it into `<modpath>.o` (skip `compileCFile` -- no link at this
