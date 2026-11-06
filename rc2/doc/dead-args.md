@@ -63,7 +63,14 @@ reference that isn't a plain call:
 - **Called with a different number of arguments** than it takes.
 - **A root** (entry points, exports).
 - **Incremental compilation** (`doc/incremental-compile.md`): another
-  module's calls are out of sight, so the whole pass is off.
+  module's calls are out of sight, so a function another module can
+  name keeps its signature (`DeadArgs.moduleRoots`). A `where`, `case`
+  or `with` helper (`Nested`, `CaseBlock`, `WithBlock`) is not
+  nameable from outside, but its signature stays too when it is called
+  from the body of a definition another module may copy in (`%inline`
+  and the like), as that copy calls it with its original arguments.
+  Visibility cannot tell the helpers apart: the elaborator makes every
+  `where` declaration `Public` (`TTImp/Elab/Local.idr`).
 
 ## Pipeline position
 

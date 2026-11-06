@@ -270,7 +270,8 @@ stageDirectiveNames = disableableStageNames ++ optInStageNames
 ||| regardless of reachability -- `main`'s own well-known entry name
 ||| (`MN "__mainExpression" 0`, `Compiler.Common`) plus the `%export`ed
 ||| names (rc2/doc/export-support.md), both supplied by `compileExpr`'s
-||| own call site. An incremental compile (`incCompile`) passes `[]`.
+||| own call site. An incremental compile (`incCompile`) passes
+||| `DeadArgs.moduleRoots`.
 |||
 ||| `incremental`: the module is compiled on its own (rc2/doc/incremental-
 ||| compile.md), seeing only its own definitions, so the whole-program
@@ -818,8 +819,6 @@ compileExprWhole c s _ outputDir tm outfile =
      -- (doc/lazy-memoization.md).
      let (mainLz, namedLz) = applyLazyCaf (Just (forget (mainExpr cdata))) (namedDefs cdata)
      (mainInl, namedInl) <- inlineNamed disabledStages (Just (SortedSet.fromList exportNames)) mainLz namedLz
-     -- Signatures change, so not in `incCompile`: another module's calls
-     -- are out of sight (doc/dead-args.md).
      (mainIn, namedIn) <- if "nodeadargs" `elem` disabledStages
                              then pure (mainInl, namedInl)
                              else logTime 2 "rc2: Dead arguments" $
@@ -1002,8 +1001,13 @@ incCompile c s sourceFile = do
          directiveList <- rc2Directives
          let disabledStages = nub ("nodeadcode" :: filter (`elem` directiveList) stageDirectiveNames)
          (_, namedInl) <- inlineNamed disabledStages Nothing Nothing (namedDefs cdata)
-         (_, namedIn) <- raiseNamed disabledStages Nothing namedInl
-         (defs, _) <- lowerProgram (disabledStages ++ targetOsDirectives directiveList) True [] Nothing namedIn
+         exportNames <- traverse (\(n, _) => getFullName n) (exported cdata)
+         roots <- moduleRoots exportNames (namedDefs cdata)
+         (_, namedDead) <- if "nodeadargs" `elem` disabledStages
+                              then pure (Nothing, namedInl)
+                              else logTime 2 "rc2: Dead arguments" $ applyDeadArgs roots Nothing namedInl
+         (_, namedIn) <- raiseNamed disabledStages Nothing namedDead
+         (defs, _) <- lowerProgram (disabledStages ++ targetOsDirectives directiveList) True roots Nothing namedIn
          -- `Main.main`'s compiled arity is 0 or 1 (a CAF still waiting for the
          -- world, vs. a function taking it), so the entry call is built from
          -- the real `MkRCFun` arity, never hardcoded. Arity 0 must go through

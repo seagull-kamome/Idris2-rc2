@@ -30,7 +30,7 @@ If one of these stops reproducing, or a fix lands, remove the entry.
   `Compiler.RC2.DeadArgs` (`rc2/doc/dead-args.md`, test
   `Test99DeadArgs`), so this needs no further investigation when it
   shows up in a dump. It is off only under
-  `--directive nodeadargs` and in incremental compilation.
+  `--directive nodeadargs`.
 - **`Test7CastMatrix.idr` can't be diff-checked against real
   `idris2 --cg refc` at all.** Originally because the reference RefC
   support library's `idris2_negate_Double` was typo'd as

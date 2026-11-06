@@ -12,7 +12,10 @@
 ||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.DeadArgs
 
+import Compiler.RC2.InlineCExp
+
 import Core.CompileExpr
+import Core.Context
 import Core.Context.Log
 
 import Data.SortedMap
@@ -190,9 +193,51 @@ dropCallArgs dead = go
                     !(traverseOpt go def)
       go e = pure e
 
+||| Whether no other module's source can name `n`: a `where`, `case` or
+||| `with` helper.
+unnameable : Name -> Bool
+unnameable (NS _ n) = unnameable n
+unnameable (Nested _ _) = True
+unnameable (CaseBlock _ _) = True
+unnameable (WithBlock _ _) = True
+unnameable _ = False
+
+||| Whether another module may copy this definition's body into its own
+||| code, and with it the names the body calls.
+copiedAcrossModules : GlobalDef -> Bool
+copiedAcrossModules gdef = any copies (flags gdef)
+  where
+    copies : DefFlag -> Bool
+    copies Inline = not (NoInline `elem` flags gdef)
+    copies TCInline = True
+    copies Macro = True
+    copies (PartialEval _) = True
+    copies _ = False
+
+||| The functions of a module compiled on its own whose signature must
+||| stay: the exports, every function other modules can name, and
+||| whatever the bodies other modules copy in call (transitively, as a
+||| copied helper's own body is copied too).
+export
+moduleRoots : {auto c : Ref Ctxt Defs} -> List Name -> List (Name, FC, NamedDef) -> Core (List Name)
+moduleRoots exports defs =
+    let bodies : SortedMap Name NamedDef := fromList (map (\(n, _, d) => (n, d)) defs)
+    in go bodies empty (exports ++ filter (not . unnameable) (map (\(n, _, _) => n) defs))
+  where
+    go : SortedMap Name NamedDef -> SortedSet Name -> List Name -> Core (List Name)
+    go _ seen [] = pure (Prelude.toList seen)
+    go bodies seen (n :: rest) =
+        if contains n seen then go bodies seen rest
+        else do
+          Just gdef <- lookupCtxtExact n (gamma !(get Ctxt))
+            | Nothing => go bodies (insert n seen) rest
+          let calls = if copiedAcrossModules gdef then maybe [] defCalls (lookup n bodies) else []
+          go bodies (insert n seen) (calls ++ rest)
+
 ||| Removes every dead parameter, and its argument at every call, in
-||| `main` and every definition. Whole-program only: another module's
-||| calls would be out of sight.
+||| `main` and every definition. Whole-program, or one module's own
+||| definitions with the callers other modules may hold kept out of it
+||| through `roots` (`moduleRoots`).
 export
 applyDeadArgs : {auto c : Ref Ctxt Defs} -> (roots : List Name) -> Maybe NamedCExp -> List (Name, FC, NamedDef)
              -> Core (Maybe NamedCExp, List (Name, FC, NamedDef))

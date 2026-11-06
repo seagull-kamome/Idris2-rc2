@@ -210,6 +210,7 @@ calledNames = go []
         maybe id (flip go) def (foldl (\a, (MkNConstAlt _ b) => go a b) (go acc sc) alts)
     go acc _ = acc
 
+export
 defCalls : NamedDef -> List Name
 defCalls (MkNmFun _ b) = calledNames b
 defCalls (MkNmError b) = calledNames b
