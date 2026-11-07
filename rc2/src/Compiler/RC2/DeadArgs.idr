@@ -22,6 +22,8 @@ import Data.SortedMap
 import Data.SortedSet
 import Data.Vect
 
+import Libraries.Data.WithDefault
+
 %default covering
 
 -------------------------------------------------------------------------------
@@ -214,10 +216,26 @@ copiedAcrossModules gdef = any copies (flags gdef)
     copies (PartialEval _) = True
     copies _ = False
 
+||| Whether another module's elaboration may unfold this definition into its
+||| own code: a `public export` body is open to the evaluator, which
+||| expands it wherever a dictionary or a call it reaches is normalised, and
+||| what it calls (a `where` helper too) is then called from there. So is
+||| any definition whose name is not a plain `UN` one, whatever its
+||| visibility (`reducibleIn`, `Core/Context.idr`): an anonymous
+||| `implementation` is named by a `DN`.
+||| `doc/incremental-compile.md`, "Public export bodies".
+bodyOpen : Name -> GlobalDef -> Bool
+bodyOpen n gdef = collapseDefault (visibility gdef) == Public || anonymous n
+  where
+    anonymous : Name -> Bool
+    anonymous (NS _ n) = anonymous n
+    anonymous (DN _ _) = True
+    anonymous _ = False
+
 ||| The functions of a module compiled on its own whose signature must
 ||| stay: the exports, every function other modules can name, and
-||| whatever the bodies other modules copy in call (transitively, as a
-||| copied helper's own body is copied too).
+||| whatever the bodies other modules copy in or unfold call
+||| (transitively, as a copied helper's own body is copied too).
 export
 moduleRoots : {auto c : Ref Ctxt Defs} -> List Name -> List (Name, FC, NamedDef) -> Core (List Name)
 moduleRoots exports defs =
@@ -231,7 +249,7 @@ moduleRoots exports defs =
         else do
           Just gdef <- lookupCtxtExact n (gamma !(get Ctxt))
             | Nothing => go bodies (insert n seen) rest
-          let calls = if copiedAcrossModules gdef then maybe [] defCalls (lookup n bodies) else []
+          let calls = if copiedAcrossModules gdef || bodyOpen n gdef then maybe [] defCalls (lookup n bodies) else []
           go bodies (insert n seen) (calls ++ rest)
 
 ||| Removes every dead parameter, and its argument at every call, in
