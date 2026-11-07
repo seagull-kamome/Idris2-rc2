@@ -3,6 +3,7 @@
 
 extern uint32_t idris2rc2_System_Random_system_seed[2];
 void idris2rc2_System_Random_set_system_seed(uint64_t seed);
+uint64_t idris2rc2_System_Random_get_system_state(void);
 uint32_t idris2rc2_System_Random_next_sys();
 /* `sv`/`jumpv` are `void*`, not `uint32_t s[2]`/`const uint64_t jump[1]`:
    see idris2rc2_rc2base_xoroshiro64starstar.c's own comment just above

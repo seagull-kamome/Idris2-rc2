@@ -11,6 +11,7 @@ module Main
 -- the reference and this port is the only way this test could pass while
 -- still being wrong.
 
+import Data.Maybe
 import System.Random.Entropy
 import System.Random.Xoroshiro128PlusPlus
 
@@ -127,3 +128,57 @@ main = do
   vob <- next ob
   voc <- next oc
   printLn (vob == voc)
+
+  -- Raw state: save it, restore it elsewhere, rewind with it.
+  Just sa <- newIOGen 7 | Nothing => putStrLn "newIOGen: allocation failed"
+  _ <- next sa
+  _ <- next sa
+  (a0, a1) <- getState sa
+  Just sb <- newIOGenFromState a0 a1 | Nothing => putStrLn "newIOGenFromState: failed"
+  x <- next sa
+  y <- next sb
+  rewound <- setState sb a0 a1
+  y2 <- next sb
+  zeroSet <- setState sb 0 0
+  zeroNew <- newIOGenFromState 0 0
+  putStrLn ("state restored: " ++ show (x == y) ++ " " ++ show rewound ++ " " ++ show (x == y2))
+  putStrLn ("zero state refused: " ++ show (not zeroSet) ++ " " ++ show (isNothing zeroNew))
+  setSystemSeed 5
+  _ <- nextIO
+  (g0, g1) <- getSystemState
+  v1 <- nextIO
+  okg <- setSystemState g0 g1
+  v2 <- nextIO
+  zeroSys <- setSystemState 0 0
+  putStrLn ("global state restored: " ++ show okg ++ " " ++ show (v1 == v2) ++ " " ++ show (not zeroSys))
+
+  -- The state of a seed agrees across the kinds; a refused state changes nothing;
+  -- the two words of the global state are not swapped, at their extremes too.
+  Just s42 <- newIOGen 42 | Nothing => putStrLn "newIOGen: allocation failed"
+  (p0, p1) <- getState s42
+  putStrLn ("seed 42 state agrees with Gen: " ++ show ((p0, p1) == genState (mkGen 42)))
+  case genFromState p0 p1 of
+    Nothing => putStrLn "genFromState: refused"
+    Just gg => do
+      vi <- next s42
+      putStrLn ("IOGen state continues as Gen: " ++ show (vi == fst (genNext gg)))
+  Just sr <- newIOGen 9 | Nothing => putStrLn "newIOGen: allocation failed"
+  before <- getState sr
+  _ <- setState sr 0 0
+  after <- getState sr
+  setSystemSeed 9
+  sysBefore <- getSystemState
+  _ <- setSystemState 0 0
+  sysAfter <- getSystemState
+  putStrLn ("refused state changes nothing: " ++ show (before == after) ++ " " ++ show (sysBefore == sysAfter))
+  setSystemSeed 42
+  sys42 <- getSystemState
+  putStrLn ("global state agrees with seed 42: " ++ show (sys42 == (p0, p1)))
+  _ <- setSystemState 0xFFFFFFFFFFFFFFFF 1
+  st1 <- getSystemState
+  Just e1 <- newIOGenFromState 0xFFFFFFFFFFFFFFFF 1 | Nothing => putStrLn "newIOGenFromState: failed"
+  w1 <- nextIO
+  w2 <- next e1
+  _ <- setSystemState 0 0xFFFFFFFFFFFFFFFF
+  st2 <- getSystemState
+  putStrLn ("global words: " ++ show (st1 == (0xFFFFFFFFFFFFFFFF, 1)) ++ " " ++ show (st2 == (0, 0xFFFFFFFFFFFFFFFF)) ++ " " ++ show (w1 == w2))

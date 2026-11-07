@@ -3,6 +3,8 @@
 
 extern uint64_t idris2rc2_System_Random128_system_seed[2];
 void idris2rc2_System_Random128_set_system_seed(uint64_t s0, uint64_t s1);
+uint64_t idris2rc2_System_Random128_get_system_s0(void);
+uint64_t idris2rc2_System_Random128_get_system_s1(void);
 uint64_t idris2rc2_System_Random128_next_sys();
 /* `sv` is `void*`, not `uint64_t s[2]`: see idris2rc2_rc2base_xoroshiro128plusplus.c's own
    comment just above idris2rc2_System_Random128_next for why (in short,

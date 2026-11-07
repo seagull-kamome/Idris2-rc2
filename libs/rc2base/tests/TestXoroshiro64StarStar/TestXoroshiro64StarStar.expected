@@ -14,3 +14,11 @@ True
 True
 True
 True
+state restored: True True True
+zero state refused: True True
+global state restored: True True True
+seed 42 state agrees with Gen: True
+IOGen state continues as Gen: True
+refused state changes nothing: True True
+global state agrees with seed 42: True
+global words: True True True

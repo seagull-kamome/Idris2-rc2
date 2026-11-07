@@ -36,7 +36,7 @@ module System.Random.Xoroshiro128PlusPlus
 -- "little-endian" -- not a coincidence this project relies on elsewhere,
 -- but not a real risk in practice either.
 --
--- `IOGen` is abstract and only `newIOGen`/`copyIOGen` make one, each with a
+-- `IOGen` is abstract and only `newIOGen`/`copyIOGen`/`newIOGenFromState` make one, each with a
 -- 16-byte `Buffer` (a malloc'd block, aligned for a `uint64_t`), so the C side
 -- never sees a buffer of another size. On a big-endian host the seeded words
 -- would be byte-swapped against what the C code reads and the sequences
@@ -145,6 +145,46 @@ copyIOGen (MkIOGen buf) = do
   copyData buf 0 16 buf' 0
   pure $ Just $ MkIOGen buf'
 
+-- The state is `s[0], s[1]` of the reference implementation. All zero is not a
+-- state: the generator would give 0 for ever, so no function that takes a raw
+-- state accepts it.
+validState : Bits64 -> Bits64 -> Bool
+validState s0 s1 = s0 /= 0 || s1 /= 0
+
+||| The raw state `(s[0], s[1])`, to be saved and restored with `setState` or
+||| `newIOGenFromState` (and not the seed `newIOGen` takes, which is mixed first).
+export
+getState : HasIO io => IOGen -> io (Bits64, Bits64)
+getState (MkIOGen buf) = do
+  s0 <- getBits64 buf 0
+  s1 <- getBits64 buf 8
+  pure (s0, s1)
+
+||| Put a raw state into a generator: the next outputs are those a generator
+||| with this state gives. `False`, and nothing changed, for the all-zero state.
+export
+setState : HasIO io => IOGen -> (s0, s1 : Bits64) -> io Bool
+setState (MkIOGen buf) s0 s1 =
+  if validState s0 s1
+     then do setBits64 buf 0 s0
+             setBits64 buf 8 s1
+             pure True
+     else pure False
+
+||| A fresh generator with a raw state, as `getState` gave it. `Nothing` for the
+||| all-zero state, or on buffer allocation failure.
+export
+newIOGenFromState : HasIO io => (s0, s1 : Bits64) -> io (Maybe IOGen)
+newIOGenFromState s0 s1 =
+  if validState s0 s1
+     then do
+       Just buf <- newBuffer 16
+         | Nothing => pure Nothing
+       setBits64 buf 0 s0
+       setBits64 buf 8 s1
+       pure $ Just $ MkIOGen buf
+     else pure Nothing
+
 ||| Draw the next 64-bit output from a generator, updating its state
 ||| (held in the underlying `Buffer`) in place.
 export
@@ -239,6 +279,30 @@ export
 setSystemSeed : HasIO io => Bits64 -> io ()
 setSystemSeed s = let (s0, s1) = mixSeed s in primIO $ prim__setSystemSeed s0 s1
 
+%foreign "C:idris2rc2_System_Random128_get_system_s0,libidris2rc2base,idris2rc2_rc2base_xoroshiro128plusplus.h"
+prim__getSystemS0 : PrimIO Bits64
+
+%foreign "C:idris2rc2_System_Random128_get_system_s1,libidris2rc2base,idris2rc2_rc2base_xoroshiro128plusplus.h"
+prim__getSystemS1 : PrimIO Bits64
+
+||| The raw state `(s[0], s[1])` of the single global generator, as `getState`
+||| gives it for an `IOGen`.
+export
+getSystemState : HasIO io => io (Bits64, Bits64)
+getSystemState = do
+  s0 <- primIO prim__getSystemS0
+  s1 <- primIO prim__getSystemS1
+  pure (s0, s1)
+
+||| Put a raw state into the single global generator (not mixed, unlike
+||| `setSystemSeed`). `False`, and nothing changed, for the all-zero state.
+export
+setSystemState : HasIO io => (s0, s1 : Bits64) -> io Bool
+setSystemState s0 s1 =
+  if validState s0 s1
+     then True <$ primIO (prim__setSystemSeed s0 s1)
+     else pure False
+
 ||| Draw the next 64-bit output from the single global generator.
 export
 nextIO : HasIO io => io Bits64
@@ -316,6 +380,17 @@ toWords (MkGen a b c d) = (cast a `shiftL` 32 .|. cast b, cast c `shiftL` 32 .|.
 export
 mkGen : Bits64 -> Gen
 mkGen s = let (s0, s1) = mixSeed s in fromWords s0 s1
+
+||| The raw state `(s[0], s[1])` of a generator, as `getState` gives it for an
+||| `IOGen`.
+export
+genState : Gen -> (Bits64, Bits64)
+genState = toWords
+
+||| The generator with a raw state. `Nothing` for the all-zero state.
+export
+genFromState : (s0, s1 : Bits64) -> Maybe Gen
+genFromState s0 s1 = if validState s0 s1 then Just (fromWords s0 s1) else Nothing
 
 ||| The next 64-bit output and the generator after that step.
 export

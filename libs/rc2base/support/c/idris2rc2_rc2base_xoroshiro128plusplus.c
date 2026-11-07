@@ -57,6 +57,14 @@ void idris2rc2_System_Random128_set_system_seed(uint64_t s0, uint64_t s1) {
 }
 
 
+uint64_t idris2rc2_System_Random128_get_system_s0(void) {
+	return idris2rc2_System_Random128_system_seed[0];
+}
+uint64_t idris2rc2_System_Random128_get_system_s1(void) {
+	return idris2rc2_System_Random128_system_seed[1];
+}
+
+
 uint64_t idris2rc2_System_Random128_next_sys() {
 	return idris2rc2_System_Random128_next(idris2rc2_System_Random128_system_seed);
 }
