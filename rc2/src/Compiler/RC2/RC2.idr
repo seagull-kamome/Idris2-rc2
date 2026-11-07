@@ -825,6 +825,13 @@ compileExprWhole c s _ outputDir tm outfile =
                              else logTime 2 "rc2: Dead arguments" $
                                     applyDeadArgs (MN "__mainExpression" 0 :: exportNames) mainInl namedInl
      (mainR, namedR) <- raiseNamed disabledStages mainIn namedIn
+     -- `dumpnamed`: the named case trees lowerProgram is about to lift
+     -- (after every pre-lifting stage) -- see rc2/doc/directives.md.
+     when ("dumpnamed" `elem` directiveList) $
+         coreLift_ $ writeFile (outputDir </> outfile ++ ".named")
+             ("-- " ++ directiveText directiveList ++ "\n" ++
+              concatMap (\(n, _, d) => show n ++ " = " ++ show d ++ "\n") namedR ++
+              maybe "" (\m => "__mainExpression = " ++ show m ++ "\n") mainR)
      exportedSigs <- traverse (validateExport (SortedMap.fromList (map (\(n, _, d) => (n, d)) namedR))) (exported cdata)
      -- `exported cdata`'s own Name is `Resolved` (Compiler.Common's
      -- `getExports` calls `resolved`, not `toFullNames`), but every
