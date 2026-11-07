@@ -135,6 +135,47 @@ copyIOGen (MkIOGen buf) = do
   copyData buf 0 8 buf' 0
   pure $ Just $ MkIOGen buf'
 
+-- The state is `s[0], s[1]` of the reference implementation. All zero is not a
+-- state: the generator would give 0 for ever, so no function that takes a raw
+-- state accepts it. (A seed is mixed into a state, and exactly one `Bits64`
+-- seed mixes into the all-zero one.)
+validState : Bits32 -> Bits32 -> Bool
+validState s0 s1 = s0 /= 0 || s1 /= 0
+
+||| The raw state `(s[0], s[1])`, to be saved and restored with `setState` or
+||| `newIOGenFromState` (and not the seed `newIOGen` takes, which is mixed first).
+export
+getState : HasIO io => IOGen -> io (Bits32, Bits32)
+getState (MkIOGen buf) = do
+  s0 <- getBits32 buf 0
+  s1 <- getBits32 buf 4
+  pure (s0, s1)
+
+||| Put a raw state into a generator: the next outputs are those a generator
+||| with this state gives. `False`, and nothing changed, for the all-zero state.
+export
+setState : HasIO io => IOGen -> (s0, s1 : Bits32) -> io Bool
+setState (MkIOGen buf) s0 s1 =
+  if validState s0 s1
+     then do setBits32 buf 0 s0
+             setBits32 buf 4 s1
+             pure True
+     else pure False
+
+||| A fresh generator with a raw state, as `getState` gave it. `Nothing` for the
+||| all-zero state, or on buffer allocation failure.
+export
+newIOGenFromState : HasIO io => (s0, s1 : Bits32) -> io (Maybe IOGen)
+newIOGenFromState s0 s1 =
+  if validState s0 s1
+     then do
+       Just buf <- newBuffer 8
+         | Nothing => pure Nothing
+       setBits32 buf 0 s0
+       setBits32 buf 4 s1
+       pure $ Just $ MkIOGen buf
+     else pure Nothing
+
 ||| Draw the next 32-bit output from a generator, updating its state
 ||| (held in the underlying `Buffer`) in place.
 export
@@ -222,6 +263,26 @@ export
 setSystemSeed : HasIO io => Bits64 -> io ()
 setSystemSeed s = let (mixed, _) = splitmix64Next s in primIO $ prim__setSystemSeed mixed
 
+%foreign "C:idris2rc2_System_Random_get_system_state,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
+prim__getSystemState : PrimIO Bits64
+
+||| The raw state `(s[0], s[1])` of the single global generator, as `getState`
+||| gives it for an `IOGen`.
+export
+getSystemState : HasIO io => io (Bits32, Bits32)
+getSystemState = do
+  w <- primIO prim__getSystemState
+  pure (cast w, cast (w `shiftR` 32))
+
+||| Put a raw state into the single global generator (not mixed, unlike
+||| `setSystemSeed`). `False`, and nothing changed, for the all-zero state.
+export
+setSystemState : HasIO io => (s0, s1 : Bits32) -> io Bool
+setSystemState s0 s1 =
+  if validState s0 s1
+     then True <$ primIO (prim__setSystemSeed (cast s0 .|. (cast s1 `shiftL` 32)))
+     else pure False
+
 ||| Draw the next 32-bit output from the single global generator.
 export
 nextIO : HasIO io => io Bits32
@@ -289,6 +350,17 @@ fromPacked w = MkGen (cast w) (cast (w `shiftR` 32))
 export
 mkGen : Bits64 -> Gen
 mkGen s = let (s0, s1) = mixSeed s in MkGen s0 s1
+
+||| The raw state `(s[0], s[1])` of a generator, as `getState` gives it for an
+||| `IOGen`.
+export
+genState : Gen -> (Bits32, Bits32)
+genState (MkGen s0 s1) = (s0, s1)
+
+||| The generator with a raw state. `Nothing` for the all-zero state.
+export
+genFromState : (s0, s1 : Bits32) -> Maybe Gen
+genFromState s0 s1 = if validState s0 s1 then Just (MkGen s0 s1) else Nothing
 
 ||| The next 32-bit output and the generator after that step.
 export

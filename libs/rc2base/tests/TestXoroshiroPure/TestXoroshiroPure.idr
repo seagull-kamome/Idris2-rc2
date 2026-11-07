@@ -9,6 +9,7 @@ module Main
 -- check), and each jump variant must land on the IOGen's state.
 
 import Data.List
+import Data.Maybe
 import System.Random.Xoroshiro128PlusPlus as R128
 import System.Random.Xoroshiro64StarStar as R64
 
@@ -56,6 +57,17 @@ same64 name seed pre step pureStep = do
   step g
   expected <- io64 8 g
   printLn (name ++ ": " ++ show (expected == fst (take64 8 (pureStep (snd (take64 pre (R64.mkGen seed)))))))
+
+-- A generator rebuilt from its raw state continues as the original does.
+sameAfter128 : R128.Gen -> Bool
+sameAfter128 g = case uncurry R128.genFromState (R128.genState g) of
+  Just h => fst (R128.genNext h) == fst (R128.genNext g)
+  Nothing => False
+
+sameAfter64 : R64.Gen -> Bool
+sameAfter64 g = case uncurry R64.genFromState (R64.genState g) of
+  Just h => fst (R64.genNext h) == fst (R64.genNext g)
+  Nothing => False
 
 main : IO ()
 main = do
@@ -130,6 +142,11 @@ main = do
   let ds128 = go128 1000 (R128.mkGen 3)
   let ds64 = go64 1000 (R64.mkGen 3)
   printLn (all (\d => d >= 0.0 && d < 1.0) (ds128 ++ ds64))
+
+  putStrLn ("Gen state restored: " ++ show (sameAfter128 (snd (R128.genNext (R128.mkGen 11))))
+            ++ " " ++ show (sameAfter64 (snd (R64.genNext (R64.mkGen 11)))))
+  putStrLn ("Gen zero state refused: " ++ show (isNothing (R128.genFromState 0 0))
+            ++ " " ++ show (isNothing (R64.genFromState 0 0)))
 
   putStrLn "--- Tests finished ---"
   where

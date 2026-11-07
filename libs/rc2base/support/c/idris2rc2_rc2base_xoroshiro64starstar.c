@@ -50,6 +50,13 @@ void idris2rc2_System_Random_set_system_seed(uint64_t seed) {
 }
 
 
+/* The state as `set_system_seed` takes it: s[0] in the low half, s[1] in the high. */
+uint64_t idris2rc2_System_Random_get_system_state(void) {
+	return (uint64_t)idris2rc2_System_Random_system_seed[0]
+	     | ((uint64_t)idris2rc2_System_Random_system_seed[1] << 32);
+}
+
+
 uint32_t idris2rc2_System_Random_next_sys() {
 	return idris2rc2_System_Random_next(idris2rc2_System_Random_system_seed);
 }
