@@ -16,6 +16,7 @@ A program uses it with `-p control-async -p rc2base -p contrib`. It has no C cod
 | `Control.Task.Uring` | `io_uring` as an event source, on `System.Linux.Uring` of rc2base (needs liburing only if used) |
 | `Control.Task.Pool`, `Control.Task.Waiters` | the worker threads that run actions in parallel mode, and the wait lists shared by the primitives below |
 | `Control.Task.Signal` | wait for a signal through a `signalfd` (`awaitSignals`, `untilSignals`, `blockSignals`); with worker threads, block the signals before the scheduler starts |
+| `Control.Task.Semaphore` | a counting semaphore for tasks (`acquireN`, `releaseN`, `withPermit`), served in order, with waits that can be given up |
 | `Control.Task.Ref`, `MVar`, `Chan` | state shared between tasks on several threads |
 | `System.Posix.Async.File` | descriptors as tasks: `Handle`, `openFile`, `pipe`, `read`, `write`, `writeAll`, `readAt`, `readAll`; pipes and terminals wait on epoll, regular files run on worker threads; `close` waits for the calls running on the handle |
 | `Network.Async` | `accept`, `connect`, `recv` and `send` that wait for the descriptor on the scheduler instead of blocking a thread |

@@ -60,7 +60,9 @@ record Gate where
   users : Nat
   closed : Bool
 
-||| A descriptor shared by tasks.
+||| A descriptor shared by tasks. It is not only for files: any descriptor (a
+||| pipe, a terminal, a socket) can be wrapped by `adopt`. The module is named
+||| after `System.Posix.File`, whose `read`, `write` and `open` it follows.
 export
 record Handle where
   constructor MkHandle
