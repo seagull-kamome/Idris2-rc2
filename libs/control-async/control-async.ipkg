@@ -15,4 +15,5 @@ modules    = Control.Task,
              Control.Task.Source,
              Control.Task.Uring,
              Control.Task.Waiters,
-             Network.Async
+             Network.Async,
+             System.Posix.Async.File
