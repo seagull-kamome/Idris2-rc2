@@ -434,6 +434,14 @@ prim__tcsetattr : Int32 -> Int32 -> GCPtr RawTermios -> PrimIO Int32
 public export
 data TCSAOptions = MkTCSAOption Int32
 
+public export
+Eq TCSAOptions where
+  MkTCSAOption a == MkTCSAOption b = a == b
+
+export
+Show TCSAOptions where
+  show (MkTCSAOption x) = "TCSAOptions " ++ show x
+
 %inline %foreign "CExpr:(TCSANOW),libc,termios.h;unistd.h"
 prim__TCSANOW : Int32
 %inline %foreign "CExpr:(TCSADRAIN),libc,termios.h;unistd.h"

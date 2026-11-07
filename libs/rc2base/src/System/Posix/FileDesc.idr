@@ -20,6 +20,18 @@ record FileDesc where
   rawfd : Int32
   {auto 0 fdNonNeg : So (rawfd >= 0)}
 
+public export
+Eq FileDesc where
+  a == b = a.rawfd == b.rawfd
+
+public export
+Ord FileDesc where
+  compare a b = compare a.rawfd b.rawfd
+
+export
+Show FileDesc where
+  show fd = "FileDesc " ++ show fd.rawfd
+
 ||| The descriptor of a number, `Nothing` when it is negative.
 public export
 mkFileDesc : Int32 -> Maybe FileDesc
@@ -55,6 +67,14 @@ record DirDesc where
   constructor MkDirDesc
   rawdirfd : Int32
   {auto 0 dirfdNonNeg : So (rawdirfd >= 0)}
+
+public export
+Eq DirDesc where
+  a == b = a.rawdirfd == b.rawdirfd
+
+export
+Show DirDesc where
+  show d = "DirDesc " ++ show d.rawdirfd
 
 ||| The directory descriptor of a number, `Nothing` when it is negative.
 public export

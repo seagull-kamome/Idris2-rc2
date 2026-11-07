@@ -95,6 +95,14 @@ record ReadyEvent where
   fd : Int32
   events : EpollEvents
 
+public export
+Eq ReadyEvent where
+  a == b = a.fd == b.fd && a.events == b.events
+
+export
+Show ReadyEvent where
+  show e = "ReadyEvent fd=" ++ show e.fd ++ " events=" ++ show e.events
+
 ||| The descriptor of the `epoll` instance, to be waited for by another `epoll`.
 export
 epollDescriptor : EPoll -> FileDesc

@@ -113,6 +113,15 @@ record Stat where
   stMtime : TimeSpec
   stCtime : TimeSpec
 
+||| Every field equal, the times included.
+export
+Eq Stat where
+  a == b = a.stDev == b.stDev && a.stIno == b.stIno && a.stMode == b.stMode
+        && a.stNlink == b.stNlink && a.stUid == b.stUid && a.stGid == b.stGid
+        && a.stRdev == b.stRdev && a.stSize == b.stSize && a.stBlksize == b.stBlksize
+        && a.stBlocks == b.stBlocks && a.stAtime == b.stAtime && a.stMtime == b.stMtime
+        && a.stCtime == b.stCtime
+
 export
 Show Stat where
   show s = "Stat dev=" ++ show s.stDev ++ " ino=" ++ show s.stIno ++ " mode=" ++ show s.stMode

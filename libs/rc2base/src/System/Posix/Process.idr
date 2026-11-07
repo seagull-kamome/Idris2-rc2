@@ -21,6 +21,12 @@ Cast ProcessID Int32 where cast (MkProcessID x) = x
 export
 Show ProcessID where
   show (MkProcessID x) = "ProcessID " ++ show x
+public export
+Eq ProcessID where
+  MkProcessID a == MkProcessID b = a == b
+public export
+Ord ProcessID where
+  compare (MkProcessID a) (MkProcessID b) = compare a b
 
 ||| A Unix process group identifier.
 public export data ProcessGroupID = MkProcessGroupID Int32
@@ -28,6 +34,12 @@ export
 Cast Int32 ProcessGroupID where cast x = MkProcessGroupID x
 export
 Cast ProcessGroupID Int32 where cast (MkProcessGroupID x) = x
+public export
+Eq ProcessGroupID where
+  MkProcessGroupID a == MkProcessGroupID b = a == b
+public export
+Ord ProcessGroupID where
+  compare (MkProcessGroupID a) (MkProcessGroupID b) = compare a b
 export
 Show ProcessGroupID where
   show (MkProcessGroupID x) = "ProcessGroupID " ++ show x
@@ -42,6 +54,10 @@ Cast ProcessStatus Int32 where cast (MkProcessStatus x) = x
 export
 Show ProcessStatus where
   show (MkProcessStatus x) = "ProcessStatus " ++ show x
+||| The same raw status: the same exit code, or the same signal.
+public export
+Eq ProcessStatus where
+  MkProcessStatus a == MkProcessStatus b = a == b
 
 
 -------------------------------------------------------------------------------
@@ -379,6 +395,14 @@ nice inc = do
 public export
 data Resource = MkResource Int32
 
+public export
+Eq Resource where
+  MkResource a == MkResource b = a == b
+
+export
+Show Resource where
+  show (MkResource x) = "Resource " ++ show x
+
 %inline %foreign "CExpr:(RLIMIT_CORE),libc,sys/resource.h"
 prim__RLIMIT_CORE : Int32
 %inline %foreign "CExpr:(RLIMIT_CPU),libc,sys/resource.h"
@@ -492,6 +516,11 @@ record Utsname where
   version : String
   machine : String
 
+public export
+Eq Utsname where
+  a == b = a.sysname == b.sysname && a.nodename == b.nodename && a.release == b.release
+        && a.version == b.version && a.machine == b.machine
+
 export
 Show Utsname where
   show u = "Utsname " ++ show u.sysname ++ " " ++ show u.nodename ++ " " ++ show u.release
@@ -552,6 +581,14 @@ gethostname = do
 ||| A name for `sysconf` (`SC_*` stands for C's `_SC_*`).
 public export
 data SysconfName = MkSysconfName Int32
+
+public export
+Eq SysconfName where
+  MkSysconfName a == MkSysconfName b = a == b
+
+export
+Show SysconfName where
+  show (MkSysconfName x) = "SysconfName " ++ show x
 
 %inline %foreign "CExpr:(_SC_ARG_MAX),libc,unistd.h"
 prim__SC_ARG_MAX : Int32

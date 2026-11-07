@@ -41,6 +41,19 @@ File = NonNullPtr RawFile
 public export
 data BufMode = FullyBuffered | LineBuffered | Unbuffered
 
+public export
+Eq BufMode where
+  FullyBuffered == FullyBuffered = True
+  LineBuffered == LineBuffered = True
+  Unbuffered == Unbuffered = True
+  _ == _ = False
+
+export
+Show BufMode where
+  show FullyBuffered = "FullyBuffered"
+  show LineBuffered = "LineBuffered"
+  show Unbuffered = "Unbuffered"
+
 ||| The `EOF` value of the C functions returning an `int` character.
 %inline %foreign "CExpr:(EOF),libc,stdio.h"
 export EOF : Int32

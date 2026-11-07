@@ -266,4 +266,5 @@ main = do
   testFiles
   testMemstream
   teardown
+  putStrLn ("Eq/Show BufMode: " ++ show (LineBuffered == Unbuffered, LineBuffered == LineBuffered) ++ " " ++ show Unbuffered)
   putStrLn "done"

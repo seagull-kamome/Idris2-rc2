@@ -369,6 +369,19 @@ acceptFd fd = primIO (prim__acceptAny fd.rawfd) >>= primFdToFileDesc
 public export
 data ShutdownHow = ShutRead | ShutWrite | ShutReadWrite
 
+public export
+Eq ShutdownHow where
+  ShutRead == ShutRead = True
+  ShutWrite == ShutWrite = True
+  ShutReadWrite == ShutReadWrite = True
+  _ == _ = False
+
+export
+Show ShutdownHow where
+  show ShutRead = "ShutRead"
+  show ShutWrite = "ShutWrite"
+  show ShutReadWrite = "ShutReadWrite"
+
 %inline %foreign "CExpr:(SHUT_RD),libc,sys/socket.h"
 prim__SHUT_RD : Int32
 %inline %foreign "CExpr:(SHUT_WR),libc,sys/socket.h"

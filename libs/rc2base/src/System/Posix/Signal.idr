@@ -23,6 +23,12 @@ Cast Signal Int32 where cast (MkSignal x) = x
 export
 Show Signal where
   show (MkSignal x) = "Signal " ++ show x
+public export
+Eq Signal where
+  MkSignal a == MkSignal b = a == b
+public export
+Ord Signal where
+  compare (MkSignal a) (MkSignal b) = compare a b
 
 -------------------------------------------------------------------------------
 -- Signals
@@ -241,6 +247,14 @@ sigismember s (MkSignal n) = (== 1) <$> primIO (prim__sigismember s n)
 ||| How `sigprocmask` combines the set with the current mask.
 public export
 data MaskHow = MkMaskHow Int32
+
+public export
+Eq MaskHow where
+  MkMaskHow a == MkMaskHow b = a == b
+
+export
+Show MaskHow where
+  show (MkMaskHow x) = "MaskHow " ++ show x
 
 %inline %foreign "CExpr:(SIG_BLOCK),libc,signal.h"
 prim__SIG_BLOCK : Int32

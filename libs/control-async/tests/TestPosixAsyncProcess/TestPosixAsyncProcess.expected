@@ -1,0 +1,8 @@
+capture: exit 0, "hello\ndone\n"
+exit: exit 7
+terminate: killed by TERM
+given up: timer won, then killed by TERM
+two waiters: exit 3, exit 3, exit 3
+big: exit 0, 300000 bytes
+missing: ENOENT
+stubborn: killed by KILL, then ESRCH

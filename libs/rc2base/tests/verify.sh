@@ -96,7 +96,7 @@ TESTS=(
     "TestNetworkAddress||Network.Address: dotted decimal in and out, socket addresses; Network.RC2: String and Buffer IO on a socket pair"
     "TestUringNop||System.Linux.Uring: a tagged nop through submit and wait"
     "TestUringFile||System.Linux.Uring: openat, write, fsync, read and close on a temp file"
-    "TestUringSocket|network|System.Linux.Uring: accept, multishot accept, connect, send and recv on loopback"
+    "TestUringSocket||System.Linux.Uring: accept, multishot accept, connect, send and recv on loopback"
     "TestPosixTermios||System.Posix.Termios: termios constants, tcgetattr/tcsetattr on a pty, cfmakeraw, tc* calls"
     "TestNumberFormat||Text.NumberFormat: the nibble-to-char digit and a ToHex instance per fixed-width integer type"
 )

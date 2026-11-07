@@ -106,5 +106,9 @@ glob *.txt: Right ["TestPosixFile.scratch/file.txt"]
 glob no match: Right []
 glob no match, NOCHECK: Right ["TestPosixFile.scratch/nothing*"]
 glob directory, MARK: Right ["TestPosixFile.scratch/"]
+Eq/Ord/Show FileDesc: (True, (False, LT)) FileDesc 3
+Eq/Show SeekWhence: (True, False) SeekWhence 0
+Eq/Ord/Show FileOffset: (True, LT) FileOffset 7
+Eq Stat: True
 done
 perror-test: No such file or directory

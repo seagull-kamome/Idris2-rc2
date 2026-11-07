@@ -185,3 +185,4 @@ main = do
   ipv6
   edges
   resolution
+  putStrLn ("Eq/Show ShutdownHow: " ++ show (ShutRead == ShutWrite, ShutWrite == ShutWrite) ++ " " ++ show ShutWrite)

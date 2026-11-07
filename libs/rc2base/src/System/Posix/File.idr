@@ -236,6 +236,18 @@ data FileOffset = MkFileOffset Int64
 export
 Cast a Int64 => Cast a FileOffset where cast x = MkFileOffset $ cast x
 
+export
+Eq FileOffset where
+  MkFileOffset a == MkFileOffset b = a == b
+
+export
+Ord FileOffset where
+  compare (MkFileOffset a) (MkFileOffset b) = compare a b
+
+export
+Show FileOffset where
+  show (MkFileOffset x) = "FileOffset " ++ show x
+
 
 %inline %foreign "CExpr:(SEEK_SET),libc,sys/types.h;unistd.h"
 prim__SEEK_SET : Bits32
@@ -251,6 +263,14 @@ prim__SEEK_HOLE : Bits32
 ||| The reference point for a seek operation.
 public export
 data SeekWhence = MkSeekWhence Bits32
+
+public export
+Eq SeekWhence where
+  MkSeekWhence a == MkSeekWhence b = a == b
+
+export
+Show SeekWhence where
+  show (MkSeekWhence x) = "SeekWhence " ++ show x
 
 ||| Seek from the start of the file.
 public export

@@ -89,6 +89,10 @@ export
 Show ClockId where
   show (MkClockId c) = "ClockId " ++ show c
 
+public export
+Eq ClockId where
+  MkClockId a == MkClockId b = a == b
+
 %inline %foreign "CExpr:(CLOCK_REALTIME),libc,time.h"
 prim__CLOCK_REALTIME : Int32
 %inline %foreign "CExpr:(CLOCK_MONOTONIC),libc,time.h"

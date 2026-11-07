@@ -17,6 +17,14 @@ record Ready where
   writable : List FileDesc
   exceptional : List FileDesc
 
+public export
+Eq Ready where
+  a == b = a.readable == b.readable && a.writable == b.writable && a.exceptional == b.exceptional
+
+export
+Show Ready where
+  show r = "Ready " ++ show r.readable ++ " " ++ show r.writable ++ " " ++ show r.exceptional
+
 %inline %foreign "CExpr:(FD_SETSIZE),libc,sys/select.h"
 prim__FD_SETSIZE : Int
 %inline %foreign "CExpr:(sizeof(fd_set)),libc,sys/select.h"
