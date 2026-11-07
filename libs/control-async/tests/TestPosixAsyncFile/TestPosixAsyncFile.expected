@@ -1,0 +1,8 @@
+pipe: hello pipe
+two writers: length 200000, changes 1
+given up: the timer won, then 1 byte
+close: read in progress: 4, after close: EBADF
+file: plain True, readAt 4 3456
+big: same True, empty EINVAL, closed EBADF, missing ENOENT
+plain given up: race other won, file has 10 bytes
+parallel pipe: hello pipe
