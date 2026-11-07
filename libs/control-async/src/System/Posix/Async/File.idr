@@ -121,11 +121,16 @@ takeIO makeNb fd = do
        Right <$> makeHandle fd plain True
      else Right <$> makeHandle fd plain nb
 
+||| `adopt` for code that already runs on the thread of the scheduler.
+export
+adoptNow : FileDesc -> IO (Either Errno Handle)
+adoptNow = takeIO False
+
 ||| Take over a descriptor without changing how it is set up: a shared standard
 ||| input stays blocking, and is waited for before each read.
 export
 adopt : FileDesc -> Task (Either Errno Handle)
-adopt fd = onReactor (takeIO False fd)
+adopt fd = onReactor (adoptNow fd)
 
 -------------------------------------------------------------------------------
 -- Closing
@@ -235,12 +240,15 @@ retryEintr call = do
 -- A call on a plain file: on a worker thread, with the handle kept open until it
 -- is over. Its job is not taken back when the task is given up (the worker has
 -- to give the handle back).
-plainCall : Handle -> IO (Either Errno a) -> Task (Either Errno a)
-plainCall h act = Async $ \env, done => do
+plainCallThen : Handle -> (Either Errno a -> IO ()) -> IO (Either Errno a) -> Task (Either Errno a)
+plainCallThen h hook act = Async $ \env, done => do
   ok <- enter h
   if ok
-     then noCancel <$ env.offload (act >>= \r => env.post (leave h *> done r))
+     then noCancel <$ env.offload (act >>= \r => env.post (hook r *> leave h *> done r))
      else noCancel <$ done (Left EBADF)
+
+plainCall : Handle -> IO (Either Errno a) -> Task (Either Errno a)
+plainCall h = plainCallThen h (\_ => pure ())
 
 -- `enter` is made with `handoff`, so that a task given up between taking the
 -- place and going on gives it back.
@@ -269,14 +277,31 @@ retrying h wait call = if h.nonblock then go else wait *> go
         Left e => if e == EAGAIN then wait *> go else pure r
         Right _ => pure r
 
--- One read or write, as the kind of the handle asks.
+-- The call, then the hook with its last result (not an `EAGAIN` or `EINTR` that
+-- is tried again), in the same step.
+withHook : (Either Errno Int -> IO ()) -> IO (Either Errno Int) -> IO (Either Errno Int)
+withHook hook call = do
+  r <- call
+  case r of
+    Left e => if e == EAGAIN || e == EINTR then pure r else hook r *> pure r
+    Right _ => hook r *> pure r
+
+-- One read or write, as the kind of the handle asks. The hook runs on the thread
+-- of the scheduler when the call is over, also for a call on a plain file whose
+-- task was given up in the meantime.
+stepThen : Handle -> (Either Errno Int -> IO ()) -> (wait : Task a) -> IO (Either Errno Int) -> Task (Either Errno Int)
+stepThen h hook wait call =
+  if h.plain then plainCallThen h hook (retryEintr call) else inUse h (retrying h wait (withHook hook call))
+
 step : Handle -> (wait : Task a) -> IO (Either Errno Int) -> Task (Either Errno Int)
-step h wait call =
-  if h.plain then plainCall h (retryEintr call) else inUse h (retrying h wait call)
+step h = stepThen h (\_ => pure ())
+
+readSomeThen : Handle -> (Either Errno Int -> IO ()) -> Buffer -> (off, len : Int) -> Task (Either Errno Int)
+readSomeThen h hook buf off len =
+  within buf off len (stepThen h hook (awaitReadable h.fd) (primIO (prim__readAt h.fd.rawfd buf off len) >>= count))
 
 readSome : Handle -> Buffer -> (off, len : Int) -> Task (Either Errno Int)
-readSome h buf off len =
-  within buf off len (step h (awaitReadable h.fd) (primIO (prim__readAt h.fd.rawfd buf off len) >>= count))
+readSome h = readSomeThen h (\_ => pure ())
 
 -- A descriptor that is not non-blocking takes at most this much at once without blocking.
 pipeBuf : Int
@@ -304,6 +329,14 @@ writeLoop h buf off len =
 export
 read : Handle -> Buffer -> (off, len : Int) -> Task (Either Errno Int)
 read h buf off len = withMVar h.readLock (\_ => readSome h buf off len)
+
+||| `read`, and a hook that runs on the thread of the scheduler as soon as the read
+||| is over, with its result. It is for state that must follow the bytes read: a
+||| task that is given up just after the read has been done (or, on a regular file,
+||| while the read is going on) loses the result, but not the hook.
+export
+readThen : Handle -> Buffer -> (off, len : Int) -> (Either Errno Int -> IO ()) -> Task (Either Errno Int)
+readThen h buf off len hook = withMVar h.readLock (\_ => readSomeThen h hook buf off len)
 
 ||| Write some of `buf[off .. off+len)` (`len` positive and the range inside the
 ||| buffer, else `EINVAL`); the result is how many bytes went out.

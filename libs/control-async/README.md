@@ -19,6 +19,7 @@ A program uses it with `-p control-async -p rc2base -p contrib`. It has no C cod
 | `Control.Task.Semaphore` | a counting semaphore for tasks (`acquireN`, `releaseN`, `withPermit`), served in order, with waits that can be given up |
 | `Control.Task.Ref`, `MVar`, `Chan` | state shared between tasks on several threads |
 | `System.Posix.Async.File` | descriptors as tasks: `Handle`, `openFile`, `pipe`, `read`, `write`, `writeAll`, `readAt`, `readAll`; pipes and terminals wait on epoll, regular files run on worker threads; `close` waits for the calls running on the handle |
+| `IO.Async.Console` | the standard input, output and error for tasks: `readLine`, `putStr`, `putStrLn`, `eputStr`, `eputStrLn` on a `Console` (`stdConsole` for the process, `consoleOf` for any three handles) |
 | `Network.Async` | `accept`, `connect`, `recv` and `send` that wait for the descriptor on the scheduler instead of blocking a thread |
 
 ## Tests

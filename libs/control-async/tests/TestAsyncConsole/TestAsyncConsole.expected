@@ -1,0 +1,17 @@
+stdout works
+stderr works
+line: ok
+line: ok
+line: ok
+line: ok
+line: ok
+line: ok
+line: ok
+line: ok
+line: end
+cancel: timer won, then ok
+closed: read EBADF
+output: chars 4 bytes 5
+output: chars 3 bytes 3
+output: big 10001 True
+std console done
