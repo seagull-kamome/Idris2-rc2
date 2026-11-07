@@ -24,6 +24,11 @@ record Passwd where
   dir : String
   shell : String
 
+public export
+Eq Passwd where
+  a == b = a.name == b.name && a.uid == b.uid && a.gid == b.gid && a.gecos == b.gecos
+        && a.dir == b.dir && a.shell == b.shell
+
 export
 Show Passwd where
   show p = "Passwd " ++ show p.name ++ " " ++ show p.uid ++ " " ++ show p.gid ++ " "
@@ -36,6 +41,10 @@ record Group where
   name : String
   gid : Bits32
   members : List String
+
+public export
+Eq Group where
+  a == b = a.name == b.name && a.gid == b.gid && a.members == b.members
 
 export
 Show Group where

@@ -268,3 +268,12 @@ main = do
   _ <- kill c3 SIGKILL
   _ <- waitpid c3 0
   pure ()
+  me <- getpid
+  again <- getpid
+  parent <- getppid
+  putStrLn ("Eq/Ord ProcessID: " ++ show (me == again, me == parent, compare me again))
+  Right u1 <- uname
+    | Left _ => putStrLn "uname failed"
+  Right u2 <- uname
+    | Left _ => putStrLn "uname failed"
+  putStrLn ("Eq Utsname/Resource: " ++ show (u1 == u2, RLIMIT_CORE == RLIMIT_CPU))

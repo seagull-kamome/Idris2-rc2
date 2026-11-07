@@ -332,6 +332,16 @@ main = do
   testAttrs
   testGlob
   teardown
+  case (mkFileDesc 3, mkFileDesc 4) of
+    (Just a, Just b) => putStrLn ("Eq/Ord/Show FileDesc: " ++ show (a == a, a == b, compare a b) ++ " " ++ show a)
+    _ => putStrLn "FileDesc: no descriptor"
+  putStrLn ("Eq/Show SeekWhence: " ++ show (SEEK_SET == SEEK_SET, SEEK_SET == SEEK_END) ++ " " ++ show SEEK_SET)
+  putStrLn ("Eq/Ord/Show FileOffset: " ++ show (cast {to=FileOffset} (the Int64 5) == cast (the Int64 5), compare (cast {to=FileOffset} (the Int64 1)) (cast (the Int64 2))) ++ " " ++ show (cast {to=FileOffset} (the Int64 7)))
+  r1 <- stat "."
+  r2 <- stat "."
+  putStrLn ("Eq Stat: " ++ (case (r1, r2) of
+                              (Right a, Right b) => show (a == b)
+                              _ => "stat failed"))
   putStrLn "done"
   ignore $ fflush stdout
   perror "perror-test"

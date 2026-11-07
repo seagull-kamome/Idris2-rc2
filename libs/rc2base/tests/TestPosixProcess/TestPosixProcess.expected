@@ -73,3 +73,5 @@ wait without children: errno 10
 waitpid WNOHANG without children: errno 10
 kill missing process: errno 3
 WNOHANG on a running child: pid 0
+Eq/Ord ProcessID: (True, (False, EQ))
+Eq Utsname/Resource: (True, False)

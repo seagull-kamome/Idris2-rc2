@@ -30,3 +30,5 @@ SIGWINCH=Signal 28
 SIGIO=Signal 29
 15
 Signal 10
+Eq/Ord Signal: (True, (False, (True, GT)))
+Eq/Show MaskHow: False MaskHow 0

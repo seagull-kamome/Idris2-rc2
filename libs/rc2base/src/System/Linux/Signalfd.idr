@@ -30,6 +30,12 @@ record SignalInfo where
   status : Int32
   intValue : Int32
 
+public export
+Eq SignalInfo where
+  a == b = a.signo == b.signo && a.errnoValue == b.errnoValue && a.code == b.code
+        && a.pid == b.pid && a.uid == b.uid && a.fd == b.fd && a.status == b.status
+        && a.intValue == b.intValue
+
 export
 Show SignalInfo where
   show i = "SignalInfo " ++ show i.signo ++ " code=" ++ show i.code ++ " pid=" ++ show i.pid

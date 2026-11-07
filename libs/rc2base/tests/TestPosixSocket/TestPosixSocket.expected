@@ -40,3 +40,4 @@ getAddrInfo: a bad host is refused
 Just "192.0.2.1"
 Just "2001:db8::1"
 Nothing
+Eq/Show ShutdownHow: (False, True) ShutWrite

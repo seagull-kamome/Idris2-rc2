@@ -64,4 +64,5 @@ buffer bytes: (65, (0, 66))
 close: ()
 empty size: 0
 empty string: Just ""
+Eq/Show BufMode: (False, True) Unbuffered
 done

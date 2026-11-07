@@ -20,6 +20,7 @@ rc2向けの協調型タスクです。spawn/both/raceとキャンセルを備�
 | `Control.Task.Ref`、`MVar`、`Chan` | 複数スレッドのタスクの間で共有する状態 |
 | `System.Posix.Async.File` | 記述子をタスクから扱う層(`Handle`、`openFile`、`pipe`、`read`、`write`、`writeAll`、`readAt`、`readAll`)。パイプや端末はepollで待ち、通常ファイルはワーカースレッドで実行する。`close`は、ハンドルで実行中の呼び出しが終わるのを待つ |
 | `IO.Async.Console` | タスクから使う標準入出力。`Console`に対する`readLine`、`putStr`、`putStrLn`、`eputStr`、`eputStrLn`(プロセスのものは`stdConsole`、任意の3つのハンドルからは`consoleOf`) |
+| `System.Posix.Async.Process` | 子プロセス。標準入出力へのパイプ付きの`spawn`、`waitChild`(`pidfd`で待つ)、`signalChild`、`terminate`、`withChild`、`captureOutput`。`-D_GNU_SOURCE`が必要 |
 | `Network.Async` | スレッドをブロックせず、スケジューラ上でディスクリプタを待つ`accept`、`connect`、`recv`、`send` |
 
 ## テスト

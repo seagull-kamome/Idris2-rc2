@@ -126,6 +126,13 @@ export
 adoptNow : FileDesc -> IO (Either Errno Handle)
 adoptNow = takeIO False
 
+||| `adopt` that also makes a descriptor that can be waited for `O_NONBLOCK`, for
+||| code that already runs on the thread of the scheduler. Use it for a
+||| descriptor that is yours alone (the parent's end of a pipe to a child).
+export
+ownNow : FileDesc -> IO (Either Errno Handle)
+ownNow = takeIO True
+
 ||| Take over a descriptor without changing how it is set up: a shared standard
 ||| input stays blocking, and is waited for before each read.
 export

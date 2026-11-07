@@ -67,13 +67,14 @@ TESTS=(
     "TestTaskSignal||Control.Task.Signal: a signal raised before the wait, one raised by a task, untilSignals, a wait given up by a lost race, two waits for one signal, a bad signal"
     "TestPosixAsyncFile||System.Posix.Async.File: a pipe between tasks, two writers that do not mix, a read given up, a close that waits for the running call, a regular file on a worker"
     "TestAsyncConsole||IO.Async.Console: lines from a pipe (UTF-8, a CR kept, a line longer than a chunk, no final newline, the end), strings written whole, the console of the process"
+    "TestPosixAsyncProcess||System.Posix.Async.Process: a program fed and read, an exit code, terminate, a wait given up, two tasks waiting for one child, an output larger than a pipe, a missing program"
     "TestTaskSemaphore||Control.Task.Semaphore: at most the permits run at once on four threads, a wait for a release, the order of the line, try versions, a wait or a holder that is given up losing no permit"
 )
 
 # Tests that need liburing's headers (liburing.h); skipped the same way.
 NEEDS_URING=" TestTaskUring "
 # Tests built with IDRIS2_CFLAGS=-D_GNU_SOURCE (declarations glibc hides otherwise).
-NEEDS_GNU_SOURCE=" TestTask TestTaskUring TestPosixAsyncFile TestAsyncConsole "
+NEEDS_GNU_SOURCE=" TestTask TestTaskUring TestPosixAsyncFile TestAsyncConsole TestPosixAsyncProcess "
 # Tests whose generated C must not mention liburing at all.
 NO_LIBURING_C=" TestTaskNoUring "
 have_uring_h() { echo '#include <liburing.h>' | gcc -E -x c - > /dev/null 2>&1; }

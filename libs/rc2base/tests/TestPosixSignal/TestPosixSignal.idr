@@ -44,3 +44,5 @@ main = do
   putStrLn ("SIGIO=" ++ show SIGIO)
   printLn (cast {to=Int32} SIGTERM)
   putStrLn (show (cast {to=Signal} (the Int32 10)))
+  putStrLn ("Eq/Ord Signal: " ++ show (SIGTERM == SIGTERM, SIGTERM == SIGKILL, SIGHUP < SIGKILL, compare SIGKILL SIGHUP))
+  putStrLn ("Eq/Show MaskHow: " ++ show (SIG_BLOCK == SIG_UNBLOCK) ++ " " ++ show SIG_BLOCK)
