@@ -69,8 +69,13 @@ reference that isn't a plain call:
   nameable from outside, but its signature stays too when it is called
   from the body of a definition another module may copy in (`%inline`
   and the like), as that copy calls it with its original arguments.
-  Visibility cannot tell the helpers apart: the elaborator makes every
-  `where` declaration `Public` (`TTImp/Elab/Local.idr`).
+  The same holds for what a `public export` definition's body (or an
+  anonymous implementation's) calls, a `where` helper included: another
+  module's elaboration unfolds that body into its own code
+  (`doc/incremental-compile.md`, "Public export bodies"). Visibility alone
+  cannot tell a helper that matters from one that does not: the elaborator
+  makes a `where` declaration `Public` when its parent is (`TTImp/Elab/Local.idr`),
+  so a helper of a private or `export` function is not kept.
 
 ## Pipeline position
 

@@ -129,6 +129,41 @@ work below, but it's the actual blocker for trying this feature out on
 anything beyond a synthetic single/two-module fixture with no
 dependencies -- tracked here rather than assumed away.
 
+## Public export bodies
+
+A `public export` definition's body is open to the elaborator, which
+unfolds it in *another module's* code wherever it normalises a term that
+reaches it. The unfolded copy is made from the compile-time tree, so it
+calls what the body calls, a `where` helper too, and a `%transform` rule
+(`unpack = fastUnpack`) does not fire on it: the rule rewrites the
+run-time tree of the definition that mentions `unpack`, and this copy comes
+from `unpack`'s own body.
+
+The case that showed it: `Libraries.Text.PrettyPrint.Prettyprinter.Doc`
+has `Pretty Void String` (an implementation, so `TCInline`), whose method
+calls `isSuffixOf`, and `Data.String.isSuffixOf`, `Data.List.isSuffixOf`
+and `unpack` are all `public export`. When `Core.Case.CaseTree` uses that
+dictionary, the elaborator expands it, and `CaseTree`'s own run-time tree
+(`:di Core.Case.CaseTree.prettyPrec_Pretty_IdrisSyntax_Pat` shows it) calls
+`Prelude.Types.<n>:<m>:go`, the helper of `unpack`. Compiled as a whole
+program the helper is there. Compiled alone, `Prelude.Types` merges the only
+call of `go` into `unpack` as a loop and drops it, and the link fails with an
+undefined `Prelude_Types_n___parenOpen10145_comma_9452_parenClose_go`.
+
+So `DeadArgs.moduleRoots` keeps, besides the functions other modules can
+name and what an `Inline`/`TCInline`/`Macro`/`PartialEval` body calls, what
+the body of every `public export` definition (and of every anonymous
+implementation, whose name is not a plain `UN` one and so reduces anywhere)
+calls, transitively. The calls are those of the run-time body, while the
+unfolded copy comes from the compile-time tree; they differ for a name a
+`%transform` rule rewrites, which is a function other modules can name and
+so a root anyway. The price
+is that a `where` helper of a `public export` function keeps its own symbol
+and its signature. Found by building prelude, base, linear, contrib, network
+and `idris2api` with `IDRIS2_INC_CGS=rc2` and linking `rc2-norepl`; a copy of
+`Core.Case.CaseTree` renamed and compiled alone is a quick reproduction (13
+references to the helper before, none after).
+
 ## Why rc2 doesn't need Chez's "recompile the root term separately" step
 
 Chez's `compileExprInc` still has to synthesize a small dynamic-load
@@ -283,13 +318,9 @@ Only `DeadCode.pruneDeadDefs` and the top-level driver
 
    `rc2-norepl` itself still cannot be linked this way: a `C` `main()` is
    written only for a module named `Main`, so the program's entry module
-   must be called that; `NoRepl.SchemeStubs` gives `%foreign_impl`
-   to declarations of another package, which needs the whole program; and
-   the object files leave `Prelude.Types`' `unpack` helper `go` undefined,
-   which other modules call directly (`Core.Case.CaseTree`, with `unpack`'s
-   body inlined) although `Prelude.Types` has `%transform "fastUnpack"
-   unpack = fastUnpack`: the rule seems not to have fired in the module
-   that calls it. Why is not yet explained.
+   must be called that; and `NoRepl.SchemeStubs` gives `%foreign_impl`
+   to declarations of another package, which needs the whole program (the
+   25 functions of `Libraries.Utils.Scheme` stay undefined at the link).
 
 2. **New `incCompile` function** (`Compiler.RC2.RC2`, mirrors Chez's
    `incCompile`):
