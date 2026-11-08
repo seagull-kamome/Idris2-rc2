@@ -6,7 +6,7 @@ module Test115ConstFoldClosure.ConstFoldClosureCallthrough
 -- Correctness/leak regression for dispatching through a
 -- Compiler.RC2.ConstFold-folded interface dictionary (see
 -- Test115ConstFoldClosure/ConstFoldClosure.idr section 1 for the structural fold itself), modeled
--- directly on Test18ClosureInPlaceGrow's own rigor: call the folded
+-- directly on Test172Closures/ClosureInPlaceGrow's own rigor: call the folded
 -- dictionary's own methods many times in a loop, confirming correct
 -- output on every iteration AND valgrind-cleanliness.
 --

@@ -1531,7 +1531,7 @@ benchmark:
    and 300,000-500,000-deep mutual recursion with no C stack growth
    (direct evidence the `goto` conversion is actually firing, not just
    type-checking).
-4. `tests/BenchLoop.idr`/`tests/BenchMutual.idr` -- generated C
+4. `tests/bench/BenchLoop.idr`/`tests/bench/BenchMutual.idr` -- generated C
    inspection (`grep -n "^IDRIS2RC2_Value \*Main_sumTo$" -A20
    build/exec/*.c` or similar) to directly confirm a loop body contains
    zero `idris2rc2_mk*`/`idris2rc2_dup`/`idris2rc2_drop` calls once
@@ -1558,7 +1558,7 @@ benchmark:
    native-shadow-eligible parameter also read in a Boxed context on the
    loop's own continue path (re-`dup`'d every iteration) and on its
    exit arm only (`dup`'d once), both `valgrind`-clean --
-   `tests/BenchLoopInvariantBoxed.idr` exercises the continue-path shape
+   `tests/bench/BenchLoopInvariantBoxed.idr` exercises the continue-path shape
    at 3,000,000 iterations specifically to make a per-iteration leak
    unmistakable, and to measure the resulting wall-clock difference
    (~25% faster than the pre-fix reboxing-every-time behaviour on this

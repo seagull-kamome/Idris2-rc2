@@ -112,5 +112,5 @@ calling `idris2rc2_rtInit()` before the first exported call and
 - `rc2/tests/Test82RuntimeLocale/` -- reads `LC_CTYPE` back to prove
   `setlocale(LC_ALL, "")` ran, and checks a `Double`'s `show` is
   locale-stable (`verify.sh` runs the suite under `LC_ALL=C.UTF-8`).
-- `rc2/tests/Test83DoubleString/` -- the `Double <-> String` conversion
+- `rc2/tests/Test168NumericEdge/DoubleString.idr` -- the `Double <-> String` conversion
   itself: shortest-form `show`, `cast` parsing, round-trips.

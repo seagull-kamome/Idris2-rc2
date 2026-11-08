@@ -5,7 +5,7 @@ module Test112Numeric.BoxedCompare
 -- `int` with no Boxed Bool in between (rc2/doc/native-type-inference.md).
 -- Immediate Integers, heap Integers past the 62-bit immediate range,
 -- negatives, equal values, empty/prefix Strings (non-ASCII and NUL
--- bytes: Test124StringNul, which real RefC cannot run);
+-- bytes: Test169Strings/StringNul, which real RefC cannot run);
 -- plain `if`, `&&`/`||`, `compare`-based shapes, loops and recursion.
 
 import Data.List

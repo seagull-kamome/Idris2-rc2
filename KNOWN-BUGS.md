@@ -31,7 +31,7 @@ If one of these stops reproducing, or a fix lands, remove the entry.
   `Test99DeadArgs`), so this needs no further investigation when it
   shows up in a dump. It is off only under
   `--directive nodeadargs`.
-- **`Test7CastMatrix.idr` can't be diff-checked against real
+- **`Test168NumericEdge/CastMatrix.idr` can't be diff-checked against real
   `idris2 --cg refc` at all.** Originally because the reference RefC
   support library's `idris2_negate_Double` was typo'd as
   `idris2_nagate_Double`, plus a couple of missing declarations -- **that
@@ -49,7 +49,7 @@ If one of these stops reproducing, or a fix lands, remove the entry.
   reference toolchain itself, not rc2 -- `idris2-rc2`'s own build of the
   same file compiles and runs cleanly. Verified instead via a saved
   `.expected` file (manual verification), same as `rc2/tests/
-  refc-suite`'s own `Test7CastMatrix`-equivalent handling. See
+  refc-suite`'s own `Test168NumericEdge/CastMatrix`-equivalent handling. See
   `rc2/doc/dual-abi.md`'s own "Verification methodology" item 5 /
   `rc2/doc/reuse-analysis.md`'s item 4 for the original write-up.
 - **`refc-suite`'s `basicpatternmatch` test: real RefC itself fails to
@@ -139,7 +139,7 @@ If one of these stops reproducing, or a fix lands, remove the entry.
   `Network.Socket.sendBytes` (which `Test35NetworkLoopback` does via
   `accept`'s loopback exchange) with an implicit-declaration/argument-
   count error as a result. Verified instead via a saved `.expected` file
-  (manual verification), same reasoning as `Test7CastMatrix` above.
+  (manual verification), same reasoning as `Test168NumericEdge/CastMatrix` above.
   `Test35NetworkLoopback` is listed in `verify.sh`'s `NO_REFC_DIFF_TESTS`
   since there's no real-RefC output to diff against in the first place.
 - **Upstream `System.FFI`'s `getField` elaboration doesn't scale to a
@@ -207,25 +207,25 @@ If one of these stops reproducing, or a fix lands, remove the entry.
   that is a multiple of the divisor.** `(-6) `mod` 3` gives `3` instead
   of `0` (the remainder `n % d` is `0`, but RefC adds `|d|` whenever
   `n < 0`). Chez, the reference semantics, gives `0`. rc2 had the same
-  bug and was fixed; `Test135EuclidModNegative` is in
+  bug and was fixed; `Test168NumericEdge/EuclidModNegative` is in
   `NO_REFC_DIFF_TESTS` for this reason.
 
 - **Upstream RefC traps on `minBound `div` (-1)`.** For `Int` and the
   32- and 64-bit signed types the C division overflows and the process
   dies with SIGFPE; Chez wraps (the quotient is `minBound`, the
-  remainder 0), and so does rc2. `Test141IntMinDivMinusOne` is in
+  remainder 0), and so does rc2. `Test168NumericEdge/IntMinDivMinusOne` is in
   `NO_REFC_DIFF_TESTS` for this reason.
 
 - **Upstream RefC dies with SIGFPE on `cast` of a NaN or infinite
   `Double` to `Integer`** (GMP's `mpz_set_d`). rc2 returns 0.
-  `Test142DoubleNonFiniteToInteger` is in `NO_REFC_DIFF_TESTS` for
+  `Test168NumericEdge/DoubleNonFiniteToInteger` is in `NO_REFC_DIFF_TESTS` for
   this reason.
 
 
 - **Upstream RefC does not validate UTF-8 when it decodes a string.**
   `unpack` of the bytes `C0 AF` gives `/` (an overlong form), and
   surrogates and code points past U+10FFFF come through as such; Chez
-  gives U+FFFD for each. rc2 matches Chez. `Test143Utf8Invalid` is in
+  gives U+FFFD for each. rc2 matches Chez. `Test169Strings/Utf8Invalid` is in
   `NO_REFC_DIFF_TESTS` for this reason.
 
 - **Upstream `network`'s UDP buffer calls (#174).** `sendToBuf` swaps

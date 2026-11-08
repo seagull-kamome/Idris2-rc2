@@ -93,7 +93,7 @@ static IDRIS2RC2_ConstConstructor2 const constcon_7 = {
 - `rc2/src/Compiler/RC2/Sink.idr`、`rc2/src/Compiler/RC2/DualABI.idr`: `localRepIn`の`RCConstCon`のケース(常に`RBoxed`)。
 - `rc2/support/rc2/idris2rc2_datatypes.h`: `IDRIS2RC2_Constructor`のレイアウト(参照するだけで、変更していない)と、`IDRIS2RC2_STOCKVAL`/`IDRIS2RC2_REFCOUNT_MAX`(そのまま再利用)。
 - `rc2/tests/Test17ConstFold.idr`: 回帰テスト(そのファイルの末尾に統合した)。完全な畳み込み(`constList`/`constMaybe`/`nestedConst`)、部分的な畳み込み(`partialConst`)、同じ不死の値を複数の箇所で分解するケース(`headOf`/`tailOf`/`unwrapMaybe`。それぞれ複数回呼ぶ)を含む。最後のケースは、dup/dropが何もしないという安全性の性質を直接検査する。
-- `rc2/tests/BenchConstConFold.idr`: 定数の10要素のリストを300万回合計する。畳み込みを元に戻した同じrc2のビルドより約3.4倍速く、本物のRefCより約4.5倍速い。
+- `rc2/tests/bench/BenchConstConFold.idr`: 定数の10要素のリストを300万回合計する。畳み込みを元に戻した同じrc2のビルドより約3.4倍速く、本物のRefCより約4.5倍速い。
 
 ## 検証手順(拡張する場合)
 

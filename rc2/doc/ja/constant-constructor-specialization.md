@@ -116,8 +116,8 @@ def Prelude.Types.elemBy  (fun args= ["v10077", "v10078", "v10079"] ret= Boxed)
 
 | | off | on | |
 |---|---|---|---|
-| `rc2/tests/BenchSpecConstCon.idr` | 0.48s | **0.37s** | 約23%高速 |
-| `rc2/tests/BenchSpecConstConRec.idr` | 0.49s | **0.40s** | 約18%高速 |
+| `rc2/tests/bench/BenchSpecConstCon.idr` | 0.48s | **0.37s** | 約23%高速 |
+| `rc2/tests/bench/BenchSpecConstConRec.idr` | 0.49s | **0.40s** | 約18%高速 |
 
 それぞれの生成Cにある`idris2rc2_applyClosure`の呼び出し箇所は、4個から0個になる。2つのベンチマークは、関門の2つの側面を覆っている。1つ目は再帰しない呼び出し先に届く場合で、2つ目は辞書を自分自身の再帰に通して引き回す場合である。
 
@@ -188,7 +188,7 @@ partial Data.IORef.{modifyIORef:2} missing= 1 [v3980, v3981, v3982]
 - `rc2/src/Compiler/RC2/ConstFold.idr`: `foldConstDefWith`。このパスに必要な、シード付きの畳み込みの入口。
 - `rc2/src/Compiler/RC2/RC2.idr`: パイプライン上の位置と、`disableableStageNames`の`nospecconstcon`。
 - `rc2/tests/Test87SpecConstCon/`: 正しさの確認と、`verify.sh`自身による、複製が残されることと、boxedなディスパッチが残らないことのアサーション。
-- `rc2/tests/BenchSpecConstCon.idr`、`rc2/tests/BenchSpecConstConRec.idr`: 上の2つの実行時のA/B。関門の2つの側面に1つずつ対応する。
+- `rc2/tests/bench/BenchSpecConstCon.idr`、`rc2/tests/bench/BenchSpecConstConRec.idr`: 上の2つの実行時のA/B。関門の2つの側面に1つずつ対応する。
 
 ## ラムダリフトの前で試みたが、採用しなかった(2026-09-29)
 

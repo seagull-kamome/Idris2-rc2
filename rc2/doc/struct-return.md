@@ -382,7 +382,7 @@ longer allocate a closure each.
 
 ## Results (2026-09-25)
 
-`tests/BenchStructReturn.idr` (a four-level `Either` chain, five
+`tests/bench/BenchStructReturn.idr` (a four-level `Either` chain, five
 million calls, best of five): 674 ms without struct return, **475 ms**
 with it (about 30% faster), identical output. valgrind counts 10.0M
 allocations without and **5.0M** with: the `Either` cell is gone
@@ -478,7 +478,7 @@ and one width (`retLayouts`), meeting to Boxed on any disagreement.
 
 On idris2-lsp almost nothing qualifies: of 3,679 packs, 5 have a native
 local and 73 an integer literal as their field; `Core` returns terms and
-names. Numeric chains are what gain: `tests/BenchStructReturnNative.idr`
+names. Numeric chains are what gain: `tests/bench/BenchStructReturnNative.idr`
 (`BenchStructReturn` with every payload above the small-int cache) runs
 1,723 ms without struct return and **864 ms** with it, and allocates
 50.0M times without and 20.0M with. The worker allocates nothing; what

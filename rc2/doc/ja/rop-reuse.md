@@ -125,7 +125,7 @@ Boxedの`Integer`のランタイムプリミティブ10個の契約を変更し�
 
 これは、最適化の取りこぼしにとどまらない、本物の**二重drop / use-after-freeのバグ**である。共有された(別名のある)ランタイム関数の契約を変更するときは、コンパイラ側の判定が、そのCの名前に対応する*すべての*`PrimType`を認識する必要がある。見かけ上の「本来の持ち主」だけを認識していては足りない。
 
-これは、`verify.sh`を全件回した回帰実行で見つかった。すでに存在していて、それまでは通っていた4つのテスト(`Test110Loop/LoopContinuePostDrop.idr`、`Test110Loop/LoopInvariantParam.idr`、`Test3Data`、`Test110Loop/SelfTailLoop.idr`)が、誤った出力を返し始めた。クラッシュではなく、use-after-freeによる値の破損であり、`valgrind`でも "definitely lost" は0バイトのままだった。解放されたメモリが再利用されたか、まだマップされたままだったかのどちらかで、実際にリークしたわけではないからである。
+これは、`verify.sh`を全件回した回帰実行で見つかった。すでに存在していて、それまでは通っていた4つのテスト(`Test110Loop/LoopContinuePostDrop.idr`、`Test110Loop/LoopInvariantParam.idr`、`Test173DataRep/ConstructorFields`、`Test110Loop/SelfTailLoop.idr`)が、誤った出力を返し始めた。クラッシュではなく、use-after-freeによる値の破損であり、`valgrind`でも "definitely lost" は0バイトのままだった。解放されたメモリが再利用されたか、まだマップされたままだったかのどちらかで、実際にリークしたわけではないからである。
 
 この種のバグを検出するのに`valgrind`のリーク検出だけに頼ることには、実際にギャップがある。二重解放やuse-after-freeが、リークとして現れるとは限らない。
 

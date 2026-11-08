@@ -99,7 +99,7 @@ not at the `let` that builds it. An arm that does not pass the cell
 (it passes `c` unchanged, applies `c` or ends the list) must not have
 filled the hole: `RFill` is a plain store, so the next fill of the same
 hole would overwrite the cell without dropping it
-(`tests/Test139ClosureCtxSkip`).
+(`tests/Test172Closures/ClosureCtxSkip`).
 
 The entry never has a chain yet, so its `apply c [v]` stays as is: a
 call that never extends costs nothing extra. In `f#`, `c` is passed

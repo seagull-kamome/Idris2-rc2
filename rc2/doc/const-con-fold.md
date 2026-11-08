@@ -258,7 +258,7 @@ before that later extension landed):
   (`partialConst`), and multi-site destructuring of the same immortal
   value (`headOf`/`tailOf`/`unwrapMaybe`, each called more than once)
   to directly exercise the dup/drop-is-a-no-op safety property.
-- `rc2/tests/BenchConstConFold.idr` -- a constant ten-element list
+- `rc2/tests/bench/BenchConstConFold.idr` -- a constant ten-element list
   summed three million times; ~3.4x faster than this same rc2 build
   with the fold reverted, ~4.5x faster than real RefC.
 

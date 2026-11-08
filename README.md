@@ -418,7 +418,7 @@ cd rc2/tests
 ./bench.sh
 ```
 
-Times `rc2/tests/Bench*.idr` compiled with both `idris2-rc2` and upstream `idris2 --cg refc`, reporting wall-clock speedup ratios (`--runs N` sets iterations; `--missing-containers` adds external container benchmarks). Results and methodology are recorded in [`rc2/BENCHMARKS.md`](rc2/BENCHMARKS.md).
+Times `rc2/tests/bench/Bench*.idr` compiled with both `idris2-rc2` and upstream `idris2 --cg refc`, reporting wall-clock speedup ratios (`--runs N` sets iterations; `--missing-containers` adds external container benchmarks). Results and methodology are recorded in [`rc2/BENCHMARKS.md`](rc2/BENCHMARKS.md).
 
 ### IR Linter Unit Tests
 

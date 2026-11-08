@@ -213,8 +213,8 @@ Runtime, median of 5, each benchmark A/B'd against itself with
 
 | | off | on | |
 |---|---|---|---|
-| `rc2/tests/BenchSpecConstCon.idr` | 0.48s | **0.37s** | ~23% faster |
-| `rc2/tests/BenchSpecConstConRec.idr` | 0.49s | **0.40s** | ~18% faster |
+| `rc2/tests/bench/BenchSpecConstCon.idr` | 0.48s | **0.37s** | ~23% faster |
+| `rc2/tests/bench/BenchSpecConstConRec.idr` | 0.49s | **0.40s** | ~18% faster |
 
 `idris2rc2_applyClosure` call sites in each one's generated C go 4 to
 0. The two cover the gate's two halves: the first reaches a
@@ -352,8 +352,8 @@ behind the cap of 8 rounds are in `speculative-closure-specialization.md`,
   assertion that clones are kept and no boxed dispatch survives.
 - `rc2/tests/Test131SpecConstConCapture/` -- a dictionary captured by a
   continuation.
-- `rc2/tests/BenchSpecConstCon.idr`,
-  `rc2/tests/BenchSpecConstConRec.idr` -- the two runtime A/Bs above,
+- `rc2/tests/bench/BenchSpecConstCon.idr`,
+  `rc2/tests/bench/BenchSpecConstConRec.idr` -- the two runtime A/Bs above,
   one per half of the gate.
 
 ## Tried before lambda lifting, not kept (2026-09-29)

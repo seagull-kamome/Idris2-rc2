@@ -428,7 +428,7 @@ cd rc2/tests
 ./bench.sh
 ```
 
-`rc2/tests/Bench*.idr`を、`idris2-rc2`と上流の`idris2 --cg refc`の両方でコンパイルして時間を測り、実時間での速度向上比を報告します（`--runs N`で反復回数を指定し、`--missing-containers`で外部コンテナのベンチマークを追加します）。結果と測定方法は[`rc2/BENCHMARKS.md`](rc2/BENCHMARKS.md)に記録されています。
+`rc2/tests/bench/Bench*.idr`を、`idris2-rc2`と上流の`idris2 --cg refc`の両方でコンパイルして時間を測り、実時間での速度向上比を報告します（`--runs N`で反復回数を指定し、`--missing-containers`で外部コンテナのベンチマークを追加します）。結果と測定方法は[`rc2/BENCHMARKS.md`](rc2/BENCHMARKS.md)に記録されています。
 
 ### IRリンター単体テスト
 
