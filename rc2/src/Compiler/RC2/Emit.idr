@@ -49,6 +49,7 @@ module Compiler.RC2.Emit
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
+import Compiler.RC2.Stage
 import Compiler.RC2.TargetOs
 
 import Compiler.CompileExpr
@@ -1420,7 +1421,7 @@ header directiveList = do
     externStructs <- get ExternStructs
     injectedRuntime <- get InjectedRuntime
     let osGuard = case targetOsOf directiveList of
-                       Just t => if "noconstfold" `elem` directiveList then [] else map (++ "\n") (guardLines t)
+                       Just t => if stageOff NoConstFold directiveList then [] else map (++ "\n") (guardLines t)
                        Nothing => []
     pure $
         [initLines] ++

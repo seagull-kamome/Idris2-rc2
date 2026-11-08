@@ -108,7 +108,7 @@ Directives that look like they belong on this list but don't:
   unchanged. Kept so it can be measured on real workloads; run
   `verify.sh --directive latepushcon` after touching it, since the
   default suite never exercises it. Travels in the same list as the
-  disables (`RC2.idr`'s `optInStageNames`).
+  disables (`Stage.idr`'s `OptIn`).
 - **`nomain` is a real, currently-supported directive, just not a
   pipeline-stage disable.** It's read as its own plain `Bool` directly
   in `compileExpr`, not threaded through `toRCDefs`/`disabled` at all,

@@ -347,7 +347,7 @@ behind the cap of 8 rounds are in `speculative-closure-specialization.md`,
 - `rc2/src/Compiler/RC2/ConstFold.idr` -- `foldConstDefWith`, the
   seeded fold entry point this pass needs.
 - `rc2/src/Compiler/RC2/RC2.idr` -- pipeline position, `nospecconstcon`
-  in `disableableStageNames`.
+  as a `Stage` constructor (`Stage.idr`).
 - `rc2/tests/Test87SpecConstCon/` -- correctness, plus `verify.sh`'s own
   assertion that clones are kept and no boxed dispatch survives.
 - `rc2/tests/Test131SpecConstConCapture/` -- a dictionary captured by a
