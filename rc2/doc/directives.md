@@ -128,7 +128,7 @@ Directives that look like they belong on this list but don't:
 
 ## 3. Debug-dump directives
 
-All four share `directiveList`, checked *after* `toRCDefs` has already
+All of these share `directiveList`, checked *after* `toRCDefs` has already
 produced its result (unlike section 2's stage disables, which
 `toRCDefs` itself needs to consult *before* it runs).
 
@@ -136,6 +136,11 @@ produced its result (unlike section 2's stage disables, which
   pipeline stage, to a `.rcexpr` file next to the `.c` output. See
   `doc/reading-the-ir.md` for the full format reference and how to read
   one.
+- **`dumpnamed`** -- dumps the named case trees (`NamedDef`, upstream's
+  `--dumpcases` format) that `lowerProgram` is about to lambda-lift, after
+  inlining, dead-argument removal and arity raising, to a `.named` file
+  (whole-program compiles only). Combine with `noinline` to see them
+  before inlining.
 - **`dumpdualabi`** -- dumps `Compiler.RC2.DualABI`'s own Stage 2
   eligibility analysis to a `.dualabi` file, same directive mechanism as
   `dumprcexpr`. See `doc/dual-abi.md`. A first line counts the functions
