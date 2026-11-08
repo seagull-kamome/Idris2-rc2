@@ -386,7 +386,7 @@ refCountを1減らす」の一本道になった。オーバーヘッドはク�
 | rc2倍率(RefC比) | 約1.56倍高速 | **約2.63倍高速** | - |
 
 rc2自身の実行時間が**約40%短縮**。RefC側はこの変更の対象外(rc2独自ランタイム
-のみの変更)のため数値は不変。新規スモークテスト`Test18ClosureInPlaceGrow.idr`
+のみの変更)のため数値は不変。新規スモークテスト`Test172Closures/ClosureInPlaceGrow.idr`
 (unique連鎖・共有クロージャの両経路をカバー)を`verify.sh`の
 `LEAK_SENSITIVE_TESTS`に追加し、valgrindで0バイトリークを確認済み。他の
 `Bench*.idr`(Chain/Fib/Loop/Mutual)には回帰なし。
@@ -481,7 +481,7 @@ immortalエントリのみ)。数値・生成Cコードの構造に変化はな�
 参照リークが存在した。`fib(30)`では再帰の引数が常にsmall-intキャッシュ
 範囲(`[0,100)`、immortalなので drop が no-op)に収まるため、通常の
 出力比較(diff)ベースの検証では一切検出できなかった -- `valgrind`で
-意図的にキャッシュ範囲外の値を使う合成テスト(`rc2/tests/Test11DualABILeak.idr`)
+意図的にキャッシュ範囲外の値を使う合成テスト(`rc2/tests/Test174OwnershipLeaks/DualABILeak.idr`)
 を作って初めて実際のリーク(200万回の呼び出しでほぼ200万回分)を確認できた。
 修正の詳細は`rc2/doc/dual-abi.md`の「Bugs found and fixed」参照。
 
@@ -672,7 +672,7 @@ IDRIS2RC2_Value *var_8 = idris2rc2_applyClosure(var_15, idris2rc2_mkBits8(var_16
 
 ## 機能テスト
 
-`tests/Test1Basics.idr` 〜 `tests/Test7CastMatrix.idr` を `--cg rc2` でコンパイル・
+`tests/Test1Basics.idr` 〜 `tests/Test168NumericEdge/CastMatrix.idr` を `--cg rc2` でコンパイル・
 実行し、全て期待通りの結果を確認済み(Test1〜6は本家 `idris2 --cg refc` の出力と
 バイト完全一致、Test7は環境のRefCランタイム自体の既知バグにより手動検証)。
 
@@ -680,11 +680,11 @@ IDRIS2RC2_Value *var_8 = idris2rc2_applyClosure(var_15, idris2rc2_mkBits8(var_16
 |---|---|
 | `Test1Basics.idr` | 階乗(Integer)・末尾再帰ループ・IORef・文字列・List map/filter |
 | `Test2Recursion.idr` | 相互再帰(isEven/isOdd)・非末尾再帰(素朴なfib) |
-| `Test3Data.idr` | Double/Int混在ADT(Shape)・レコード(Point)・Maybe/List |
+| `Test173DataRep/ConstructorFields.idr` | Double/Int混在ADT(Shape)・レコード(Point)・Maybe/List |
 | `Test4Closures.idr` | クロージャ・高階関数・部分適用 |
 | `Test5FFIStrings.idr` | 直接FFI(`strlen`)・RefCタグ流用FFI(`fastPack`/`fastConcat`/`pack`/`unpack`) |
 | `Test6NativeInts.idr` | Int8/16/32/64・Bits8/16/32/64全8種の算術チェイン(境界値ラップアラウンド含む) |
-| `Test7CastMatrix.idr` | Double/Char/String絡みのCastプリミティブ全組合せ |
+| `Test168NumericEdge/CastMatrix.idr` | Double/Char/String絡みのCastプリミティブ全組合せ |
 
 ## 発見・修正したバグ
 
@@ -719,7 +719,7 @@ IDRIS2RC2_Value *var_8 = idris2rc2_applyClosure(var_15, idris2rc2_mkBits8(var_16
 
 ## ベンチマーク
 
-`tests/BenchLoop.idr` / `BenchFib.idr` / `BenchChain.idr` を使用。
+`tests/bench/BenchLoop.idr` / `BenchFib.idr` / `BenchChain.idr` を使用。
 
 ### 末尾再帰ループ・非末尾再帰
 
@@ -1100,11 +1100,11 @@ source ../env.sh
 
 # rc2でコンパイル
 nix-shell -p gcc gmp --run \
-  './build/exec/idris2-rc2 --cg rc2 tests/BenchChain.idr -o /tmp/bench_rc2'
+  './build/exec/idris2-rc2 --cg rc2 tests/bench/BenchChain.idr -o /tmp/bench_rc2'
 
 # RefC(本家idris2)でコンパイル
 nix-shell -p idris2 gcc gmp --run \
-  'idris2 --cg refc tests/BenchChain.idr -o /tmp/bench_refc'
+  'idris2 --cg refc tests/bench/BenchChain.idr -o /tmp/bench_refc'
 
 time /tmp/bench_rc2
 time /tmp/bench_refc
@@ -1134,7 +1134,7 @@ time /tmp/bench_refc
 3,881箇所が間接dispatchから直接呼び出しになった。残る961件は真の部分適用
 (`length args < missing`)で、実際にクロージャが必要なため変更なし。
 
-### 実行時A/B(`tests/BenchConstClosureApply.idr`、同一マシン7回)
+### 実行時A/B(`tests/bench/BenchConstClosureApply.idr`、同一マシン7回)
 
 `git checkout HEAD~1 -- ConstFold.idr`で旧コンパイラを作り直して直接比較した。
 
@@ -1188,8 +1188,8 @@ time /tmp/bench_refc
 
 | | OFF | ON | |
 |---|---|---|---|
-| `tests/BenchSpecConstCon.idr` | 0.48s | **0.37s** | 約23%高速 |
-| `tests/BenchSpecConstConRec.idr` | 0.49s | **0.40s** | 約18%高速 |
+| `tests/bench/BenchSpecConstCon.idr` | 0.48s | **0.37s** | 約23%高速 |
+| `tests/bench/BenchSpecConstConRec.idr` | 0.49s | **0.40s** | 約18%高速 |
 
 生成C中の`idris2rc2_applyClosure`はいずれも 4 → **0**。出力は全て`937501`で一致。
 前者は非再帰のcalleeに辞書が届く形、後者は辞書を**自分の再帰に持ち回る**形で、
@@ -1241,7 +1241,7 @@ idris2-lsp全体で`apply`が9件しか減らないのは自己持ち回り許�
 
 | | OFF | ON | |
 |---|---|---|---|
-| `tests/BenchKnownCon.idr` | 3.51s | **3.33s** | 約5%高速 |
+| `tests/bench/BenchKnownCon.idr` | 3.51s | **3.33s** | 約5%高速 |
 
 出力はいずれも`966699`で一致。1回の呼び出しあたり、OFFでは`Just`のセルと
 フィールドの`Int`のボックスを確保し、ONではボックスだけを確保する。
@@ -1265,7 +1265,7 @@ idris2-lsp全体(`--directive nopushcon`との対比、書き換えAは両方で
 複製するため。1回の実行で通るのはそのうち1つで、置き換えたコンストラクタは
 その経路ではもう作られない。
 
-実行時A/B(`tests/BenchPushCon.idr`):
+実行時A/B(`tests/bench/BenchPushCon.idr`):
 
 | | OFF | ON | |
 |---|---|---|---|
@@ -1297,7 +1297,7 @@ idris2-lsp全体(この変更の前後):
 | IR行数 | 720,428 | 711,725 (−1.2%) |
 | コンパイル時間(3回の中央値) | 27.9s | 29.3s (+5%) |
 
-`tests/BenchPushCon.idr`(`check1`/`check2`が早期に展開され、そのコンストラクタも
+`tests/bench/BenchPushCon.idr`(`check1`/`check2`が早期に展開され、そのコンストラクタも
 押し込んだ`case`と出会って畳まれる):
 
 | | `nopushcon` | 全て有効 |
@@ -1334,7 +1334,7 @@ idris2-lsp全体(`--directive noearlyinline`との対比):
 レジスタで返すworkerを作り、呼び出し直後に`case`する箇所はそのworkerを直接呼ぶ。
 当初は既定で無効(末尾の追記を参照)。`doc/struct-return.md`を参照。
 
-`tests/BenchStructReturn.idr`(4段の`Either`の連鎖を500万回、5回の最良値):
+`tests/bench/BenchStructReturn.idr`(4段の`Either`の連鎖を500万回、5回の最良値):
 
 | | 無効 | 有効 | |
 |---|---|---|---|
@@ -1378,7 +1378,7 @@ idris2-lspでは構造体を返すworkerが7,844個から644個に減り、定�
 すべて同じ固定幅の整数・`Char`・`Double`を渡すときは、そのまま載せる
 (ダンプでは`Ret1:1=Int`)。
 
-`tests/BenchStructReturnNative.idr`(`BenchStructReturn`で値を全て100以上に
+`tests/bench/BenchStructReturnNative.idr`(`BenchStructReturn`で値を全て100以上に
 したもの、500万回、5回の最良値):
 
 | | 構造体返しなし | 構造体返しあり |
@@ -1402,7 +1402,7 @@ rc2の`Int`はCの`int64_t`なので、ConstFoldで`Int`を`Int64`と同じく�
 読めるようにした。`Int`のリテラル(`fromInteger n` = `cast-Integer-Int`)が
 実行時に`Integer`を作らなくなる。`doc/cast-fold-scope.md`を参照。
 
-`tests/BenchStructReturnNative.idr`: 864ms・確保2,000万回 → **54ms・35回**
+`tests/bench/BenchStructReturnNative.idr`: 864ms・確保2,000万回 → **54ms・35回**
 (ループが整数演算だけになり、gccがまとめて最適化できるようになった)。
 
 idris2-missing-containers(交互に6回、1回目を除いた平均):10.36s → **9.69s**
@@ -1441,7 +1441,7 @@ idris2-missing-containers(交互に6回、1回目を除いた平均)では、ハ
 その関数に world を引数として足した版を作り、すぐ `apply` される呼び出しを
 直接呼び出しに変える(`doc/world-arity-raising.md`)。
 
-`tests/BenchArityRaise.idr`(`BenchStructReturn`の`step`連鎖を`Core`の複製で
+`tests/bench/BenchArityRaise.idr`(`BenchStructReturn`の`step`連鎖を`Core`の複製で
 書いたもの。上流と同じく`pure`と`>>=`は`%inline`、500万回、5回):
 
 | | `noarityraise` | 既定 |

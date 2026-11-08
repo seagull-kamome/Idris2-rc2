@@ -66,8 +66,10 @@ program's generated C.
 | `Test111Basics/Basics` | `Integer` and `Int` recursion, a self-tail loop, `IORef`, strings, `map` over a range | refc valgrind |
 | `Test111Basics/Recursion` | mutual and non-tail recursion | refc valgrind |
 | `Test111Basics/Closures` | closures, higher-order functions, partial application (the boxed path) | refc valgrind |
-| `Test3Data` | ADTs mixing native and boxed fields, nested `Maybe`/`List` | saved |
-| `Test8EmptyCon` | nullary constructors as operands need no binding (`RCNull`/`RCEmptyCon`) | saved |
+| `Test173DataRep/ConstructorFields` | ADTs mixing native and boxed fields, nested `Maybe`/`List` | saved |
+| `Test173DataRep/EmptyCon` | nullary constructors as operands need no binding (`RCNull`/`RCEmptyCon`) | saved |
+| `Test169Strings/StringNul` | a `String` holding a NUL byte survives the C emission and the FFI | saved valgrind |
+| `Test169Strings/Utf8Invalid` | each invalid UTF-8 sequence decodes to one U+FFFD | saved valgrind |
 | `Test122LiftOrigin` | lambda lifting records where each lifted definition came from: parent, lambda or `Lazy`/`Inf` delay (`doc/lambda-lifting.md`) | refc valgrind check.sh |
 
 ## Numbers
@@ -78,17 +80,23 @@ program's generated C.
 | `Test112Numeric/ImmediateInts` | `Int`/`Int64`/`Bits64` immediates at their 63-bit boundaries (`doc/immediate-ints.md`) | refc valgrind |
 | `Test112Numeric/ShiftWidth` | shifts by the full width or more give 0 or -1, as on Chez | refc valgrind |
 | `Test112Numeric/ImmediateInteger` | `Integer` moving between immediates and GMP around the immediate range | refc valgrind |
+| `Test112Numeric/SmallIntPromotion` | `Int8`/`Int16`/`Bits8`/`Bits16` arithmetic narrows again after C's promotion to `int` | refc valgrind |
+| `Test112Numeric/SignedOverflowWrap` | `+ - *` and `negate` on signed fixed-width integers wrap (computed unsigned), native and boxed | refc valgrind |
 | `Test112Numeric/BoxedCompare` | `case` on an `Integer`/`String`/`Nat` comparison fused into one `cmp` branch over Boxed operands (`doc/native-type-inference.md`); `check.sh` asserts the `cmp` nodes and `_raw` C conditions | refc valgrind |
-| `Test7CastMatrix` | the `Cast` matrix for `Double` and `Char` that refc-suite's `integers` leaves out | saved |
+| `Test168NumericEdge/CastMatrix` | the `Cast` matrix for `Double` and `Char` that refc-suite's `integers` leaves out | saved |
+| `Test168NumericEdge/EuclidModNegative` | `div`/`mod` are Euclidean for every signed type, native and boxed | saved valgrind |
+| `Test168NumericEdge/IntMinDivMinusOne` | `minBound `div` (-1)` wraps instead of trapping; a `minBound` divisor | saved valgrind |
+| `Test168NumericEdge/DoubleNonFiniteToInteger` | a NaN or infinite `Double` cast to `Integer` gives 0, not SIGFPE | saved valgrind |
+| `Test168NumericEdge/DoubleToIntWrap` | `Double` to a fixed-width integer truncates and wraps; NaN and infinity give 0 | saved valgrind |
 | `Test49IntegerOpReuse` | boxed `Integer` ops reusing a unique operand's `mpz_t` (`doc/rop-reuse.md`) | saved valgrind |
-| `Test83DoubleString` | locale-independent `Double` <-> `String` | saved |
+| `Test168NumericEdge/DoubleString` | locale-independent `Double` <-> `String` | saved |
 | `Test91IntConstFold` | `Int` folded like `Int64`, large `Integer` literals read at compile time | refc valgrind check.sh |
 
 ## Native representation and the dual ABI
 
 | test | what it covers | checked |
 |---|---|---|
-| `Test11DualABILeak` | a wrapper reading a boxed parameter natively leaked it (`doc/dual-abi.md`) | refc valgrind |
+| `Test174OwnershipLeaks/DualABILeak` | a wrapper reading a boxed parameter natively leaked it (`doc/dual-abi.md`) | refc valgrind |
 | `Test13NativeArgChain` | a parameter reached through a chain of native lets still gets a native worker | refc valgrind check.sh |
 | `Test117ConAltNative/ConAltNative` | native shadows of destructured fields (`doc/con-alt-native.md`) | refc valgrind |
 | `Test117ConAltNative/ConAltNativeLeadingDup` | a shadowed field whose first read had a `dup` right after the reuse offer | refc valgrind |
@@ -104,6 +112,8 @@ program's generated C.
 | `Test110Loop/LoopInvariantParam` | invariant loop parameters elided | refc valgrind |
 | `Test110Loop/LoopCallArgNativeShadow` | a parameter used only as a call argument gets a native shadow | refc valgrind |
 | `Test110Loop/LoopConstClosureParam` | a loop parameter starting as a constant closure | refc valgrind |
+| `Test110Loop/EndlessLoopLet` | a loop with no exit under a `let` still declares its result variable | refc valgrind |
+| `Test110Loop/LeafTail` | direct tail calls to leaf functions; a cycle is not a leaf (`doc/leaf-tail-calls.md`) | refc valgrind |
 | `Test113DeepRecursion/Trmc` | tail recursion modulo constructor, a million deep (`doc/trmc.md`) | refc valgrind |
 | `Test113DeepRecursion/TrmcHoles` | TRMC with holes at different fields and several recursive fields | refc valgrind |
 | `Test113DeepRecursion/TrmcMutual` | TRMC through another function | refc valgrind |
@@ -114,10 +124,14 @@ program's generated C.
 
 | test | what it covers | checked |
 |---|---|---|
-| `Test18ClosureInPlaceGrow` | a unique closure grows in place as it is applied | refc valgrind |
+| `Test172Closures/ClosureInPlaceGrow` | a unique closure grows in place as it is applied | refc valgrind |
+| `Test172Closures/ClosureCtxSkip` | a difference-list extension used by only some arms: the cell built for the others is freed (`doc/closure-accumulator.md`) | refc valgrind |
 | `Test68ClosureFastPathStackSafety` | a tail-position apply stays undispatched (bounded C stack); leaks by design, through a self-referential `IORef` | refc |
 | `Test66ClosureFastPath` | the fast path for a shared closure receiving its last argument | saved valgrind |
 | `Test92ArityRaise` | world arity raising (`doc/world-arity-raising.md`) | refc valgrind check.sh |
+| `Test171ArityRaiseCases/ArityRaiseWorldParam` | a function that already takes the world and returns an IO action is not raised | refc |
+| `Test171ArityRaiseCases/ArityRaiseCancelWorld` | an `Async`-style starter hands its cancel action back without running it | refc |
+| `Test171ArityRaiseCases/ArityRaiseUnplannedTail` | a tail callee is called raised only when the callee is raised itself | refc |
 | `Test93ApplyFold` | a closure built and applied at once folds to a call | refc valgrind check.sh |
 
 ## Optimization passes
@@ -143,7 +157,9 @@ program's generated C.
 | `Test22BranchSinking` | a let moved into the one branch that reads it (`doc/branch-sinking.md`) | refc valgrind C |
 | `Test79DupMerge` | adjacent `dup`s merged, `dup`/`drop` and `dup`/`postDrop` pairs cancelled (not against a consuming Integer op), alias `let x = w; drop [x]` renamed, unused constructor fields blanked by `DeadVars` (Section 7) | refc valgrind check.sh |
 | `Test36ReuseOfferUniqueLeak` | reuse offer dropping an unreferenced field on the unique path | refc valgrind |
-| `Test44IORefExtPrimLeak` | `RExtPrim` arguments annotated (IORef leak) | refc valgrind |
+| `Test174OwnershipLeaks/IORefExtPrimLeak` | `RExtPrim` arguments annotated (IORef leak) | refc valgrind |
+| `Test174OwnershipLeaks/ExtPrimLiteral` | a native operand of an external primitive is boxed and dropped without a leak per call | refc valgrind |
+| `Test174OwnershipLeaks/ReuseOpInlineOperand` | a boxed operand read inline and then consumed by a boxed op does not leak (`doc/rop-reuse.md`) | refc valgrind |
 | `Test86CafMemoization` | a top-level `unsafePerformIO` CAF evaluated once (`doc/caf-memoization.md`) | saved valgrind |
 | `Test89CafDualABI` | a memoized CAF's body still gets DualABI, FFI inlining and Sink | refc valgrind check.sh |
 
@@ -191,5 +207,5 @@ program's generated C.
 
 ## Benchmarks
 
-`Bench*.idr` are not tests: `bench.sh` times them against real RefC
+`bench/Bench*.idr` are not tests: `bench.sh` times them against real RefC
 (see `rc2/BENCHMARKS.md`). `BenchBoxedCompare.idr` is the one with `Integer` (immediate and heap) and `String` comparisons as conditions.

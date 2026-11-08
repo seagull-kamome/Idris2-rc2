@@ -87,7 +87,7 @@ case (fastPackFixedReplacement n, fastPackFixedShape ret fargs) of
 
 `fastUnpack`、`Data.String.Iterator.uncons`、`Data.String.Iterator.withIteratorString`も、同じEmit時の仕組みでリダイレクトしている。ただし理由は上記のリークとは無関係である。この3つはどれもリークしない。上流の`%foreign`宣言は、文字列を素の`char *`として受け取る(`fastUnpack(char *str)`、`stringIteratorNext(char *s, ...)`、`stringIteratorToString(void *a, char *str, ...)`。これらは今も`idris2rc2_strings.h`/`.c`にある)。rc2の`String`は埋め込みNULバイトを持てるようになった(`rc2/doc/constructor-layout.md`の "Strings")。そのため、これらの関数に`->str`だけを通して読ませると、最初の埋め込みNUL以降がすべて、気づかないうちに失われる。`fastUnpack "ab\NUL1cd"`は`"ab"`だけに展開されてしまう。`Data.String.Iterator`自身のfoldも同じ位置で止まる。
 
-`idris2rc2_fastUnpackFixed`/`idris2rc2_stringIteratorNextFixed`/`idris2rc2_stringIteratorToStringFixed`(`idris2rc2_strings.c`)は、この問題を、`idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed`が上記のコピーとリークを避けたのと同じ方法で解決する。`IDRIS2RC2_Value *`自体を受け取って`IDRIS2RC2_String *`にキャストし直し、NULに出会うまで`->str`を読む代わりに、`->len`バイトだけを読む。回帰テストは`rc2/tests/Test124StringNul`である。リダイレクトした5つの関数すべてと、`Data.TextBuffer.fromString`(別の仕組みでCに到達する。`libs/rc2base/README.md`の`Data.String.RC2`/`Data.TextBuffer`の説明を参照)を、埋め込みNULバイトを含む`String`に対して検査する。
+`idris2rc2_fastUnpackFixed`/`idris2rc2_stringIteratorNextFixed`/`idris2rc2_stringIteratorToStringFixed`(`idris2rc2_strings.c`)は、この問題を、`idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed`が上記のコピーとリークを避けたのと同じ方法で解決する。`IDRIS2RC2_Value *`自体を受け取って`IDRIS2RC2_String *`にキャストし直し、NULに出会うまで`->str`を読む代わりに、`->len`バイトだけを読む。回帰テストは`rc2/tests/Test169Strings/StringNul`である。リダイレクトした5つの関数すべてと、`Data.TextBuffer.fromString`(別の仕組みでCに到達する。`libs/rc2base/README.md`の`Data.String.RC2`/`Data.TextBuffer`の説明を参照)を、埋め込みNULバイトを含む`String`に対して検査する。
 
 上記の`fastPack`/`fastConcat`と違って、`fastUnpack`/`stringIteratorNext`/`stringIteratorToString`には`idris2rc2_strings.h`の`deprecated`属性を付けていない。これらに到達してもリークにはならず、最初の埋め込みNULで黙って切り捨てられるだけである。「ここには到達しないはずだ」というビルド時の合図を付ける対象になる状況が、そもそもない。リダイレクトされた呼び出し箇所をこの切り捨てから守っているのは、ここでのリダイレクトだけである。
 
@@ -127,5 +127,5 @@ case (fastPackFixedReplacement n, fastPackFixedShape ret fargs) of
 - `rc2/support/rc2/idris2rc2_datatypes.h`: `IDRIS2RC2_String`自身の`len`フィールド。`fastUnpack`/`uncons`/`withIteratorString`をリダイレクトする必要が生じた、そもそもの原因である(`rc2/doc/constructor-layout.md`の "Strings")。
 - `rc2/src/Compiler/RC2/CC.idr`: 残した`-Wno-error=deprecated-declarations`フラグ。
 - `rc2/tests/Test46FastPackUnconditional.idr`: 元のリーク修正の回帰テスト。
-- `rc2/tests/Test124StringNul/`: リダイレクトした5つの関数すべてを、埋め込みNULバイトを含む`String`に対して検査する回帰テスト。
+- `rc2/tests/Test169Strings/StringNul.idr`: リダイレクトした5つの関数すべてを、埋め込みNULバイトを含む`String`に対して検査する回帰テスト。
 - `libs/rc2base/src/Prelude/Fix/RC2.idr`: **もう存在しない**(廃止。`rc2base.ipkg`の`modules`から除き、`rc2/tests/Test28Utf8Strings.idr`のimportも除いた)。

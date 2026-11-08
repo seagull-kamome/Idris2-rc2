@@ -150,7 +150,7 @@ Whether that parser agrees byte-for-byte with rc2's own runtime parser
 -> Integer/Int*/Double` casts, none of which do explicit error
 handling on malformed input) is unverified -- and there's existing,
 concrete evidence the parsers in this ecosystem *don't* always agree:
-`rc2/tests/Test7CastMatrix.idr`'s own header comment (lines 15-19)
+`rc2/tests/Test168NumericEdge/CastMatrix.idr`'s own header comment (lines 15-19)
 notes that rc2's `String -> Int64/Bits64` casts deliberately parse via
 `atoll` rather than reproducing RefC's `atoi`-based (and therefore
 32-bit-limited) version of the same cast, and keeps its own test
@@ -194,7 +194,7 @@ Test: `castStringToIntegerNotFolded` in `Test17ConstFold.idr`.
   implementations (`idris2rc2_cast_Char_to_string`, the shortest-form
   `Double -> String` formatter and GMP-exact `String -> Double` parser,
   `String -> Integer/Int*` parsers).
-- `rc2/tests/Test7CastMatrix.idr` -- header comment documents the
+- `rc2/tests/Test168NumericEdge/CastMatrix.idr` -- header comment documents the
   `atoll`-vs-`atoi` String-source divergence and three unrelated
   upstream RefC-runtime bugs found while investigating this area
   (`idris2_cast_Double_to_Int8` missing entirely, `idris2_cast_String_to_*`
@@ -261,7 +261,7 @@ goes once nothing reads it. `Test91IntConstFold` checks each folded
 value against the same computation done at run time.
 
 `i + 1000` on `Int` in a loop used to build and cast the `Integer`
-`1000` on every iteration: `tests/BenchStructReturnNative.idr` went from
+`1000` on every iteration: `tests/bench/BenchStructReturnNative.idr` went from
 864 ms and 20M allocations to 54 ms and 35.
 idris2-missing-containers runs 10.36 s -> 9.69 s (6.5% faster; the
 generated C builds 4 `Integer` literals instead of 12), and idris2-lsp's

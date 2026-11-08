@@ -46,7 +46,7 @@ for something else now: `doc/null-params.md`.
   compiles it marked the last parameter of 383 functions. None of the 16
   functions `ArityRaise` raised was marked (no soundness signal), and none
   of the 4 that only `worldInPrefix` keeps from being raised
-  (`Test128ArityRaiseWorldParam`) was: their world only reaches an `apply`
+  (`Test171ArityRaiseCases/ArityRaiseWorldParam`) was: their world only reaches an `apply`
   of an unknown closure.
 - **Forward from callers.** "Every caller passes `[world]`/`[erased]`" is
   sound only for a function that does not escape (a polymorphic `a` can

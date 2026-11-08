@@ -489,7 +489,7 @@ of how many distinct functions a generic helper is ever called with.
     inspection to require zero `idris2rc2_mkClosure` calls.
 - `rc2/tests/Test115ConstFoldClosure/ConstFoldClosureCallthrough.idr` -- correctness/
   valgrind-cleanliness of 500 iterations of dispatch through the
-  resulting immortal closure, modeled on `Test18ClosureInPlaceGrow`'s
+  resulting immortal closure, modeled on `Test172Closures/ClosureInPlaceGrow`'s
   own rigor. (Kept its own test -- its long loop under valgrind doesn't
   belong in the merged suite.)
 

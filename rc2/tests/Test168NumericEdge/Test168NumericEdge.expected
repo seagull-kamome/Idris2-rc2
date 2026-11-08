@@ -1,0 +1,169 @@
+Int mod: [0, 0, 2, 1, 1, 2, 0, 0, 0, 0]
+Int div: [-2, -2, -3, 2, -2, 3, 2, 0, -1, -1]
+Int8 mod: [0, 0, 2, 1, 1, 2, 0, 0, 0, 0]
+Int8 div: [-2, -2, -3, 2, -2, 3, 2, 0, -1, -1]
+Int16 mod: [0, 0, 2, 1, 1, 2, 0, 0, 0, 0]
+Int16 div: [-2, -2, -3, 2, -2, 3, 2, 0, -1, -1]
+Int32 mod: [0, 0, 2, 1, 1, 2, 0, 0, 0, 0]
+Int32 div: [-2, -2, -3, 2, -2, 3, 2, 0, -1, -1]
+Int64 mod: [0, 0, 2, 1, 1, 2, 0, 0, 0, 0]
+Int64 div: [-2, -2, -3, 2, -2, 3, 2, 0, -1, -1]
+Int native: [0, 0, 0, 2, -2, -3]
+Int8 native: [0, 0, 0, 2, -2, -3]
+Int div: -9223372036854775808 9223372036854775807
+Int mod: 0 0
+Int64 div: -9223372036854775808 mod: 0
+Int32 div: -2147483648 mod: 0
+Int16 div: -32768 mod: 0
+Int8 div: -128 mod: 0
+Int by minBound: [(1, 9223372036854775803), (0, 5), (1, 0), (1, 1)]
+Int32 by minBound: [(1, 2147483643), (0, 5), (1, 0), (1, 1)]
+Int16 by minBound: [(1, 32763), (0, 5), (1, 0), (1, 1)]
+Int8 by minBound: [(1, 123), (0, 5), (1, 0), (1, 1)]
+Int boxed div: [-9223372036854775808, 9223372036854775807, -9223372036854775808, 1, 0, 1, 1, -2, -3, 3, -2]
+Int boxed mod: [0, 0, 0, 9223372036854775803, 5, 0, 1, 1, 2, 2, 0]
+Int64 boxed div: [-9223372036854775808, 9223372036854775807, -9223372036854775808, 1, 0, 1, 1, -2, -3, 3, -2]
+Int64 boxed mod: [0, 0, 0, 9223372036854775803, 5, 0, 1, 1, 2, 2, 0]
+Int32 boxed div: [-2147483648, 2147483647, -2147483648, 1, 0, 1, 1, -2, -3, 3, -2]
+Int32 boxed mod: [0, 0, 0, 2147483643, 5, 0, 1, 1, 2, 2, 0]
+Int16 boxed div: [-32768, 32767, -32768, 1, 0, 1, 1, -2, -3, 3, -2]
+Int16 boxed mod: [0, 0, 0, 32763, 5, 0, 1, 1, 2, 2, 0]
+Int8 boxed div: [-128, 127, -128, 1, 0, 1, 1, -2, -3, 3, -2]
+Int8 boxed mod: [0, 0, 0, 123, 5, 0, 1, 1, 2, 2, 0]
+NaN: 0
+inf: 0
+-inf: 0
+big: 1000000000000000019884624838656
+small: -2
+#0: Int 5076964154930102272 Int8 0 Int16 0 Int32 0 Int64 5076964154930102272 Bits8 0 Bits16 0 Bits32 0 Bits64 5076964154930102272
+#1: Int -5076964154930102272 Int8 0 Int16 0 Int32 0 Int64 -5076964154930102272 Bits8 0 Bits16 0 Bits32 0 Bits64 13369779918779449344
+#2: Int 3000000000 Int8 0 Int16 24064 Int32 -1294967296 Int64 3000000000 Bits8 0 Bits16 24064 Bits32 3000000000 Bits64 3000000000
+#3: Int 300 Int8 44 Int16 300 Int32 300 Int64 300 Bits8 44 Bits16 300 Bits32 300 Bits64 300
+#4: Int -129 Int8 127 Int16 -129 Int32 -129 Int64 -129 Bits8 127 Bits16 65407 Bits32 4294967167 Bits64 18446744073709551487
+#5: Int -1 Int8 -1 Int16 -1 Int32 -1 Int64 -1 Bits8 255 Bits16 65535 Bits32 4294967295 Bits64 18446744073709551615
+#6: Int -8446744073709551616 Int8 0 Int16 0 Int32 -1981284352 Int64 -8446744073709551616 Bits8 0 Bits16 0 Bits32 2313682944 Bits64 10000000000000000000
+#7: Int -9146744073709551616 Int8 0 Int16 0 Int32 -81657856 Int64 -9146744073709551616 Bits8 0 Bits16 0 Bits32 4213309440 Bits64 9300000000000000000
+#8: Int 9146744073709551616 Int8 0 Int16 0 Int32 81657856 Int64 9146744073709551616 Bits8 0 Bits16 0 Bits32 81657856 Bits64 9146744073709551616
+#9: Int 70000 Int8 112 Int16 4464 Int32 70000 Int64 70000 Bits8 112 Bits16 4464 Bits32 70000 Bits64 70000
+#10: Int 2147483648 Int8 0 Int16 0 Int32 -2147483648 Int64 2147483648 Bits8 0 Bits16 0 Bits32 2147483648 Bits64 2147483648
+#11: Int -2147483649 Int8 -1 Int16 -1 Int32 2147483647 Int64 -2147483649 Bits8 255 Bits16 65535 Bits32 2147483647 Bits64 18446744071562067967
+#12: Int 0 Int8 0 Int16 0 Int32 0 Int64 0 Bits8 0 Bits16 0 Bits32 0 Bits64 0
+#13: Int 0 Int8 0 Int16 0 Int32 0 Int64 0 Bits8 0 Bits16 0 Bits32 0 Bits64 0
+#0 native: True False False False False False False False
+#1 native: True False False True False False False True
+#2 native: True True True False False True False False
+#3 native: False True False False False False False False
+#4 native: False False True True False True True True
+#5 native: False False True True True True True True
+#6 native: True False True True False False False True
+#7 native: True False True True False False True True
+#8 native: True False False False False False False True
+#9 native: False True False False False True False False
+#10 native: True False True False False False False False
+#11 native: False False False True True True False True
+#12 native: True False False False False False False False
+#13 native: True False False False False False False False
+#100: Int 0 Int8 0 Int16 0 Int32 0 Int64 0 Bits8 0 Bits16 0 Bits32 0 Bits64 0
+#101: Int 0 Int8 0 Int16 0 Int32 0 Int64 0 Bits8 0 Bits16 0 Bits32 0 Bits64 0
+#102: Int 0 Int8 0 Int16 0 Int32 0 Int64 0 Bits8 0 Bits16 0 Bits32 0 Bits64 0
+Double -> Int:
+[0, 1, -1, 3, -3, 100, -100]
+Double -> Integer:
+[0, 1, -1, 3, -3, 100, -100]
+Double -> Int8:
+[0, 1, -1, 100, -100, 127, -128]
+Double -> Int16:
+[0, 1, -1, 100, -100, 127, -128]
+Double -> Int32:
+[0, 1, -1, 3, -3, 100, -100]
+Double -> Int64:
+[0, 1, -1, 3, -3, 100, -100]
+Double -> Bits8:
+[0, 1, 100, 3, 255]
+Double -> Bits16:
+[0, 1, 100, 3, 255]
+Double -> Bits32:
+[0, 1, 3, 100, 4000000000]
+Double -> Bits64:
+[0, 1, 3, 100, 4000000000]
+Double -> String:
+["0.0", "1.5", "-1.5", "3.999", "-3.999", "100.0", "-100.0"]
+X -> Double:
+[-1234567890.0, 1.2345678901234568e29, 200.0, 50000.0, 3000000000.0, 10000000000000000000.0, -100.0, -30000.0, -2000000000.0, -9000000000000000000.0, 3.14159]
+Char -> Int:
+[65, 122, 48, 126, 0, 255, 1114111]
+Char -> Integer:
+[65, 122, 48, 126, 0, 255, 1114111]
+Char -> Int8:
+[65, 122, 48, 126, 0, -1, -1]
+Char -> Int16:
+[65, 122, 48, 126, 0, 255, -1]
+Char -> Int32:
+[65, 122, 48, 126, 0, 255, 1114111]
+Char -> Int64:
+[65, 122, 48, 126, 0, 255, 1114111]
+Char -> Bits8:
+[65, 122, 48, 126, 0, 255, 255]
+Char -> Bits16:
+[65, 122, 48, 126, 0, 255, 65535]
+Char -> Bits32:
+[65, 122, 48, 126, 0, 255, 1114111]
+Char -> Bits64:
+[65, 122, 48, 126, 0, 255, 1114111]
+Char -> String:
+["A", "z", "0", "~", "\NUL", "\255", "\1114111"]
+X -> Char:
+['A', 'z', '0', '~', '\NUL', '\255', 'A', 'z', '0', '~']
+X -> Char -> Int (round trip):
+[300, 0, 0, 1114111, 0]
+String -> Int:
+-1234567890
+String -> Integer:
+123456789012345678901234567890
+String -> Int8:
+-128
+String -> Int16:
+-32768
+String -> Int32:
+-1234567890
+String -> Int64:
+-1234567890
+String -> Bits8:
+255
+String -> Bits16:
+65535
+String -> Bits32:
+1234567890
+String -> Bits64:
+1234567890
+String -> Double:
+3.14159
+--- show ---
+0.0
+-0.0
+1.0
+-1.0
+1.5
+0.1
+0.3
+3.14159
+100.0
+4000000000.0
+5000050000000.0
+1e21
+0.000001
+1e-7
+9007199254740992.0
+1.7976931348623157e308
+nan
+inf
+-inf
+--- parse ---
+True
+True
+True
+True
+True
+--- round trip ---
+True
+--- done ---

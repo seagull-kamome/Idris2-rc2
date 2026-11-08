@@ -81,7 +81,7 @@ How it works:
 To divert another function: add a row to the table in `ForeignDivert.idr`
 (namespace, base name and number of arguments), write the replacement in `idris2rc2_strings.c` or
 `idris2rc2_buffer.c` taking the boxed values, declare it in `idris2rc2_strings.h`,
-and add a case to `rc2/tests/Test124StringNul` (for the NUL case) or to the leak
+and add a case to `rc2/tests/Test169Strings/StringNul` (for the NUL case) or to the leak
 tests. Then add the row above.
 
 ## The original leak
@@ -185,7 +185,7 @@ this the same way `idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed`
 avoid the copy-and-leak above: by taking the `IDRIS2RC2_Value *`
 itself, cast back to `IDRIS2RC2_String *`, and reading `->len` bytes
 from `->str` rather than reading `->str` until a NUL. `rc2/tests/
-Test124StringNul` is the regression test covering all the diverted
+Test169Strings/StringNul` is the regression test covering all the diverted
 functions (plus `Data.TextBuffer.fromString`, which reaches C through a
 different mechanism — see `libs/rc2base/README.md`'s own
 `Data.String.RC2`/`Data.TextBuffer` coverage) against a `String`
@@ -203,7 +203,7 @@ sites and that truncation.
 
 Found by building the compiler with rc2 (`rc2/doc/self-hosting.md`): the
 rc2-built compiler gave other C than the Chez-built one for a program with a NUL in a
-String literal (`rc2/tests/Test124StringNul`, 1190 lines of difference). The String
+String literal (`rc2/tests/Test169Strings/StringNul`, 1190 lines of difference). The String
 constant was cut in the `.ttc` code, which writes and reads Strings with
 `Data.Buffer.stringByteLength`, `prim__setString` and `prim__getString`. Their
 `RefC:` implementations work on a `char *` (`setBufferString` takes the length with
@@ -234,7 +234,7 @@ Behaviour that changes: `getString` gives exactly the requested number of bytes
 (the Chez backend's meaning) instead of the bytes up to the first NUL, and
 `setString` writes all the bytes of the `String`.
 
-`rc2/tests/Test124StringNul` has the round trip with a NUL and a digit after it, and
+`rc2/tests/Test169Strings/StringNul` has the round trip with a NUL and a digit after it, and
 `rc2/tests/selfhost.sh diff` compares the C that the Chez-built and the rc2-built
 compiler give for all of `rc2/tests`.
 
@@ -350,7 +350,7 @@ past their own `memcpy`'d payload either).
   `-Wno-error=deprecated-declarations` flag.
 - `rc2/tests/Test46FastPackUnconditional.idr` — regression test for the
   original leak fix.
-- `rc2/tests/Test124StringNul/` — regression test covering the diverted
+- `rc2/tests/Test169Strings/StringNul.idr` — regression test covering the diverted
   functions (`fastPack`/`fastUnpack`, the iterators, `Data.Buffer`'s three) against a
   `String` holding an embedded NUL byte.
 - `rc2/tests/selfhost.sh diff` — compares the C of `rc2/tests` from the Chez-built

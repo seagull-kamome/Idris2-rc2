@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-shot performance measurement for rc2: builds the compiler
-# (unless --skip-build), compiles each rc2/tests/Bench*.idr with both
+# (unless --skip-build), compiles each rc2/tests/bench/Bench*.idr with both
 # idris2-rc2 and real `idris2 --cg refc`, times N runs of each (`time`,
 # wall clock), and prints a plain table -- the same manual dance
 # rc2/BENCHMARKS.md's own measurements have always been done with, just
@@ -149,9 +149,9 @@ avg_time() {
 }
 
 echo
-echo "=== Micro-benchmarks (rc2/tests/Bench*.idr, $RUNS run(s) each) ==="
+echo "=== Micro-benchmarks (rc2/tests/bench/Bench*.idr, $RUNS run(s) each) ==="
 printf '%-14s %10s %10s %8s\n' "benchmark" "rc2(s)" "refc(s)" "speedup"
-for bf in "$RC2_DIR"/tests/Bench*.idr; do
+for bf in "$RC2_DIR"/tests/bench/Bench*.idr; do
     name="$(basename "$bf" .idr)"
     "$IDRIS2RC2" --cg rc2 "$bf" -o "$TMP/${name}_rc2" > "$TMP/${name}_rc2_build.log" 2>&1
     idris2 --cg refc "$bf" -o "$TMP/${name}_refc" > "$TMP/${name}_refc_build.log" 2>&1

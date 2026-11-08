@@ -127,7 +127,7 @@ an 8 MB stack ran 100 000 levels deep with the pass and 60 000 without it
 
 ## Test
 
-`Test132LeafTail` (forwarders, and a mutual cycle that `MutualLoop` turns into a loop),
+`Test110Loop/LeafTail` (forwarders, and a mutual cycle that `MutualLoop` turns into a loop),
 `Test154SccTail` (a callee that ends in a loop is called directly; a cycle
 kept by `--directive nomutualloop --directive noloop` keeps its closures
 and runs a million bounces).

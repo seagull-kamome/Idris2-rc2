@@ -209,7 +209,7 @@ idris2-lsp(17,549個の定義)で、スイッチの有無を比べて計測し�
 
 1. ビルドと回帰ベースライン: `CLAUDE.md`の「Build & test」節を参照する(`idris2 --build rc2.ipkg`のあと`tests/refc-suite/run.sh`。期待値は19/19)。とくに`reuse`/`refc001`〜`refc003`(この最適化を直接実行する)と、`Prelude.EqOrd`やパターンの多いコード(比較演算、`basicpatternmatch`)に注意する。上述の二重解放が実際に現れたのはそこだったからである。
 2. `tests/refc-suite/*/build/exec/`以下の生成`.c`を`idris2rc2_isUnique`と`idris2rc2_dropReuseConstructor`でgrepし、最適化が実際に働いていること(確保経路と解放経路の両方)を確認する。黙って一度も発動していない状態になっていないかを調べる。
-3. `tests/*.idr`のスモークテスト一式(`Test111Basics/Basics.idr`から`Test7CastMatrix`まで)を、本物の`idris2 --cg refc`の出力とdiffする。`Test7CastMatrix`だけは、nixpkgsのRefCランタイムの無関係なバグのためにRefCとの比較ができないので、保存済みの`.expected`ファイルと比較する(詳細はそのモジュールコメントを参照)。
+3. `tests/*.idr`のスモークテスト一式(`Test111Basics/Basics.idr`から`Test168NumericEdge/CastMatrix`まで)を、本物の`idris2 --cg refc`の出力とdiffする。`Test168NumericEdge/CastMatrix`だけは、nixpkgsのRefCランタイムの無関係なバグのためにRefCとの比較ができないので、保存済みの`.expected`ファイルと比較する(詳細はそのモジュールコメントを参照)。
 
 ## 補遺: `releaseReuse`は殻を直接解放する
 

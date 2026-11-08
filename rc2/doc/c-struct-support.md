@@ -330,7 +330,7 @@ Two facts decided it.
    box, so a `dup` would be pure waste. When this design was made,
    `RExtPrim`'s `annotate` was a bare pass-through that never
    consulted `owned`; that gap has since been fixed separately (it leaked
-   IORef cells and array prims' arguments, `tests/Test44IORefExtPrimLeak`),
+   IORef cells and array prims' arguments, `tests/Test174OwnershipLeaks/IORefExtPrimLeak`),
    and `RExtPrim` now uses `splitBorrows`/`wrapDups`/`boxedOperands` like
    `ROp`. That does not make `ROp`'s shape right for a struct accessor,
    which is why the nodes have a rule of their own.
@@ -566,7 +566,7 @@ not copying files. What that comes down to, concretely:
 
 An operand held natively (a `Double` or large `Int` literal, a native `Double`
 local) is boxed for the call, and the box was never dropped, so `writeIORef r 1.5`
-leaked 16 bytes on every execution (`tests/Test156ExtPrimLiteral`). `Emit` now boxes
+leaked 16 bytes on every execution (`tests/Test174OwnershipLeaks/ExtPrimLiteral`). `Emit` now boxes
 such an operand with `boxOpArgParts`, as its `ROp` case does, and drops that box after
 the call. This is right because every primitive of the whitelist that keeps a value
 takes its own reference: `prim__newIORef`, `prim__writeIORef`, `prim__newArray`,

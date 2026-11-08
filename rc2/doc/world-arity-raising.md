@@ -114,10 +114,10 @@ world; where it is not, a prefix that hands that parameter to a call or copies
 it keeps the function from being raised, which costs an optimization but not
 correctness (`TestTask`: 22 raised functions before, 21 after; `Test92`,
 `Test93`: unchanged). Not looked at, as above: a world captured by a lambda in
-the prefix, and the arguments of a tail call. `Test130ArityRaiseCancelWorld`
+the prefix, and the arguments of a tail call. `Test171ArityRaiseCases/ArityRaiseCancelWorld`
 is the regression test.
 
-`rc2/tests/Test128ArityRaiseWorldParam` is the regression test (a cut-down
+`rc2/tests/Test171ArityRaiseCases/ArityRaiseWorldParam` is the regression test (a cut-down
 `Control.Task`): the callback called in the lambda, through a named function,
 and through a local action. Without the guard all three leave the result
 at 0. `libs/control-async/tests/TestTask` hits the same thing through the library.
@@ -306,7 +306,7 @@ The definitions that go are mostly the closures' own lambdas
 (`{f:0}`), now called only from the raised version and inlined into it,
 and the originals whose every site was rewritten.
 
-`tests/BenchArityRaise.idr` (`BenchStructReturn`'s `step` chain against
+`tests/bench/BenchArityRaise.idr` (`BenchStructReturn`'s `step` chain against
 a `Core` clone whose `pure` and `>>=` are `%inline`, as upstream's are;
 five million calls, best of five): **2.15 s → 1.02 s**. Without the
 `%inline` the `bind` is only inlined after RC annotation, where this

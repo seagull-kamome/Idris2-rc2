@@ -139,7 +139,7 @@ in idris2-lsp, so excluding it costs nothing measurable.
 without any escape. A native field read as Boxed in two separate
 `case`s on the same local would be boxed twice, where the constructor
 boxed it once and both reads shared that box. Seen in
-`tests/BenchKnownCon.idr`, whose `mod` worker takes its first argument
+`tests/bench/BenchKnownCon.idr`, whose `mod` worker takes its first argument
 Boxed. So a field is aliased to its argument only if the argument is
 not native or the field is never read as Boxed. Otherwise:
 
@@ -190,7 +190,7 @@ matched). That cell is now never allocated in the first place.
 The 166 left are mostly created by `LateInline` after RC annotation,
 where this pre-RC fold can't reach (see "Pipeline placement").
 
-`tests/BenchKnownCon.idr` (5 runs each): 3.51s off, 3.33s on (about 5%
+`tests/bench/BenchKnownCon.idr` (5 runs each): 3.51s off, 3.33s on (about 5%
 faster). The loop body allocates a `Just` and a box per call without
 the fold, and only the box with it.
 
@@ -269,7 +269,7 @@ A pushed tail's constructor is never built. Whether that removes a
   chain the final `Right (a + b)` is exactly this. Its cell was
   reused, but its sum was boxed.
 
-The first draft of `tests/BenchPushCon.idr` showed no difference in
+The first draft of `tests/bench/BenchPushCon.idr` showed no difference in
 `malloc` count because both were already free there. Its fields came
 from calls (already Boxed) and every cell was reused.
 
@@ -290,7 +290,7 @@ constructor it replaced is no longer built on that path. Static counts
 can't show the dynamic effect, and idris2-lsp can't be run under rc2
 (its FFI isn't resolvable), so the runtime evidence is the benchmark.
 
-`tests/BenchPushCon.idr`: valgrind over 100,000 iterations counts
+`tests/bench/BenchPushCon.idr`: valgrind over 100,000 iterations counts
 1,999,977 allocations off and 1,899,992 on, one fewer per call (the
 sum's box). Wall clock over 5,000,000 iterations, 5 runs: 3.54s off,
 3.45s on (about 2.6% faster).
@@ -409,7 +409,7 @@ new shapes after RC annotation. Only 3,158 callees qualify at
 of the latter become single-caller only after ConstFold and SpecClosure
 turn closure applications into direct calls.
 
-`tests/BenchPushCon.idr`: `check1`/`check2` are now inlined at
+`tests/bench/BenchPushCon.idr`: `check1`/`check2` are now inlined at
 `Lifted`, so their constructors meet the pushed `case` before RC and
 fold away too. valgrind, 100,000 iterations: 1,999,976 allocations
 with `nopushcon`, **1,500,052** with everything on. Wall clock over
@@ -589,7 +589,7 @@ Two bugs found getting it right, both specific to post-RC IR:
   map passed to the fold held only the locals in scope at `let v`, so a
   native `let a : InlineNative = ..` right before `con K [a]` looked
   Boxed and got a `drop [a]`. The C compiler rejected it as an
-  undeclared variable (`Test83DoubleString`). `letReps` now collects
+  undeclared variable (`Test168NumericEdge/DoubleString`). `letReps` now collects
   the value's own bindings too.
 
 ## Correctness notes on rewrite B
@@ -612,7 +612,7 @@ Two bugs found getting it right, both specific to post-RC IR:
   that the chain result is never built. `useHalf` and the `M`-monad
   chain are output-only: they reach shape B only after `LateInline`
   or, through closures, never.
-- `tests/BenchKnownCon.idr` and `tests/BenchPushCon.idr` measure the two
+- `tests/bench/BenchKnownCon.idr` and `tests/bench/BenchPushCon.idr` measure the two
   rewrites (numbers above). An `M` monad over `IO (Either String a)`
   with an `%inline` `io_bind`-based bind was tried first as B's
   benchmark and doesn't reproduce idris2-lsp's shape: its

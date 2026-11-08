@@ -197,9 +197,9 @@ the same `ty`.
 
 Confirmed against the existing test/benchmark suite:
 
-- `Main.fib` (`tests/BenchFib.idr`) -> `params=[Int] ret=Int` -- the
+- `Main.fib` (`tests/bench/BenchFib.idr`) -> `params=[Int] ret=Int` -- the
   marquee non-tail-recursive target this whole effort exists for.
-- `Main.sumTo` (`tests/BenchLoop.idr`) -> `params=[Int, Int] ret=Int`,
+- `Main.sumTo` (`tests/bench/BenchLoop.idr`) -> `params=[Int, Int] ret=Int`,
   correctly read straight off `Compiler.RC2.Loop`'s own `RLoop`
   decision.
 - `Main.countDown`/`Main.collatzLike` (`tests/Test110Loop/SelfTailLoop.idr`) ->
@@ -1235,7 +1235,7 @@ the closest analogue to bug #2 above) passed without any fix needed.
    indistinguishable from a correct one) -- exactly the same "hidden by
    a no-op" shape that bit this project once before with 32-bit-and-
    below pointer tagging. Confirmed with `valgrind --leak-check=full`
-   against a synthetic worst case (`tests/Test11DualABILeak.idr`, a
+   against a synthetic worst case (`tests/Test174OwnershipLeaks/DualABILeak.idr`, a
    dual-ABI-eligible function whose own promoted parameter is
    deliberately pushed outside the cache range): `31,999,984 bytes in
    1,999,999 blocks definitely lost` for 2,000,000 calls -- essentially
@@ -1679,9 +1679,9 @@ dup/drop anywhere in this computation, the whole thing staying in
 `int64_t` from the worker's own entry to its own `return` (see Stage 4's
 own before/after code sample above for the generated C). Confirmed correct (`832040`
 for `fib 30`), confirmed leak-free (`valgrind --leak-check=full`,
-`definitely lost: 0 bytes` across `tests/BenchFib.idr`,
-`tests/BenchLoop.idr`, `tests/BenchChain.idr`,
-`tests/Test11DualABILeak.idr`), the full refc-suite (19/19) and the
+`definitely lost: 0 bytes` across `tests/bench/BenchFib.idr`,
+`tests/bench/BenchLoop.idr`, `tests/bench/BenchChain.idr`,
+`tests/Test174OwnershipLeaks/DualABILeak.idr`), the full refc-suite (19/19) and the
 entire smoke-test/benchmark matrix re-verified byte-for-byte against
 real `idris2 --cg refc`, and -- for the first time in this whole
 effort -- a **measured** performance win: `fib 30`, timed directly
@@ -1778,7 +1778,7 @@ from Stage 2.
   list). No `FFIWorkers` ref/`generateCSourceFile` leading argument any
   more -- the FFI-inline table is consumed entirely as an IR rewrite,
   never threaded down into `Emit`'s own state.
-- `rc2/tests/Test11DualABILeak.idr` -- regression test for the
+- `rc2/tests/Test174OwnershipLeaks/DualABILeak.idr` -- regression test for the
   reference-leak bug above; verify with `valgrind --leak-check=full`,
   not just a stdout diff (see the test file's own comment).
 - `rc2/tests/Test27FFIDualABI.idr`/`.c`/`.h` -- Stage 3c/5's own
@@ -1787,7 +1787,7 @@ from Stage 2.
   specifically to confirm no standalone `idris2rc2_ffiworker_*` C
   function is emitted any more; registered in `verify.sh`'s
   `LEAK_SENSITIVE_TESTS`); verify with `valgrind --leak-check=full`,
-  same reasoning as `Test11DualABILeak.idr` above.
+  same reasoning as `Test174OwnershipLeaks/DualABILeak.idr` above.
 
 ## Verification methodology
 
@@ -1804,7 +1804,7 @@ from Stage 2.
    there too; the interesting native findings are what the worker
    itself got built with, visible directly in the generated C instead
    (next step).
-3. `tests/BenchFib.idr` is the canonical smoke test for every stage:
+3. `tests/bench/BenchFib.idr` is the canonical smoke test for every stage:
    `fib 30` must still print `832040`; `grep -n "^int64_t idris2rc2_worker_\|
    ^IDRIS2RC2_Value \*idris2rc2_worker_" build/exec/*.c` confirms a worker
    actually got synthesised and shows whether its own return ended up
@@ -1816,14 +1816,14 @@ from Stage 2.
    implemented** -- the original's own recursive calls target the
    *worker* directly (`idris2rc2_worker_Main_fib_0`, not `Main_fib`), with no
    remaining `idris2rc2_mkInt64`/`idris2rc2_to_i64` pair around either
-   call. `tests/BenchLoop.idr`'s own `Main.sumTo` is the loop-combination
+   call. `tests/bench/BenchLoop.idr`'s own `Main.sumTo` is the loop-combination
    smoke test -- its worker's own loop-exit tail value must render
    through the same native path.
-4. Full `tests/Test*.idr`/`tests/Bench*.idr` suite, diffed against real
+4. Full `tests/Test*.idr`/`tests/bench/Bench*.idr` suite, diffed against real
    `idris2 --cg refc` output, same as every other stage in this
    project -- every stage is supposed to be purely structural/codegen
    changes, so *every* test must still match byte-for-byte, with zero
-   observable behaviour difference. `Test7CastMatrix.idr` can't be
+   observable behaviour difference. `Test168NumericEdge/CastMatrix.idr` can't be
    diff-checked against real `idris2 --cg refc` at all right now: the
    nixpkgs-bundled RefC support library itself fails to compile
    (`idris2_negate_Double` typo'd as `idris2_nagate_Double` in its own
@@ -1838,7 +1838,7 @@ from Stage 2.
    diff, precisely because it doesn't corrupt any computed value. Any
    change to `RAppNameRep`'s own emission, or to `Compiler.RC2.DualABI`'s
    own worker/wrapper synthesis, should also be checked with `valgrind
-   --leak-check=full` against `tests/Test11DualABILeak.idr` (deliberately
+   --leak-check=full` against `tests/Test174OwnershipLeaks/DualABILeak.idr` (deliberately
    pushes its own promoted parameter's values outside the small-int
    cache range, so a missing drop can't hide as a silent no-op the way
    it did in `Main.fib`/`Main.sumTo`'s own recursion) -- expect
@@ -1847,7 +1847,7 @@ from Stage 2.
 6. **Once Stage 4 is actually rewriting call sites, verify the
    performance win directly** -- `time ./build/exec/<BenchFib output>`
    a few times, next to the same for a real-`idris2 --cg refc` build of
-   the same file. `fib 30` (`tests/BenchFib.idr`) went from parity/
+   the same file. `fib 30` (`tests/bench/BenchFib.idr`) went from parity/
    slightly-behind RefC (every earlier stage in this project's own
    history, per `BENCHMARKS.md`) to roughly **35% faster** once Stage 4
    actually landed -- if a future change to this pipeline regresses

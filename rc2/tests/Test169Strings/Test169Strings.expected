@@ -1,0 +1,57 @@
+6
+"ab\NUL1cd"
+"ab\NUL1cd!!"
+"\NUL1"
+'\NUL'
+Just ('a', "b\NUL1cd")
+"b\NUL1cd"
+"#ab\NUL1cd"
+"dc1\NULba"
+True
+False
+LT
+['a', 'b', '\NUL', '1', 'c', 'd']
+True
+6
+"b\NUL1cd"
+6
+"b\NUL1"
+(6, True)
+(6, (True, ['a', 'b', '\NUL', '1', 'c', 'd']))
+[97, 98, 0, 49, 99, 100]
+True
+(0, "")
+(4, (True, ['\955', '\NUL', '1']))
+[206, 187, 0, 49]
+True
+(0, "")
+"0"
+case: matched own literal
+case: correctly distinct past the NUL
+=LG <LN <LN <LN <LN <LN <LN <LN <LN <LN
+>GN =LG <LN <LN <LN <LN <LN <LN <LN <LN
+>GN >GN =LG <LN <LN <LN <LN <LN <LN <LN
+>GN >GN >GN =LG <LN <LN <LN <LN <LN <LN
+>GN >GN >GN >GN =LG <LN <LN <LN <LN <LN
+>GN >GN >GN >GN >GN =LG <LN <LN <LN <LN
+>GN >GN >GN >GN >GN >GN =LG <LN >GN <LN
+>GN >GN >GN >GN >GN >GN >GN =LG >GN <LN
+>GN >GN >GN >GN >GN >GN <LN <LN =LG <LN
+>GN >GN >GN >GN >GN >GN >GN >GN >GN =LG
+ab
+done
+ascii: [97, 127]
+two bytes: [128, 2047]
+three bytes: [2048, 65535]
+four bytes: [65536, 1114111]
+overlong slash: [65533]
+overlong two: [65533]
+overlong three: [65533]
+overlong four: [65533]
+surrogate low: [97, 65533, 98]
+surrogate high: [65533]
+past max: [65533]
+lead F5: [65533, 65533, 65533, 65533]
+stray continuation: [97, 65533, 98]
+truncated: [97, 65533]
+lead then ascii: [65533, 97]

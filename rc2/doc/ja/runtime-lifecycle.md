@@ -65,4 +65,4 @@ rc2の`String`層は、外部から入ってくるCのバイト列を**すべて
 - `rc2/support/rc2/runtime.h` -- 上記2関数の宣言。生成されたCコードからは、`idris2rc2_runtime.h`の包括ヘッダ経由で参照できる。
 - `rc2/src/Compiler/RC2/Emit.idr` -- 2つの呼び出しを出力する、`generateCSourceFile`内の`footer`。
 - `rc2/tests/Test82RuntimeLocale/` -- `LC_CTYPE`を読み戻して`setlocale(LC_ALL, "")`が実行されたことを確認し、`Double`の`show`がロケールに依存しないことも検査する(`verify.sh`はこのスイートを`LC_ALL=C.UTF-8`で実行する)。
-- `rc2/tests/Test83DoubleString/` -- `Double <-> String`変換そのものを検査する。最短形式の`show`、`cast`によるパース、往復変換を扱う。
+- `rc2/tests/Test168NumericEdge/DoubleString.idr` -- `Double <-> String`変換そのものを検査する。最短形式の`show`、`cast`によるパース、往復変換を扱う。

@@ -640,7 +640,7 @@ would have had from the start. A divisor that is not a constant keeps the
    arithmetic chain, byte-diffed against real `idris2 --cg refc` output
    including boundary-value wraparound -- this is the test that found
    bug 3/4 above, re-run it first when touching anything in this area.
-3. `tests/BenchChain.idr`'s `poly` function is the canonical
+3. `tests/bench/BenchChain.idr`'s `poly` function is the canonical
    demonstration that the whole mechanism works end-to-end: compare its
    generated C's heap-allocation/dup/drop counts against RefC's (see
    `BENCHMARKS.md`'s "算術チェイン" section for the exact expected

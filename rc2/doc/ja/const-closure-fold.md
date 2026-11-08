@@ -219,4 +219,4 @@ RV _ cval@(RCConstClosure {}) =>
   - §2(旧`Test71ConstFoldClosureDeadCodeSurvival`): `DeadCode`の修正に特化したテスト。畳み込み済みの辞書フィールド経由でしか到達できないメソッド(`secretG`)と、そのメソッドだけが呼ぶ2ホップ目のヘルパーの、どちらも`pruneDeadDefs`を生き延びなければならない。
   - §3(旧`Test72ConstFoldClosureAliasFold`、コミット`0e7c755`): `RCConstClosure`の、対になるアームの修正。`%noinline`を介した、畳み込み済みクロージャの`let`によるエイリアスが、それでも`MkDict a b`を1つの不死の`RCConstCon`に畳み込む。
   - §4(旧`Test73ConstFoldClosureCallArg`、コミット`0e7c755`): 一般的な呼び出し引数のケース(`map double [1,2,3,4,5]`の形)。クロージャ引数が、3つの別々の呼び出し箇所で同一に共有される1つの不死のstaticに畳み込まれる。生成されたCを調べて、`idris2rc2_mkClosure`の呼び出しが1つも要らないことを確認した。
-- `rc2/tests/Test115ConstFoldClosure/ConstFoldClosureCallthrough.idr`: 結果として得られた不死のクロージャを経由するディスパッチを500回繰り返したときの、正しさとvalgrindでのクリーンさを確認する(`Test18ClosureInPlaceGrow`自身の厳密さにならった)。統合したスイートに入れず、独立したテストのままにした。valgrind下での長いループは、統合したスイートにふさわしくないためである。
+- `rc2/tests/Test115ConstFoldClosure/ConstFoldClosureCallthrough.idr`: 結果として得られた不死のクロージャを経由するディスパッチを500回繰り返したときの、正しさとvalgrindでのクリーンさを確認する(`Test172Closures/ClosureInPlaceGrow`自身の厳密さにならった)。統合したスイートに入れず、独立したテストのままにした。valgrind下での長いループは、統合したスイートにふさわしくないためである。

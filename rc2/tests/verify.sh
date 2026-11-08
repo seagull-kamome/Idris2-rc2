@@ -97,7 +97,7 @@
 #                       automatically, but a new one has no .expected
 #                       of its own yet -- without this flag it just
 #                       reports FAIL "no saved .expected"). Never
-#                       touches Test7CastMatrix/Test7CastMatrix.expected
+#                       touches Test168NumericEdge/Test168NumericEdge.expected
 #                       or Test17ConstFold/Test17ConstFold.expected --
 #                       those two are saved
 #                       by hand instead (real refc can't even build on
@@ -310,7 +310,7 @@ echo
 echo "=== Smoke tests ==="
 
 # NO_REFC_DIFF_TESTS skips diffing against real refc in favour of a
-# saved .expected file, for three different reasons: Test7CastMatrix
+# saved .expected file, for three different reasons: Test168NumericEdge/CastMatrix
 # because nixpkgs' own RefC support library fails to compile at all
 # (KNOWN-BUGS.md), Test17ConstFold because its own codegenChain
 # deliberately embeds System.Info.codegen's own value (a ConstExtPrim
@@ -377,7 +377,7 @@ echo "=== Smoke tests ==="
 # compiles this test cleanly. `.expected` here is rc2's own
 # manually-verified-correct output (deterministic bind/listen/connect/
 # send/recv transcript over a 127.0.0.1 loopback), saved by hand --
-# same reasoning as Test7CastMatrix/Test17ConstFold above, there is no
+# same reasoning as Test168NumericEdge/CastMatrix and Test17ConstFold above, there is no
 # real-RefC output to diff against in the first place.
 #
 # Test42SupportMisc: exercises setEnv/unsetEnv, which real `idris2 --cg
@@ -393,7 +393,7 @@ echo "=== Smoke tests ==="
 # RefC/rc2-specific -- a genuine upstream defect this project works
 # around for its own tests but can't fix. `.expected` here is rc2's own
 # manually-verified-correct output, same reasoning as
-# Test7CastMatrix/Test17ConstFold above.
+# Test168NumericEdge/CastMatrix and Test17ConstFold above.
 #
 # Test119FFINoRefc/ConstCFStringReturn.idr: exercises binding a real `const char *`-
 # returning C function, which real `idris2 --cg refc` cannot compile --
@@ -406,7 +406,7 @@ echo "=== Smoke tests ==="
 # *` instead (this fix's whole point -- see TODO.md's git history /
 # KNOWN-BUGS.md), so only rc2 can actually compile this test. `.expected`
 # here is rc2's own manually-verified-correct output, same reasoning as
-# Test7CastMatrix/Test17ConstFold above.
+# Test168NumericEdge/CastMatrix and Test17ConstFold above.
 #
 # Test59Export: exercises `%export`'s real native-C-ABI wrapper
 # synthesis (rc2/doc/export-support.md), which real `idris2 --cg refc`
@@ -414,13 +414,13 @@ echo "=== Smoke tests ==="
 # companion .c file's own `extern` declarations of the generated
 # `idris2rc2_test_*` wrappers would fail to link against a refc build.
 # `.expected` here is rc2's own manually-verified-correct output, same
-# reasoning as Test7CastMatrix/Test17ConstFold above. This one merged
+# reasoning as Test168NumericEdge/CastMatrix and Test17ConstFold above. This one merged
 # test covers every %export CFType shape (scalars, Ptr, a C struct
 # handle, a GCPtr argument, Integer both directions, a String return
 # and a String argument) -- real `idris2 --cg refc` doesn't implement
 # `%export` marshalling for any of them.
-# Test3Data / Test8EmptyCon / Test27FFIDualABI / Test49IntegerOpReuse /
-# Test66ClosureFastPath / Test83DoubleString print a Double
+# Test173DataRep/ConstructorFields / Test173DataRep/EmptyCon / Test27FFIDualABI / Test49IntegerOpReuse /
+# Test66ClosureFastPath / Test168NumericEdge/DoubleString print a Double
 # via show/cast, and rc2's Double->String (support/rc2/numeric.c) is now
 # the shortest round-tripping decimal, deliberately unlike RefC's fixed
 # "%f" six-digit form -- see the top-level README's "Deliberate
@@ -428,7 +428,7 @@ echo "=== Smoke tests ==="
 # against the saved .expected only.
 # Test148TargetOs prints `os`, which RefC spells differently ("unix"/"darwin"...).
 # Test149StrLiteralFold prints what `codegen` is ("rc2", not RefC's).
-NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test27FFIDualABI Test28Utf8Strings Test35NetworkLoopback Test42SupportMisc Test49IntegerOpReuse Test59Export Test66ClosureFastPath Test82RuntimeLocale Test83DoubleString Test86CafMemoization Test119FFINoRefc Test121CgRuntime Test24CStructSupport Test120CStruct Test124StringNul Test125LazyMemo Test126LazySelfForce Test135EuclidModNegative Test136NetBufLength Test138ExportWideIO Test141IntMinDivMinusOne Test142DoubleNonFiniteToInteger Test143Utf8Invalid Test145DoubleToIntWrap Test148TargetOs Test149StrLiteralFold"
+NO_REFC_DIFF_TESTS="Test173DataRep Test168NumericEdge Test17ConstFold Test27FFIDualABI Test28Utf8Strings Test35NetworkLoopback Test42SupportMisc Test49IntegerOpReuse Test59Export Test66ClosureFastPath Test82RuntimeLocale Test86CafMemoization Test119FFINoRefc Test121CgRuntime Test24CStructSupport Test120CStruct Test169Strings Test125LazyMemo Test126LazySelfForce Test136NetBufLength Test138ExportWideIO Test148TargetOs Test149StrLiteralFold"
 
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without
@@ -445,7 +445,7 @@ NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test
 # packCFType allocation (idris2rc2_mkPointer/idris2rc2_mkGCPointer) is
 # new to %export's own argument marshalling and worth the same
 # scrutiny.
-LEAK_SENSITIVE_TESTS="Test11DualABILeak Test13NativeArgChain Test17ConstFold Test22BranchSinking Test27FFIDualABI Test28Utf8Strings Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test59Export Test66ClosureFastPath Test79DupMerge Test86CafMemoization Test87SpecConstCon Test88KnownConFold Test89CafDualABI Test90StructReturn Test91IntConstFold Test92ArityRaise Test93ApplyFold Test99DeadArgs Test102MultiThreadSwitch Test104ThreadStress Test106TransitiveSpec Test110Loop Test111Basics Test112Numeric Test113DeepRecursion Test114Inline Test115ConstFoldClosure Test18ClosureInPlaceGrow Test117ConAltNative Test118FFI Test119FFINoRefc Test24CStructSupport Test120CStruct Test122LiftOrigin Test124StringNul Test125LazyMemo Test136NetBufLength Test137SinkDupTwice Test138ExportWideIO Test139ClosureCtxSkip Test143Utf8Invalid Test146NewArrayLength Test147ReuseOpInlineOperand Test141IntMinDivMinusOne Test149StrLiteralFold Test152TinyInline Test153PushApply Test154SccTail Test155ConstAlias Test156ExtPrimLiteral Test158FwdAlias Test157ApplyConstClosure Test159SinkClosure Test160FwdAliasPermuted Test161StringOpConsume Test162WidenCompare Test163WrapperClosure Test164ConstPartial Test165StructReturnWide Test166StructReturnLet Test167StackCon"
+LEAK_SENSITIVE_TESTS="Test174OwnershipLeaks Test13NativeArgChain Test17ConstFold Test22BranchSinking Test27FFIDualABI Test28Utf8Strings Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test42SupportMisc Test46FastPackUnconditional Test49IntegerOpReuse Test59Export Test66ClosureFastPath Test79DupMerge Test86CafMemoization Test87SpecConstCon Test88KnownConFold Test89CafDualABI Test90StructReturn Test91IntConstFold Test92ArityRaise Test93ApplyFold Test99DeadArgs Test102MultiThreadSwitch Test104ThreadStress Test106TransitiveSpec Test110Loop Test111Basics Test112Numeric Test113DeepRecursion Test114Inline Test115ConstFoldClosure Test172Closures Test117ConAltNative Test118FFI Test119FFINoRefc Test24CStructSupport Test120CStruct Test122LiftOrigin Test169Strings Test125LazyMemo Test136NetBufLength Test137SinkDupTwice Test138ExportWideIO Test146NewArrayLength Test168NumericEdge Test149StrLiteralFold Test152TinyInline Test153PushApply Test154SccTail Test155ConstAlias Test158FwdAlias Test157ApplyConstClosure Test159SinkClosure Test160FwdAliasPermuted Test161StringOpConsume Test162WidenCompare Test163WrapperClosure Test164ConstPartial Test165StructReturnWide Test166StructReturnLet Test167StackCon"
 
 # Pre-existing leaks still tolerated, as "definitely lost" bytes per
 # test; anything else non-zero is a new failure. Empty: every leak once

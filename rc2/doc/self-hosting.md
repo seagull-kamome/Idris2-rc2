@@ -153,11 +153,11 @@ Not Chez: `libidris2_support` (C, from `idris2-src/support/c`) and the rc2 runti
    81 programs of `rc2/tests` with both compilers and comparing the C (77 identical at
    first; 78 identical, 3 differing only in float notation and none otherwise after the
    fix; see "Reproducing", `diff`):
-   - `Test112Numeric`, `Test83DoubleString` and `Test145DoubleToIntWrap` differ only in
+   - `Test112Numeric`, `Test168NumericEdge/DoubleString` and `Test168NumericEdge/DoubleToIntWrap` differ only in
      the notation of `Double` literals (and in the names of the constants made from
      them): `1e-6` and `0.000001`, `9.007199254740992e15` and `9007199254740992.0`.
      The values are the same (checked on 19 literals with a float parser).
-   - `Test124StringNul` differs in 1190 lines: `"ab\x00""1cd"` became `"ab"`.
+   - `Test169Strings/StringNul` differs in 1190 lines: `"ab\x00""1cd"` became `"ab"`.
      Minimal case: `printLn (Prelude.String.length "ab\NUL1cd")` prints 6 when the
      program is compiled by the Chez-built compiler and 2 by the rc2-built one.
    - Cause: `Data.Buffer.stringByteLength`, `prim__setString` and `prim__getString`
@@ -172,7 +172,7 @@ Not Chez: `libidris2_support` (C, from `idris2-src/support/c`) and the rc2 runti
    - Fix: the three `Data.Buffer` functions (and `Libraries.Data.String.Iterator`) are
      replaced by rc2's own length-aware ones when the program is turned into `RCDef`s
      (`Compiler/RC2/ForeignDivert.idr`). What is replaced and why is in
-     `fastpack-fix.md`, "What is replaced, and why". `Test124StringNul` covers it.
+     `fastpack-fix.md`, "What is replaced, and why". `Test169Strings/StringNul` covers it.
 
 ## Design
 

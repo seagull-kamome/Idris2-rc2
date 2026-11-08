@@ -3,7 +3,7 @@ module Main
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
--- Loop conversion (Compiler.RC2.Loop, rc2/doc/loop-conversion.md): self-tail loops, their continuations, invariant and native-shadowed parameters.
+-- Loop conversion (Compiler.RC2.Loop, rc2/doc/loop-conversion.md): self-tail loops, their continuations, invariant and native-shadowed parameters, a loop with no exit, and direct tail calls to leaf functions.
 -- Each section is a formerly separate test kept verbatim as its own
 -- module (its `main` renamed `run`); see rc2/tests/README.md.
 
@@ -12,6 +12,8 @@ import Test110Loop.LoopContinuePostDrop
 import Test110Loop.LoopInvariantParam
 import Test110Loop.LoopCallArgNativeShadow
 import Test110Loop.LoopConstClosureParam
+import Test110Loop.EndlessLoopLet
+import Test110Loop.LeafTail
 
 partial
 main : IO ()
@@ -21,3 +23,5 @@ main = do
     LoopInvariantParam.run
     LoopCallArgNativeShadow.run
     LoopConstClosureParam.run
+    EndlessLoopLet.run
+    LeafTail.run
