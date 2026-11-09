@@ -148,7 +148,8 @@ allStages = [
   ]
 
 
-||| A new `Stage` constructor not added to `allStages` fails to compile here.
+||| Only a completeness check, never used at run time: a new `Stage`
+||| constructor not added to `allStages` fails to compile here.
 export
 inAllStages : (s : Stage) -> Elem s Stage.allStages
 inAllStages NoInline = Here
@@ -220,8 +221,10 @@ optInOn : OptIn -> List String -> Bool
 optInOn s directives = optInDirective s `elem` directives
 
 ||| `act` unless one of `offs` is disabled, else the unchanged `skipped`
-||| value -- the shape every pass in `toRCDefs` has.
+||| value -- the shape every pass in `toRCDefs` has. `act` is lazy: a
+||| switched-off pass must not even build (let alone run) its work, as the
+||| `else` branch of the `if` this replaces did not.
 export
-unlessOff : List Stage -> List String -> (skipped : a) -> Core a -> Core a
+unlessOff : List Stage -> List String -> (skipped : a) -> Lazy (Core a) -> Core a
 unlessOff offs directives skipped act =
     if any (\s => stageOff s directives) offs then pure skipped else act

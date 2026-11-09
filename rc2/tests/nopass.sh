@@ -5,7 +5,7 @@
 # tests and nothing but a hand-passed directive would have shown it.
 #
 # Usage: ./nopass.sh [STAGE...]     (default: every stage rc2 lists as
-#                                    disableable, read from RC2.idr)
+#                                    disableable, read from Stage.idr)
 #
 # Run from the same shell setup as verify.sh. rc2 must already be built.
 # Each run is `verify.sh --skip-build --no-valgrind --no-tsan
@@ -20,13 +20,13 @@
 set -uo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SRC="$DIR/../src/Compiler/RC2/RC2.idr"
+SRC="$DIR/../src/Compiler/RC2/Stage.idr"
 
 if [ $# -gt 0 ]; then
     stages=("$@")
 else
     read -r -a stages < <(
-        sed -n '/^disableableStageNames =/,/^$/p' "$SRC" | grep -o '"no[a-z]*"' | tr -d '"' | tr '\n' ' ')
+        grep '^stageDirective ' "$SRC" | grep -o '"no[a-z]*"' | tr -d '"' | tr '\n' ' ')
 fi
 [ "${#stages[@]}" -gt 0 ] || { echo "no stages found in $SRC" >&2; exit 2; }
 
