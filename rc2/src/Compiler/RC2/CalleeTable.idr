@@ -10,6 +10,7 @@ import Compiler.RC2.RCExp
 import Compiler.RC2.ForeignSpec
 import Compiler.RC2.Types
 import Compiler.RC2.Util
+import Compiler.RC2.WorkerName
 
 import Core.CompileExpr
 import Core.TT

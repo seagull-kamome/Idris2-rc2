@@ -73,6 +73,7 @@ import Compiler.RC2.Emit.Foreign
 import Compiler.RC2.ForeignSpec
 import Compiler.RC2.Emit.Util
 import Compiler.RC2.Util
+import Compiler.RC2.WorkerName
 
 %default covering
 
@@ -125,8 +126,8 @@ emitAppNameRepInto : EmitDeps (Sink -> TailPositionStatus -> FC -> Name -> List 
 ||| `postDrop` (disjoint sets, same discharge timing): missing or doubling
 ||| one leaks or double-frees. See `rc2/doc/dual-abi.md` "Stage 5".
 emitAppFFIInlineInto : EmitDeps (Sink -> TailPositionStatus -> FC -> List String -> List CFType -> CFType -> List RCLocal -> List RCLocal -> Core ())
-||| Canonical statement of the `postDrop` read-before-drop rule every
-||| other `postDrop`-consuming site in this file points back to here:
+||| The canonical read-before-drop rule for `postDrop` (what the field means: see `ROp` in
+||| RCExp.idr) that every `postDrop`-consuming site in this file points back to:
 ||| `postDrop` (`Compiler.RC2.RC`'s `annotate`) already lists exactly
 ||| which Boxed operand/argument locals need dropping once whichever
 ||| statement actually reads them has been emitted -- just lower it in
