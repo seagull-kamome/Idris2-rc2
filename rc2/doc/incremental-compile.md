@@ -776,7 +776,7 @@ the next. `rc2/tests/verify.sh` stayed at 111/0/0 after every one.
      `Data.SortedMap.Dependent`/`Prelude.Types` together (three
      unrelated modules that each happened to need one). Fixed by
      making `fnSignature` emit `static` for any name
-     `isMutualLoopMerged` recognizes (`Compiler.RC2.Util`, already
+     `isMutualLoopMerged` recognizes (`Compiler.RC2.WorkerName`, already
      used elsewhere to exclude these from other passes) -- safe
      unconditionally, since this dispatcher is never meant to be
      referenced from outside its own generated `.c` in the first

@@ -126,7 +126,7 @@ emitAppNameRepInto : EmitDeps (Sink -> TailPositionStatus -> FC -> Name -> List 
 ||| `postDrop` (disjoint sets, same discharge timing): missing or doubling
 ||| one leaks or double-frees. See `rc2/doc/dual-abi.md` "Stage 5".
 emitAppFFIInlineInto : EmitDeps (Sink -> TailPositionStatus -> FC -> List String -> List CFType -> CFType -> List RCLocal -> List RCLocal -> Core ())
-||| The ordering rule for `postDrop` (what the field means: see `ROp` in
+||| The canonical read-before-drop rule for `postDrop` (what the field means: see `ROp` in
 ||| RCExp.idr) that every `postDrop`-consuming site in this file points back to:
 ||| `postDrop` (`Compiler.RC2.RC`'s `annotate`) already lists exactly
 ||| which Boxed operand/argument locals need dropping once whichever

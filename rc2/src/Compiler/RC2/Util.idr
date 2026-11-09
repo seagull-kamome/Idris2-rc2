@@ -16,7 +16,6 @@ import Core.Context
 
 import Data.SortedMap
 import Data.SortedSet
-import Data.String
 
 %default total
 

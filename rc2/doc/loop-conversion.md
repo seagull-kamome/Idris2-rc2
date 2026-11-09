@@ -1396,7 +1396,7 @@ def list -- each entry purely that one definition's own (unchanged)
 `nativeArgType` verdict per parameter, never consulting another entry,
 so no fixed point or cycle handling is needed (`MutualLoop`-merged
 dispatchers excluded via `isMutualLoopMerged`, now shared from
-`Compiler.RC2.Util` rather than living only in `Compiler.RC2.DualABI`).
+`Compiler.RC2.WorkerName` rather than living only in `Compiler.RC2.DualABI`).
 `callArgNativeReadsFor`/`callArgOrOpNativeType` then ask, for a top-level
 parameter `p`, whether it's fed as a direct, saturated argument to a
 callee the table says is independently native-eligible at that exact

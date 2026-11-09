@@ -34,8 +34,8 @@ ffiWorkerPrefix = "idris2rc2_ffiworker_"
 ||| for the full story (the per-member *wrapper* functions need no such
 ||| exclusion -- their own trivial forwarding body already has nothing
 ||| eligible). A module of its own so that
-||| `Compiler.RC2.CalleeTable` and `Loop` can use it without importing
-||| `DualABI` (which imports `Loop`).
+||| `Compiler.RC2.CalleeTable` (which `Loop` uses) can use it without
+||| importing `DualABI` (which imports `Loop`).
 export
 isMutualLoopMerged : Name -> Bool
 isMutualLoopMerged (MN s _) = s == mutualLoopTag

@@ -574,7 +574,7 @@ Aの残り(`let`/`cmp`をまたぐ形)は、`let`の値が呼び出しなので�
 入らないので、増分コンパイルで別々のモジュールが同じ`rc2_mutualLoop_0`を作りうる。
 今は畳んだ関数が`static`なので衝突しないが、MutualLoop版のstruct return
 (`--directive nomutualstruct`で切れる)のworker(`idris2rc2_worker_rc2_mutualLoop_N`)
-にも同じ名前の規則があり、`Util.isMutualLoopWorker`で名前の接頭辞を見て`static`に
+にも同じ名前の規則があり、`WorkerName.isMutualLoopWorker`で名前の接頭辞を見て`static`に
 している。これは回避策で、根本の直しではない。
 
 - 名前を接頭辞で見分けるのは壊れやすい(命名規則を変えると静かに`static`が外れて
