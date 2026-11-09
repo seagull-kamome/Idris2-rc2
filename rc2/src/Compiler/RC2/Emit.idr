@@ -453,7 +453,7 @@ mutual
         structOf (SinkReturn (RRet n l)) = pure (n, retFieldType l)
         structOf (SinkVar _ _ (RRet n l)) = pure (n, retFieldType l)
         structOf _ = retUnsupported "RRetPack into a non-struct sink"
-    emitRetInto sink tailPosition (RAppNameRep {sameLen} fc n argReps retRep postDrop args) =
+    emitRetInto sink tailPosition (RAppNameRep fc n argReps retRep postDrop args) =
         emitAppNameRepInto sink tailPosition fc n argReps retRep postDrop args
     emitRetInto sink _ (RV fc l@(RCLoc _)) = finalizeSink fc sink (varName l)
     emitRetInto sink _ (RCrash fc _) = case sink of
@@ -807,7 +807,7 @@ mutual
     -- checks this before ever constructing this shape) -- a Boxed
     -- `retRep` reaching here would mean that invariant broke somewhere,
     -- so it's an internal error, not a case to render around.
-    emitNativeValue ty (RAppNameRep {sameLen} fc n argReps retRep postDrop args) = do
+    emitNativeValue ty (RAppNameRep fc n argReps retRep postDrop args) = do
         -- No `nargs` cap here -- same reasoning as `emitAppNameRepInto`'s
         -- own doc comment: always a plain, direct positional call to a
         -- dual-ABI worker, never dispatched through the closure
@@ -972,7 +972,7 @@ emitRC sink (RAppName fc _ n args) NotInTailPosition = do
            let valStr = "idris2rc2_trampoline(\{cName n}(\{concat $ intersperse ", " (map fst argsWithPending)}))"
            finalizeSinkWithDrop fc sink valStr (concatMap snd argsWithPending)
 
-emitRC sink (RAppNameRep {sameLen} fc n argReps retRep postDrop args) _ = unreachableInEmitRC "RAppNameRep"
+emitRC sink (RAppNameRep fc n argReps retRep postDrop args) _ = unreachableInEmitRC "RAppNameRep"
 emitRC sink (RAppFFIInline fc ccs fargs ret postDrop args) _ = unreachableInEmitRC "RAppFFIInline"
 emitRC sink (RUnderApp fc n missing args) _ = unreachableInEmitRC "RUnderApp"
 emitRC sink (RApp fc _ closure (arg ::: [])) tailPosition = do

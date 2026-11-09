@@ -342,8 +342,9 @@ data RCExp : Type where
      ||| `postDrop`: see `ROp`'s own doc below.
      ||| See `doc/dual-abi.md`'s Bugs found #3.
      |||
-     ||| `sameLen`: one `argReps` entry per argument. Erased, so a pass that
-     ||| rebuilds the call must keep them in step (`mapAppNameRepArgs`).
+     ||| `sameLen`: one `argReps` entry per argument. It is erased (no run-time
+     ||| cost); a pass that rebuilds the call must keep the lists in step
+     ||| (`mapRepCallArgs`, or `repCall` for argReps from a table).
      RAppNameRep : FC -> Name -> (argReps : List Rep) -> (retRep : Rep) -> (postDrop : List RCLocal)
                 -> (args : List RCLocal) -> {auto 0 sameLen : length argReps = length args} -> RCExp
      ||| Inlined `%foreign` call, splicing `Emit.emitFFIWorker`'s own
