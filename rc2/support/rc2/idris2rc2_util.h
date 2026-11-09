@@ -1,7 +1,12 @@
 #pragma once
 
 #include <stdatomic.h>
+#include <stdbool.h>
 #include <stdnoreturn.h>
+
+// Plain refcount updates and no spin locks until the program goes
+// multi-threaded, atomic and locked from then on: rc2/doc/hybrid-refcount.md.
+extern bool idris2rc2_threaded;
 
 // Lightweight spinlock (CAS loop, no syscall on the uncontended path) for
 // protecting a short critical section -- e.g. an IORef's/Array's slot
@@ -13,12 +18,14 @@
 // actually block (Mutex/Condition/Semaphore/Barrier/Channel) -- spinning
 // is only appropriate for a section this short.
 static inline void idris2rc2_spin_lock(atomic_flag *lock) {
+  if (__builtin_expect(!idris2rc2_threaded, 1)) return;
   while (atomic_flag_test_and_set_explicit(lock, memory_order_acquire)) {
     // busy-wait
   }
 }
 
 static inline void idris2rc2_spin_unlock(atomic_flag *lock) {
+  if (__builtin_expect(!idris2rc2_threaded, 1)) return;
   atomic_flag_clear_explicit(lock, memory_order_release);
 }
 

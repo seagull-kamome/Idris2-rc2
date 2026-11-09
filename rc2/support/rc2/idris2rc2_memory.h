@@ -36,10 +36,6 @@ void idris2rc2_teardown(IDRIS2RC2_Value *v);
 void idris2rc2_enableMultiThreading(void);
 int idris2rc2_isMultiThreaded(void);
 
-// Plain refcount updates until the program goes multi-threaded, atomic
-// from then on: rc2/doc/hybrid-refcount.md.
-extern bool idris2rc2_threaded;
-
 // Drops one reference; true if it was the last, so the caller tears the
 // object down. Once threaded, the acquire before that is a load, not
 // atomic_thread_fence: ThreadSanitizer does not model fences and reports
