@@ -137,6 +137,15 @@ A result whose byte length would overflow `len`'s own `uint32_t`
 (`idris2rc2_checkedStrLen`, `idris2rc2_memory.h`) rather than silently
 wrapping into a corrupt, too-short `len`.
 
+**One block.** `idris2rc2_mkEmptyString` and `idris2rc2_mkStringLen` allocate the
+cell and its `len + 1` content bytes together: `str` points just past the
+struct and `header.reserved` is 1. Teardown frees the second block only
+when `reserved` is 0, which is the case for the one string whose bytes come
+from elsewhere (`cast Integer String`, whose digits GMP allocates) and for the
+immortal constants, which are never torn down. Nothing may replace `str` of a
+string with `reserved` set, or `realloc` its cell (`str` is an interior pointer). Before this, every string took two
+`malloc`/`free` pairs.
+
 ## Pitfall: the runtime `Makefile`
 
 `rc2/support/rc2/Makefile` used to have no header dependencies. After
