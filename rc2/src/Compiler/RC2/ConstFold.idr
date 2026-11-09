@@ -103,8 +103,14 @@ data WidenCmp = Decided Bool
 ||| and the position of its one native field if it has exactly one --
 ||| the local's own id then names that field's box instead. See
 ||| `rc2/doc/constructor-escape-analysis.md`'s "Rewrite A".
-KnownCon : Type
-KnownCon = (Name, Maybe Int, List RCLocal, Maybe Nat)
+record KnownCon where
+  constructor MkKnownCon
+  conName : Name
+  conTag : Maybe Int
+  ||| The (already resolved) field locals.
+  conArgs : List RCLocal
+  ||| Position of the one native field, if there is exactly one.
+  conBoxPos : Maybe Nat
 
 ||| How a definition's locals are used, computed in one walk before
 ||| folding it -- the escape classification of
@@ -429,7 +435,7 @@ foldConst caf env (RLet fc var rep value body) =
                           if maybe True (\u => contains (RCLoc var) u.escaping) env.uses || any isBigLiteral args
                              then RLet fc var rep value' (foldConst caf env body)
                              else let boxPos = singleNative args
-                                      body' = foldConst caf ({ knownCons $= insert var (n, tag, args, boxPos) } env) body
+                                      body' = foldConst caf ({ knownCons $= insert var (MkKnownCon n tag args boxPos) } env) body
                                   in wrap $ if contains (RCLoc var) (ownedUsedIn (singleton (RCLoc var)) body')
                                                then RLet fc var rep (maybe con (\k => boxOf k args) boxPos) body'
                                                else body'
@@ -662,7 +668,7 @@ foldConst caf env (RConCase fc sc alts mDef) =
     -- constructor, so it crashes rather than falling back to a `case`.
     foldKnown : Int -> Maybe RCExp
     foldKnown i = do
-        (n, tag, args, boxPos) <- lookup i env.knownCons
+        MkKnownCon n tag args boxPos <- lookup i env.knownCons
         Just $ case findKnownAlt n tag alts of
                     Just (MkRConAlt _ _ _ argIds body) =>
                         case bindKnownConArgs i boxPos 0 argIds args env of

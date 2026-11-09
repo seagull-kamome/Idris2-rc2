@@ -746,6 +746,32 @@ anyNative : Rep -> Bool
 anyNative RBoxed = False
 anyNative _ = True
 
+||| Whether a call site may be rewritten even in tail position.
+public export
+data WorkerKind : Type where
+     ||| A `synthesizeWorker` worker: it can chain into further deferred
+     ||| tail calls, so `applyCallSiteRewriteBody`'s tail-position clause
+     ||| leaves calls to it alone.
+     OrdinaryWorker : WorkerKind
+     ||| A `%foreign` worker: always a leaf, safe to rewrite in tail
+     ||| position too (`doc/dual-abi.md`, "Stage 4b").
+     FfiWorker : WorkerKind
+
+||| The worker a call to some function is rewritten to call, with the
+||| representation of each argument and of the result it takes.
+public export
+record WorkerInfo where
+  constructor MkWorkerInfo
+  workerName : Name
+  workerArgReps : List Rep
+  workerRetRep : Rep
+  workerKind : WorkerKind
+
+||| `WorkerInfo` by the name of the function it stands in for.
+public export
+WorkerTable : Type
+WorkerTable = SortedMap Name WorkerInfo
+
 ||| Every native type at which `var` is read as a direct, saturated call
 ||| argument somewhere in `e`, at a position `workers` says its callee reads
 ||| natively -- extends the same "skip the box-then-unbox round trip" idea to a
@@ -756,7 +782,7 @@ anyNative _ = True
 ||| same "reboxed on demand" reasoning `nativePromotionFor` relies on. See
 ||| `doc/dual-abi.md`'s "Extending the promotion to call-argument chains".
 covering
-callArgNativeReads : SortedMap Name (Name, List Rep, Rep, Bool) -> Int -> RCExp -> SortedSet NativeTy
+callArgNativeReads : WorkerTable -> Int -> RCExp -> SortedSet NativeTy
 callArgNativeReads workers var e =
     fromMaybe empty (lookup var (callArgNativeReadsFor workerPositions (SortedSet.singleton var) e))
   where
@@ -766,7 +792,7 @@ callArgNativeReads workers var e =
     repTy _ = Nothing
 
     workerPositions : Name -> Maybe (List (Maybe NativeTy))
-    workerPositions n = map (\(_, argReps, _, _) => map repTy argReps) (lookup n workers)
+    workerPositions n = map (\w => map repTy w.workerArgReps) (lookup n workers)
 
 ||| Each usable `%foreign` declaration with a native return: that type and its
 ||| argument count (`tailValueRepsWith`).
@@ -852,13 +878,13 @@ applyDualABI boolReturn nullTable defs = do
 ||| (`applyCallSiteRewrite`'s own input, unchanged from Stage 4) and
 ||| keyed by the *worker's own* synthesized name (`inlineFFIWorkers`'s
 ||| own input, Stage 5 -- see the doc's "Stage 5" for why the two
-||| keyings differ). The first map's trailing `Bool` is always `True`
+||| keyings differ). The first map's entries are all `FfiWorker`
 ||| here -- safe to rewrite even in tail position, since a `%foreign`
 ||| callee is always a leaf (see the doc's "Stage 4b: tail-position FFI
 ||| calls").
 export
 ffiWorkerTable : List (Name, RCDef)
-              -> Core (SortedMap Name (Name, List Rep, Rep, Bool),
+              -> Core (WorkerTable,
                        SortedMap Name (List String, List CFType, CFType))
 ffiWorkerTable defs = do
     _ <- newRef FreshId 0
@@ -867,7 +893,7 @@ ffiWorkerTable defs = do
     pure (fromList (concatMap fst entries), fromList (concatMap snd entries))
   where
     ffiEntry : {auto r : Ref FreshId Int} -> SortedSet Name -> (Name, RCDef)
-            -> Core (List (Name, (Name, List Rep, Rep, Bool)), List (Name, (List String, List CFType, CFType)))
+            -> Core (List (Name, WorkerInfo), List (Name, (List String, List CFType, CFType)))
     ffiEntry existingNames (n, MkRCForeign ccs fargs ret) =
         let argReps = map repOf fargs
             retRep = repOf (peelIORes ret)
@@ -875,7 +901,7 @@ ffiWorkerTable defs = do
               then pure ([], [])
               else do
                 workerName <- freshName "idris2rc2_ffiworker_" existingNames n
-                pure ([(n, (workerName, argReps, retRep, True))], [(workerName, (ccs, fargs, ret))])
+                pure ([(n, (MkWorkerInfo workerName argReps retRep FfiWorker))], [(workerName, (ccs, fargs, ret))])
     ffiEntry _ (_, _) = pure ([], [])
 
 ------------------------------------------------------------------------
@@ -888,16 +914,16 @@ ffiWorkerTable defs = do
 ||| scanning for the exact shape `synthesizeWorker` always produces for
 ||| a wrapper's body (a bare `RAppNameRep` into its own worker, nothing
 ||| else) -- see `doc/dual-abi.md`'s "The worker table" (Stage 4).
-||| Tagged `False` (unlike `ffiWorkerTable`'s entries): an ordinary
+||| Tagged `OrdinaryWorker` (unlike `ffiWorkerTable`'s entries): an ordinary
 ||| worker can chain into further deferred tail calls, so
 ||| `applyCallSiteRewriteBody`'s tail-position clause must still leave
 ||| it alone.
-workerTable : List (Name, RCDef) -> SortedMap Name (Name, List Rep, Rep, Bool)
+workerTable : List (Name, RCDef) -> WorkerTable
 workerTable defs = fromList (mapMaybe workerEntry defs)
   where
-    workerEntry : (Name, RCDef) -> Maybe (Name, (Name, List Rep, Rep, Bool))
+    workerEntry : (Name, RCDef) -> Maybe (Name, WorkerInfo)
     workerEntry (n, MkRCFun _ _ _ (RAppNameRep _ workerName argReps retRep _ _)) =
-        Just (n, (workerName, argReps, retRep, False))
+        Just (n, (MkWorkerInfo workerName argReps retRep OrdinaryWorker))
     workerEntry _ = Nothing
 
 ||| Which of `args` need an explicit drop once embedded in its own
@@ -1038,7 +1064,7 @@ branchValueNativeType _ _ = Nothing
 ||| keeps working via `rcVarToBoxedC`'s own on-demand reboxing (a scalar
 ||| has no observable identity, see `stripOwnership`'s own doc comment).
 ||| See `doc/dual-abi.md`'s "The promotion: `nativePromotionFor`".
-nativePromotionFor : SortedMap Name (Name, List Rep, Rep, Bool) -> Maybe (List (Int, Rep)) -> Int -> NativeTy -> RCExp -> Maybe NativeTy
+nativePromotionFor : WorkerTable -> Maybe (List (Int, Rep)) -> Int -> NativeTy -> RCExp -> Maybe NativeTy
 nativePromotionFor workers mLoopParams var ty body =
     let fromLoop = maybe empty (\loopParams => loopContinueNativeReads loopParams var body) mLoopParams
         primReads = nativeArgTypes var body `union` bareTailNativeReads var body
@@ -1066,7 +1092,7 @@ nativePromotionFor workers mLoopParams var ty body =
 ||| `value1`'s own `ultimateTail`. See `doc/dual-abi.md`'s "The rewrite:
 ||| `applyCallSiteRewriteBody`" for the full `let v3 = (let v4 = n - 1
 ||| in fib v4) in ...` worked example.
-applyCallSiteRewriteBody : SortedMap Name (Name, List Rep, Rep, Bool)
+applyCallSiteRewriteBody : WorkerTable
                         -> SortedMap Int Rep
                         -> Maybe (List (Int, Rep))
                         -> Bool -> RCExp -> RCExp
@@ -1137,24 +1163,24 @@ applyCallSiteRewriteBody workers reps mLoopParams _ (RMemoize fc n rep body) =
 -- always the ultimate tail of some value-computation chain (the RLet
 -- clause above already peeled through any RLet-bound value), never
 -- the whole function's own true tail -- safe to rewrite through either
--- table entry alike; the Bool tag only matters below.
+-- table entry alike; the worker kind only matters below.
 applyCallSiteRewriteBody workers reps _ False value@(RAppName fc _ n args) =
     case lookup n workers of
          Nothing => value
-         Just (workerName, argReps, workerRetRep, _) =>
+         Just (MkWorkerInfo workerName argReps workerRetRep _) =>
              if length args /= length argReps
                 then value
                 else RAppNameRep fc workerName argReps workerRetRep (postDropFor reps argReps args) args
 -- A bare RAppName reached with inTail = True -- the whole function's
--- own true tail position. Left alone for an ordinary worker (tag
--- `False`: can still chain into further deferred tail calls, see
+-- own true tail position. Left alone for an ordinary worker
+-- (`OrdinaryWorker`: can still chain into further deferred tail calls, see
 -- workerTable's own doc comment); rewritten just like the non-tail
--- case for an FFI worker (tag `True`: always a leaf, see
+-- case for an FFI worker (`FfiWorker`: always a leaf, see
 -- ffiWorkerTable's own doc comment) -- see doc/dual-abi.md's "Stage
 -- 4b" for the full design; no Emit-side change was needed for this.
 applyCallSiteRewriteBody workers reps _ True value@(RAppName fc _ n args) =
     case lookup n workers of
-         Just (workerName, argReps, workerRetRep, True) =>
+         Just (MkWorkerInfo workerName argReps workerRetRep FfiWorker) =>
              if length args /= length argReps
                 then value
                 else RAppNameRep fc workerName argReps workerRetRep (postDropFor reps argReps args) args
@@ -1166,12 +1192,12 @@ applyCallSiteRewriteBody workers reps _ True value@(RAppName fc _ n args) =
 applyCallSiteRewriteBody _ _ _ _ e = e
 
 export
-applyCallSiteRewrite : (typedCase : Bool) -> SortedMap Name (Name, List Rep, Rep, Bool) -> List (Name, RCDef) -> List (Name, RCDef)
+applyCallSiteRewrite : (typedCase : Bool) -> WorkerTable -> List (Name, RCDef) -> List (Name, RCDef)
 applyCallSiteRewrite typedCase ffiWorkers defs =
     let workers = mergeWith const (workerTable defs) ffiWorkers
     in map (rewriteDef workers) defs
   where
-    rewriteDef : SortedMap Name (Name, List Rep, Rep, Bool) -> (Name, RCDef) -> (Name, RCDef)
+    rewriteDef : WorkerTable -> (Name, RCDef) -> (Name, RCDef)
     rewriteDef workers (n, MkRCFun args retRep isWorker body) =
         let body1 = applyCallSiteRewriteBody workers (fromList args) Nothing True body
         in (n, MkRCFun args retRep isWorker (if typedCase then stripImmediatePostDrop (typedConstScrutinees body) body1 else body1))
@@ -1611,7 +1637,7 @@ export
 applyBoolReturnTails : List (Name, RCDef) -> List (Name, RCDef)
 applyBoolReturnTails defs =
     let ws : SortedMap Name StructWorker :=
-            fromList (mapMaybe (\(n, (w, argReps, r, _)) => case r of
+            fromList (mapMaybe (\(n, MkWorkerInfo w argReps r _) => case r of
                                                               RNative (TPrim Bits8Type) => Just (n, (w, argReps, r))
                                                               _ => Nothing)
                                (SortedMap.toList (workerTable defs)))
