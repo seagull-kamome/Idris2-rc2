@@ -122,7 +122,7 @@ fieldUses params p = go
 
     badFields : RConAlt -> SortedSet Nat
     badFields (MkRConAlt _ _ _ as body) =
-        fromList (mapMaybe (\(k, b) => if b /= 0 && not (kept params b body) then Just k else Nothing) (zip [0 .. length as] as))
+        fromList (mapMaybe (\(k, b) => if not (isDeadId b) && not (kept params b body) then Just k else Nothing) (zip [0 .. length as] as))
 
     go : RCExp -> (SortedSet Nat, List ParamKey)
     go (RConCase _ sc alts mDef) =
@@ -225,7 +225,7 @@ rewriteUses ok v fs = go
 
         unbound : RConAlt -> Bool
         unbound (MkRConAlt _ _ _ as body) = case drop k as of
-            (b :: _) => b == 0 || not (contains (RCLoc b) (mentionedLocals body))
+            (b :: _) => isDeadId b || not (contains (RCLoc b) (mentionedLocals body))
             [] => True
 
         toFields : Name -> List RCLocal -> Bool

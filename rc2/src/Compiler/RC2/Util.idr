@@ -92,11 +92,12 @@ isMutualLoopMerged _ = False
 ||| `idris2rc2_worker_` + the merged function's C name). It is as
 ||| file-local as the merged function it stands for, so it shares its
 ||| `static` storage class.
+|||
+||| The worker's `MN` string is `workerPrefix` ++ the merged function's C name,
+||| which `Emit.Util.cName` renders `<mutualLoopTag>_<id>` (both parts are plain
+||| identifier characters, so `cCleanString` leaves them alone).
 export
 isMutualLoopWorker : Name -> Bool
--- The worker's `MN` string is `workerPrefix` ++ the merged function's C name,
--- which `Emit.Util.cName` renders `<mutualLoopTag>_<id>` (both parts are plain
--- identifier characters, so `cCleanString` leaves them alone).
 isMutualLoopWorker (MN s _) = isPrefixOf (workerPrefix ++ mutualLoopTag ++ "_") s
 isMutualLoopWorker _ = False
 

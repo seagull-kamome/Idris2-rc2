@@ -51,9 +51,9 @@ reorderable _ = False
 ||| last-evaluated strict call to a function of `arity` bound to a field
 ||| of a tail heap constructor, used only there, with nothing
 ||| unreorderable after it. `env` maps a let-bound local to its let's
-||| position and the final expression of its value; `barrier` (`Nothing`: none yet) is the
+||| position and the final expression of its value; `barrier` is the
 ||| position of the latest let that must not move before a call bound
-||| earlier. The other calls of a site with several stay ordinary calls.
+||| earlier (`Nothing`: none yet). The other calls of a site with several stay ordinary calls.
 findSites : SortedMap Name Nat -> SortedSet Name -> RCExp -> Sites
 findSites arity newtypes body = go empty 0 Nothing body
   where

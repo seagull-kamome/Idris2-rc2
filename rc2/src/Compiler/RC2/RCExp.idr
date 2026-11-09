@@ -84,7 +84,8 @@ data RCLocal : Type where
 ||| The id `Compiler.RC2.DeadVars` leaves in a binder that nothing reads (a
 ||| constructor alt's field, say). `Compiler.RC2.Util`'s `VarId` counter
 ||| starts at 1, so no genuine variable has it, and no `RCLoc deadId` is ever
-||| built: it only sits in an `RConAlt`'s `args : List Int`.
+||| built for display: it sits in an `RConAlt`'s `args : List Int`, and
+||| `Compiler.RC2.Pretty` prints it as `_` itself.
 public export
 deadId : Int
 deadId = 0

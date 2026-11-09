@@ -599,8 +599,8 @@ dumpDualABI defs =
 ------------------------------------------------------------------------
 -- Stage 3a: worker synthesis (parameters only) + wrapper rewrite.
 
-||| A fresh name for `original`'s own worker: `pfx` (`"idris2rc2_worker_"`
-||| for an ordinary `MkRCFun` worker, `"idris2rc2_ffiworker_"` for an FFI
+||| A fresh name for `original`'s own worker: `pfx` (`workerPrefix`
+||| for an ordinary `MkRCFun` worker, `ffiWorkerPrefix` for an FFI
 ||| one) plus `original`'s own mangled C name (`cName`, `export`ed for
 ||| this reuse) plus a disambiguating counter -- see `doc/dual-abi.md`'s
 ||| "Stage 3a" step 1 for the full naming-scheme rationale.

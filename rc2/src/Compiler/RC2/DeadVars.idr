@@ -1,4 +1,4 @@
-||| Blanks out a bound variable id to `0` -- `Compiler.RC2.Util`'s own
+||| Blanks out a bound variable id to `deadId` (`0`) -- `Compiler.RC2.Util`'s own
 ||| `VarId` counter starts at 1 specifically so `0` is never a genuine
 ||| variable id anywhere in the program, see that module's own doc
 ||| comment -- wherever it turns out to be referenced nowhere at all in

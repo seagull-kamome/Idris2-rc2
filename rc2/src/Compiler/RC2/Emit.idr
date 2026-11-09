@@ -499,7 +499,7 @@ mutual
     ||| shared by every alt `emitConCaseInto`/`emitAltChain` render,
     ||| whether or not this particular alt ended up needing its own
     ||| condition check (the destructuring itself doesn't depend on
-    ||| that). A field `Compiler.RC2.DeadVars` blanked to `0` (never a
+    ||| that). A field `Compiler.RC2.DeadVars` blanked to `deadId` (`0`, never a
     ||| genuine variable id -- see that module's own doc comment) gets
     ||| no declaration at all: nothing anywhere in `body` could
     ||| possibly reference it, that's exactly what earned it the `0` in
@@ -1242,7 +1242,7 @@ fnSignature n args retRep isWorker = do
     -- parameters (native where eligible) no matter how wide it is.
     let useVarArglist = not isWorker && nargs > MaxExtractFunArgs
     -- `static`: a `MutualLoop`-merged dispatcher's own name
-    -- (`MN "rc2_mutualLoop" i`, `isMutualLoopMerged`) numbers `i` from
+    -- (`MN mutualLoopTag i`, `isMutualLoopMerged`) numbers `i` from
     -- a fresh-per-compile counter (`Compiler.RC2.MutualLoop`'s own
     -- `FreshId`) -- unique across the whole compile in whole-program
     -- mode (one shared counter), but *not* across separate per-module
