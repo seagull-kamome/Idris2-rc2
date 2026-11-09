@@ -135,14 +135,22 @@ IDRIS2RC2_Value *idris2rc2_mkIntegerFromMpz(mpz_srcptr src) {
   return idris2rc2_integerNormalize(v);
 }
 
+// A String and its `len + 1` content bytes in one allocation
+// (rc2/doc/constructor-layout.md, "Strings"). The caller fills the content.
+static IDRIS2RC2_String *idris2rc2_allocString(size_t len) {
+  uint32_t const checked = idris2rc2_checkedStrLen(len);
+  IDRIS2RC2_String *v = (IDRIS2RC2_String *)idris2rc2_alloc(sizeof(IDRIS2RC2_String) + len + 1);
+  v->header.tag = IDRIS2RC2_TAG_STRING;
+  v->header.reserved = 1;
+  v->len = checked;
+  v->str = (char *)(v + 1);
+  return v;
+}
+
 IDRIS2RC2_String *idris2rc2_mkEmptyString(size_t bufLen) {
   if (bufLen == 1)
     return (IDRIS2RC2_String *)&idris2rc2_emptyStringValue;
-  IDRIS2RC2_String *v = IDRIS2RC2_NEW(IDRIS2RC2_String);
-  v->header.tag = IDRIS2RC2_TAG_STRING;
-  v->len = idris2rc2_checkedStrLen(bufLen - 1);
-  v->str = malloc(bufLen);
-  IDRIS2RC2_VERIFY(v->str, "malloc failed");
+  IDRIS2RC2_String *v = idris2rc2_allocString(bufLen - 1);
   memset(v->str, 0, bufLen);
   return v;
 }
@@ -156,11 +164,7 @@ IDRIS2RC2_String *idris2rc2_mkString(char const *s) {
 IDRIS2RC2_String *idris2rc2_mkStringLen(char const *s, size_t len) {
   if (len == 0)
     return (IDRIS2RC2_String *)&idris2rc2_emptyStringValue;
-  IDRIS2RC2_String *v = IDRIS2RC2_NEW(IDRIS2RC2_String);
-  v->header.tag = IDRIS2RC2_TAG_STRING;
-  v->len = idris2rc2_checkedStrLen(len);
-  v->str = malloc(len + 1);
-  IDRIS2RC2_VERIFY(v->str, "malloc failed");
+  IDRIS2RC2_String *v = idris2rc2_allocString(len);
   memcpy(v->str, s, len);
   v->str[len] = '\0';
   return v;
@@ -246,7 +250,8 @@ again:
     mpz_clear(((IDRIS2RC2_Integer *)v)->v);
     break;
   case IDRIS2RC2_TAG_STRING:
-    free(((IDRIS2RC2_String *)v)->str);
+    if (!v->header.reserved)
+      free(((IDRIS2RC2_String *)v)->str);
     break;
   case IDRIS2RC2_TAG_CLOSURE: {
     IDRIS2RC2_Closure *c = (IDRIS2RC2_Closure *)v;
