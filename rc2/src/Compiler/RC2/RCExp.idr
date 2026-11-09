@@ -81,6 +81,19 @@ data RCLocal : Type where
                    -> {0 capsConst : All IsAnyConstLocal caps}
                    -> RCLocal
 
+||| The id `Compiler.RC2.DeadVars` leaves in a binder that nothing reads (a
+||| constructor alt's field, say). `Compiler.RC2.Util`'s `VarId` counter
+||| starts at 1, so no genuine variable has it, and no `RCLoc deadId` is ever
+||| built for display: it sits in an `RConAlt`'s `args : List Int`, and
+||| `Compiler.RC2.Pretty` prints it as `_` itself.
+public export
+deadId : Int
+deadId = 0
+
+public export
+isDeadId : Int -> Bool
+isDeadId i = i == deadId
+
 ||| Witness that `l` is `RCConstCon` -- kept as its own narrow proof
 ||| (rather than only the five-case `IsAnyConstLocal` below)
 ||| specifically so `Compiler.RC2.Emit.Util`'s `boxedConstConExpr`, which
@@ -183,15 +196,6 @@ dumpName = show . distinct
 export
 covering
 Show RCLocal where
-  -- `0` is never a genuine variable id anywhere in the program
-  -- (`Compiler.RC2.Util`'s own `VarId` counter starts at `1` to
-  -- guarantee it) -- the only place an `RCLoc 0` value ever exists at
-  -- all is `Compiler.RC2.Pretty`'s own `prettyConAlt`, transiently
-  -- wrapping a `Compiler.RC2.DeadVars`-erased `RConAlt` field
-  -- (`args : List Int`) just to reuse this `Show` instance for
-  -- display. Rendered as `_` there instead of a `v0` that would read
-  -- as an ordinary, if oddly-numbered, bound variable.
-  show (RCLoc 0) = "_"
   show (RCLoc i) = "v" ++ show i
   show RCNull = "[__]"
   show RCErased = "[erased]"

@@ -158,9 +158,9 @@ mutual
         case (scRep, projectChain var body) of
              (RRet _ _, _) => pure False
              (_, Just (f, chain)) =>
-                 if f == 0 || not (f `elem` args) then pure False else do
+                 if isDeadId f || not (f `elem` args) then pure False else do
                      _ <- foldlC (\k, arg => do
-                         when (arg /= 0) $
+                         unless (isDeadId arg) $
                              emit emptyFC "IDRIS2RC2_Value *\{varName (RCLoc (if arg == f then var else arg))} = ((IDRIS2RC2_Constructor*)\{varName sc})->args[\{show k}];"
                          pure (S k)) 0 args
                      _ <- peelWrappers chain
@@ -499,7 +499,7 @@ mutual
     ||| shared by every alt `emitConCaseInto`/`emitAltChain` render,
     ||| whether or not this particular alt ended up needing its own
     ||| condition check (the destructuring itself doesn't depend on
-    ||| that). A field `Compiler.RC2.DeadVars` blanked to `0` (never a
+    ||| that). A field `Compiler.RC2.DeadVars` blanked to `deadId` (`0`, never a
     ||| genuine variable id -- see that module's own doc comment) gets
     ||| no declaration at all: nothing anywhere in `body` could
     ||| possibly reference it, that's exactly what earned it the `0` in
@@ -517,7 +517,7 @@ mutual
                             (RRet _ l, Just t) => retFieldType l t k
                             _ => Nothing
         _ <- foldlC (\k, arg => do
-            when (arg /= 0) $ case (isStruct, native k) of
+            unless (isDeadId arg) $ case (isStruct, native k) of
                  (True, Just ty) => do
                      update RepMap (insert arg (RNative (TPrim ty)))
                      emit emptyFC "\{nativeCType ty} var_\{show arg} = (\{nativeCType ty})\{sc'}.f\{show k}.\{retMember ty};"
@@ -1242,7 +1242,7 @@ fnSignature n args retRep isWorker = do
     -- parameters (native where eligible) no matter how wide it is.
     let useVarArglist = not isWorker && nargs > MaxExtractFunArgs
     -- `static`: a `MutualLoop`-merged dispatcher's own name
-    -- (`MN "rc2_mutualLoop" i`, `isMutualLoopMerged`) numbers `i` from
+    -- (`MN mutualLoopTag i`, `isMutualLoopMerged`) numbers `i` from
     -- a fresh-per-compile counter (`Compiler.RC2.MutualLoop`'s own
     -- `FreshId`) -- unique across the whole compile in whole-program
     -- mode (one shared counter), but *not* across separate per-module

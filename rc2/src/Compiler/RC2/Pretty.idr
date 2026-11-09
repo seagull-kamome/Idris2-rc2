@@ -123,10 +123,14 @@ mutual
       indent d ++ "force " ++ show lr ++ " " ++ show v
         ++ postDropNote postDrop ++ "\n"
 
+  ||| A dead field (`deadId`) as `_`.
+  showFields : List Int -> String
+  showFields args = "[" ++ joinBy ", " (map (\i => if isDeadId i then "_" else show (RCLoc i)) args) ++ "]"
+
   prettyConAlt : Nat -> RConAlt -> String
   prettyConAlt d (MkRConAlt n ci tag args body) =
       indent d ++ dumpName n ++ " " ++ show ci ++ " tag= " ++ show tag
-        ++ " args= " ++ show (map RCLoc args) ++ " ->\n"
+        ++ " args= " ++ showFields args ++ " ->\n"
       ++ prettyExp (d + 1) body
 
   ||| `u:` before the constant of an always-unboxed type (`B8`, `Char`...):

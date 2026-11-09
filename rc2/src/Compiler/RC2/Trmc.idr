@@ -53,14 +53,14 @@ reorderable _ = False
 ||| unreorderable after it. `env` maps a let-bound local to its let's
 ||| position and the final expression of its value; `barrier` is the
 ||| position of the latest let that must not move before a call bound
-||| earlier. The other calls of a site with several stay ordinary calls.
+||| earlier (`Nothing`: none yet). The other calls of a site with several stay ordinary calls.
 findSites : SortedMap Name Nat -> SortedSet Name -> RCExp -> Sites
-findSites arity newtypes body = go empty 0 (-1) body
+findSites arity newtypes body = go empty 0 Nothing body
   where
-    candidate : SortedMap Int (Int, RCExp) -> Int -> RCLocal -> Maybe (Int, Int, Name, List RCLocal)
+    candidate : SortedMap Int (Int, RCExp) -> Maybe Int -> RCLocal -> Maybe (Int, Int, Name, List RCLocal)
     candidate env barrier (RCLoc v) = case lookup v env of
         Just (pos, RAppName _ Nothing g as') =>
-            if lookup g arity == Just (length as') && pos >= barrier && countUsesR (RCLoc v) body == 1
+            if lookup g arity == Just (length as') && maybe True (pos >=) barrier && countUsesR (RCLoc v) body == 1
                then Just (v, pos, g, as')
                else Nothing
         _ => Nothing
@@ -72,9 +72,9 @@ findSites arity newtypes body = go empty 0 (-1) body
         let (v, _, g, as', k) = foldl (\a@(_, pa, _, _, _), b@(_, pb, _, _, _) => if pb > pa then b else a) c cs
         in Just (v, g, as', k)
 
-    go : SortedMap Int (Int, RCExp) -> Int -> Int -> RCExp -> Sites
+    go : SortedMap Int (Int, RCExp) -> Int -> Maybe Int -> RCExp -> Sites
     go env pos barrier (RLet _ var _ value rest) =
-        let barrier' = if reorderable value then barrier else pos
+        let barrier' = if reorderable value then barrier else Just pos
         in go (insert var (pos, finalOf value) env) (pos + 1) barrier' rest
     go env _ barrier (RCon _ n ci _ args Nothing) =
         if not (heapCon ci) || contains n newtypes then empty

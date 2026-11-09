@@ -57,6 +57,20 @@ localRepIn _ (RCEmptyCon {}) = RBoxed
 localRepIn _ (RCConstCon {}) = RBoxed
 localRepIn _ (RCConstPartial {}) = RBoxed
 
+||| The `MN` string of a function `Compiler.RC2.MutualLoop` merges a group
+||| into: the producer (`MutualLoop`'s `freshName`) and `isMutualLoopMerged`
+||| both read this, so they cannot drift apart.
+export
+mutualLoopTag : String
+mutualLoopTag = "rc2_mutualLoop"
+
+||| The prefix of an ordinary dual-ABI worker's name (`DualABI.freshName`), and
+||| of an FFI worker's. `isMutualLoopWorker` recognises a worker by it.
+export
+workerPrefix, ffiWorkerPrefix : String
+workerPrefix = "idris2rc2_worker_"
+ffiWorkerPrefix = "idris2rc2_ffiworker_"
+
 ||| True for a name `Compiler.RC2.MutualLoop` itself synthesised (its
 ||| own merged function). Must never get a dual-ABI worker of its own --
 ||| a slot genuinely native for one group member can receive a literal
@@ -70,7 +84,7 @@ localRepIn _ (RCConstPartial {}) = RBoxed
 ||| imports Loop.idr -- that would be a cycle).
 export
 isMutualLoopMerged : Name -> Bool
-isMutualLoopMerged (MN "rc2_mutualLoop" _) = True
+isMutualLoopMerged (MN s _) = s == mutualLoopTag
 isMutualLoopMerged _ = False
 
 ||| A struct-return worker synthesised for a `MutualLoop`-merged function
@@ -78,9 +92,13 @@ isMutualLoopMerged _ = False
 ||| `idris2rc2_worker_` + the merged function's C name). It is as
 ||| file-local as the merged function it stands for, so it shares its
 ||| `static` storage class.
+|||
+||| The worker's `MN` string is `workerPrefix` ++ the merged function's C name,
+||| which `Emit.Util.cName` renders `<mutualLoopTag>_<id>` (both parts are plain
+||| identifier characters, so `cCleanString` leaves them alone).
 export
 isMutualLoopWorker : Name -> Bool
-isMutualLoopWorker (MN s _) = isPrefixOf "idris2rc2_worker_rc2_mutualLoop_" s
+isMutualLoopWorker (MN s _) = isPrefixOf (workerPrefix ++ mutualLoopTag ++ "_") s
 isMutualLoopWorker _ = False
 
 ||| A per-pass monotonic counter, `Ref`-keyed by the empty phantom

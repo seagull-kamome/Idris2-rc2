@@ -1,4 +1,4 @@
-||| Blanks out a bound variable id to `0` -- `Compiler.RC2.Util`'s own
+||| Blanks out a bound variable id to `deadId` (`0`) -- `Compiler.RC2.Util`'s own
 ||| `VarId` counter starts at 1 specifically so `0` is never a genuine
 ||| variable id anywhere in the program, see that module's own doc
 ||| comment -- wherever it turns out to be referenced nowhere at all in
@@ -64,7 +64,7 @@ import Data.SortedSet
 ||| set it started from.
 eraseDeadConAltFields : SortedSet RCLocal -> List Int -> List Int
 eraseDeadConAltFields used args =
-    map (\i => if contains (RCLoc i) used then i else 0) args
+    map (\i => if contains (RCLoc i) used then i else deadId) args
 
 eraseDeadVars : SortedSet RCLocal -> RCExp -> RCExp
 eraseDeadVars used (RLet fc var rep value body) =
