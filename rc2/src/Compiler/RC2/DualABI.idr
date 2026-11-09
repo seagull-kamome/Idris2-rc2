@@ -614,10 +614,10 @@ freshName pfx existing original = do
 ||| carries under the same id: the loop parameter takes the same native
 ||| type, or one C variable would hold both a `Boxed` and a native value.
 retypeNullLoopParams : SortedMap Int NativeTy -> RCExp -> RCExp
-retypeNullLoopParams m (RLoop fc loopParams initial prologueDrop body) =
-    RLoop fc (map (\case (i, RBoxed) => (i, maybe RBoxed RNative (lookup i m))
-                         p => p) loopParams)
-          initial prologueDrop (retypeNullLoopParams m body)
+retypeNullLoopParams m (RLoop {sameLen} fc loopParams initial prologueDrop body) =
+    mapLoop fc loopParams initial (\case (i, RBoxed) => (i, maybe RBoxed RNative (lookup i m))
+                                         p => p)
+            id prologueDrop (retypeNullLoopParams m body)
 retypeNullLoopParams m e = mapChildren (retypeNullLoopParams m) e
 
 ||| `known` and every `let` below that only renames one of its locals (the
@@ -1121,7 +1121,7 @@ applyCallSiteRewriteBody workers reps mLoopParams inTail (RConstCase fc sc alts 
   where
     rewriteConstAlt : RConstAlt -> RConstAlt
     rewriteConstAlt (MkRConstAlt c body) = MkRConstAlt c (applyCallSiteRewriteBody workers reps mLoopParams inTail body)
-applyCallSiteRewriteBody workers reps mLoopParams inTail (RLoop fc loopParams initial prologueDrop body) =
+applyCallSiteRewriteBody workers reps mLoopParams inTail (RLoop {sameLen} fc loopParams initial prologueDrop body) =
     RLoop fc loopParams initial prologueDrop (applyCallSiteRewriteBody workers (foldl (\m, (i, r) => insert i r m) reps loopParams) (Just loopParams) inTail body)
 applyCallSiteRewriteBody workers reps mLoopParams inTail (RDup fc v extra cont) = RDup fc v extra (applyCallSiteRewriteBody workers reps mLoopParams inTail cont)
 applyCallSiteRewriteBody workers reps mLoopParams inTail (RDrop fc vs cont) = RDrop fc vs (applyCallSiteRewriteBody workers reps mLoopParams inTail cont)
@@ -1213,7 +1213,7 @@ inlineFFIWorkersExp ffiInline (RConstCase fc sc alts mDef) =
   where
     rewriteAlt : RConstAlt -> RConstAlt
     rewriteAlt (MkRConstAlt c body) = MkRConstAlt c (inlineFFIWorkersExp ffiInline body)
-inlineFFIWorkersExp ffiInline (RLoop fc loopParams initial prologueDrop body) =
+inlineFFIWorkersExp ffiInline (RLoop {sameLen} fc loopParams initial prologueDrop body) =
     RLoop fc loopParams initial prologueDrop (inlineFFIWorkersExp ffiInline body)
 inlineFFIWorkersExp ffiInline (RDup fc v extra cont) = RDup fc v extra (inlineFFIWorkersExp ffiInline cont)
 inlineFFIWorkersExp ffiInline (RDrop fc vs cont) = RDrop fc vs (inlineFFIWorkersExp ffiInline cont)
@@ -1267,7 +1267,7 @@ packTails ws wNames reps (RConCase fc sc alts mDef) =
 packTails ws wNames reps (RConstCase fc sc alts mDef) =
     RConstCase fc sc (map (\(MkRConstAlt c body) => MkRConstAlt c (packTails ws wNames reps body)) alts)
       (map (packTails ws wNames reps) mDef)
-packTails ws wNames reps (RLoop fc loopParams initial prologueDrop body) =
+packTails ws wNames reps (RLoop {sameLen} fc loopParams initial prologueDrop body) =
     RLoop fc loopParams initial prologueDrop
       (packTails ws wNames (foldl (\m, (i, r) => insert i r m) reps loopParams) body)
 packTails _ _ _ (RCon fc n _ (Just tag) args reuseFrom) =
@@ -1382,7 +1382,7 @@ dropOwnership f (RFill fc cell k val pd) = RFill fc cell k val (filter (/= RCLoc
 dropOwnership f (RCmpCase fc op args pd t e) =
     RCmpCase fc op args (filter (/= RCLoc f) pd) (dropOwnership f t) (dropOwnership f e)
 dropOwnership f (RLoopContinue fc args pd) = RLoopContinue fc args (filter (/= RCLoc f) pd)
-dropOwnership f (RLoop fc ps initial pd k) = RLoop fc ps initial (filter (/= RCLoc f) pd) (dropOwnership f k)
+dropOwnership f (RLoop {sameLen} fc ps initial pd k) = RLoop fc ps initial (filter (/= RCLoc f) pd) (dropOwnership f k)
 dropOwnership f (RReuseOffer fc sc ds us k) =
     RReuseOffer fc sc (filter (/= RCLoc f) ds) (filter (/= RCLoc f) us) (dropOwnership f k)
 dropOwnership f e = mapChildren (dropOwnership f) e
@@ -1502,7 +1502,7 @@ structSites ws plan reps (RLet fc x RBoxed value body) = do
 
 structSites ws plan reps (RLet fc x rep value body) =
     RLet fc x rep <$> structSites ws plan reps value <*> structSites ws plan (insert x rep reps) body
-structSites ws plan reps (RLoop fc ps initial pd body) =
+structSites ws plan reps (RLoop {sameLen} fc ps initial pd body) =
     RLoop fc ps initial pd <$> structSites ws plan (foldl (\m, (i, r) => insert i r m) reps ps) body
 structSites ws plan reps (RCmpCase fc op args pd t f) =
     RCmpCase fc op args pd <$> structSites ws plan reps t <*> structSites ws plan reps f

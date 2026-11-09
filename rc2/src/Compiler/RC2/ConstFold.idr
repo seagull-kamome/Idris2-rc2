@@ -695,7 +695,7 @@ foldConst caf env (RReuseOffer fc sc dupOnShared dropOnUnique body) =
 -- (before Compiler.RC2.Loop/DualABI) -- kept total as a plain
 -- pass-through rather than assumed unreachable, same reasoning as
 -- `Rewrite.idr`'s `renameRCExp`.
-foldConst caf env (RLoop fc loopParams initial prologueDrop body) =
+foldConst caf env (RLoop {sameLen} fc loopParams initial prologueDrop body) =
     RLoop fc loopParams initial prologueDrop (foldConst caf env body)
 foldConst _ _ e = e
 

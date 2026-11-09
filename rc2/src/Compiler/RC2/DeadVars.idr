@@ -79,7 +79,7 @@ eraseDeadVars used (RConCase fc sc alts mDef) =
 eraseDeadVars used (RConstCase fc sc alts mDef) =
     RConstCase fc sc (map (\(MkRConstAlt c body) => MkRConstAlt c (eraseDeadVars used body)) alts)
       (map (eraseDeadVars used) mDef)
-eraseDeadVars used (RLoop fc loopParams initial prologueDrop body) =
+eraseDeadVars used (RLoop {sameLen} fc loopParams initial prologueDrop body) =
     RLoop fc loopParams initial prologueDrop (eraseDeadVars used body)
 eraseDeadVars used (RDup fc v extra body) = RDup fc v extra (eraseDeadVars used body)
 eraseDeadVars used (RDrop fc vs body) = RDrop fc vs (eraseDeadVars used body)
@@ -184,7 +184,7 @@ dropConstOwnership e = clean (mapChildren dropConstOwnership e)
     clean (RAppNameRep fc n argReps retRep pd args) = RAppNameRep fc n argReps retRep (keep pd) args
     clean (RAppFFIInline fc ccs fargs ret pd args) = RAppFFIInline fc ccs fargs ret (keep pd) args
     clean (RLoopContinue fc args pd) = RLoopContinue fc args (keep pd)
-    clean (RLoop fc ps initial pd k) = RLoop fc ps initial (keep pd) k
+    clean (RLoop {sameLen} fc ps initial pd k) = RLoop fc ps initial (keep pd) k
     clean e' = e'
 
 ||| The ids that occur more than once in `ids`.

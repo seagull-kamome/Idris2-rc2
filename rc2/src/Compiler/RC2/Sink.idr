@@ -395,7 +395,7 @@ applySinkExp reps (RLet fc var rep value body) =
                     Just sunk => applySinkExp reps sunk
                     Nothing => RLet fc var rep value' body'
           else RLet fc var rep value' body'
-applySinkExp reps (RLoop fc loopParams initial prologueDrop body) =
+applySinkExp reps (RLoop {sameLen} fc loopParams initial prologueDrop body) =
     RLoop fc loopParams initial prologueDrop (applySinkExp (foldl (\m, (i, r) => insert i r m) reps loopParams) body)
 applySinkExp reps e = mapChildren (applySinkExp reps) e
 

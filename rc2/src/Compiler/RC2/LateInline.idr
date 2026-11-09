@@ -271,8 +271,9 @@ hasNonNativeUse ty loopSlots target (RReuseOffer _ sc dupOnShared dropOnUnique b
       || hasNonNativeUse ty loopSlots target body
 -- The body is checked against THIS loop's slots. `initial` is treated like
 -- `RLoopContinue` below: `Emit` renders each entry by the slot's `Rep`, so
--- an `RNative ty` slot is a native read. A Boxed slot, or a length mismatch
--- (`zip` would drop the tail), disqualifies.
+-- an `RNative ty` slot is a native read. A Boxed slot disqualifies. (`RLoop`
+-- carries a proof that `initial` and the slots have the same length, so
+-- `zip` drops nothing here.)
 hasNonNativeUse ty loopSlots target (RLoop _ loopParams initial _ body) =
     initialNonNative || hasNonNativeUse ty loopParams target body
   where
@@ -282,7 +283,6 @@ hasNonNativeUse ty loopSlots target (RLoop _ loopParams initial _ body) =
     initialNonNative =
         any (\((_, slotRep), a) => a == RCLoc target && nativeSlotTy slotRep /= Just ty)
             (zip loopParams initial)
-          || (length initial /= length loopParams && elem (RCLoc target) initial)
 hasNonNativeUse ty loopSlots target (RLoopContinue _ args _) =
     any (\((_, slotRep), a) => a == RCLoc target && not (matchesTy slotRep)) (zip loopSlots args)
       || (length args /= length loopSlots && elem (RCLoc target) args)
@@ -341,7 +341,7 @@ resolveConstClosureApps ccs e@(RApp fc lazy (RCLoc v) args) =
                         else e
 -- A loop parameter starts out as its constant closure but every
 -- `RLoopContinue` rebinds it, so inside the body it is no longer known.
-resolveConstClosureApps ccs (RLoop fc loopParams initial prologueDrop body) =
+resolveConstClosureApps ccs (RLoop {sameLen} fc loopParams initial prologueDrop body) =
     RLoop fc loopParams initial prologueDrop
           (resolveConstClosureApps (foldl (\m, (i, _) => delete i m) ccs loopParams) body)
 resolveConstClosureApps ccs e = mapChildren (resolveConstClosureApps ccs) e
@@ -552,7 +552,7 @@ inlineInto tiny defOf eligible tinyOnly self = go empty empty []
     go cl reps loopSlots (RLet fc var rep value body) =
         RLet fc var rep <$> go cl reps loopSlots value
                         <*> go (if isPartialValue cl value then insert var cl else cl) (insert var rep reps) loopSlots body
-    go cl reps loopSlots (RLoop fc loopParams initial prologueDrop body) =
+    go cl reps loopSlots (RLoop {sameLen} fc loopParams initial prologueDrop body) =
         RLoop fc loopParams initial prologueDrop <$> go cl (foldl (\m, (i, r) => insert i r m) reps loopParams) loopParams body
     go cl reps loopSlots e = traverseChildren @{Applicative.CORE} (go cl reps loopSlots) e
 

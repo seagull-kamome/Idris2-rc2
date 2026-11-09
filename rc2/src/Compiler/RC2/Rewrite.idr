@@ -117,8 +117,8 @@ mutual
   -- `renameRCExp` on a not-yet-wrapped body). Kept total (as a plain
   -- pass-through) rather than assumed unreachable, same reasoning as
   -- RC.idr's own `annotate`.
-  mapLocalsRCExp f g (RLoop fc loopParams initial prologueDrop body) =
-      RLoop fc (map (\(i, r) => (g i, r)) loopParams) (map f initial) (map f prologueDrop) (mapLocalsRCExp f g body)
+  mapLocalsRCExp f g (RLoop {sameLen} fc loopParams initial prologueDrop body) =
+      mapLoop fc loopParams initial (\(i, r) => (g i, r)) f (map f prologueDrop) (mapLocalsRCExp f g body)
   mapLocalsRCExp f g (RLoopContinue fc args postDrop) = RLoopContinue fc (map f args) (map f postDrop)
   -- Never actually reached in practice -- Compiler.RC2.DualABI, the
   -- sole producer of RAppNameRep, runs strictly after both this
@@ -208,7 +208,7 @@ stripOwnership ids (RLoopContinue fc args postDrop) =
 -- worker whose own signature now renders one of these ids natively
 -- would still emit a drop for a value that was never boxed in that
 -- worker's own rendering at all.
-stripOwnership ids (RLoop fc loopParams initial prologueDrop body) =
+stripOwnership ids (RLoop {sameLen} fc loopParams initial prologueDrop body) =
     RLoop fc loopParams initial
       (filter (keepUnlessOwned ids) prologueDrop)
       (stripOwnership ids body)

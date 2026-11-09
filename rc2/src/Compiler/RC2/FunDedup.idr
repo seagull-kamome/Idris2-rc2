@@ -84,7 +84,7 @@ renameNamesG f cl = go
     go (RReleaseReuse fc v body) = RReleaseReuse fc (l v) (go body)
     go (RReuseOffer fc sc dupOnShared dropOnUnique body) =
         RReuseOffer fc (l sc) (ls dupOnShared) (ls dropOnUnique) (go body)
-    go (RLoop fc params initial prologueDrop body) = RLoop fc params (ls initial) (ls prologueDrop) (go body)
+    go (RLoop {sameLen} fc params initial prologueDrop body) = mapLoop fc params initial id l (ls prologueDrop) (go body)
     go (RLoopContinue fc args postDrop) = RLoopContinue fc (ls args) (ls postDrop)
     go (RMemoize fc n rep body) = RMemoize fc n rep (go body)
 

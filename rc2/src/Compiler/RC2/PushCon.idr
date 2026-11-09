@@ -384,7 +384,7 @@ pushExpRC reps (RLet fc v rep value body) = do
     isKnown : Landing -> Bool
     isKnown (Part _) = True
     isKnown _ = False
-pushExpRC reps (RLoop fc ps initial pd k) = do
+pushExpRC reps (RLoop {sameLen} fc ps initial pd k) = do
     (k', c) <- pushExpRC (foldl (\m, (i, r) => insert i r m) reps ps) k
     pure (RLoop fc ps initial pd k', c)
 pushExpRC reps e = do
