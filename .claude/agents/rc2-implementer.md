@@ -75,7 +75,7 @@ source env.sh
 ## コードスタイル規約
 
 - 新規パス・モジュールを追加する際は、既存の類似パス（後段の独立した`RCExp`書き換えパスなら`Compiler.RC2.Sink`が良いテンプレート）のモジュールヘッダコメントの密度・スタイル・命名規則に倣う。
-- パイプラインに新規ステージを追加する場合、既存の`--directive no<stagename>`パターン（`noinline`/`noconaltnative`/`nomutualloop`/`noloop`/`nosink`/`nodualabi`/`nodeadcode`等）に倣い、同様のトグルを追加するのが通常望ましい（`RC2.idr`の`disableableStageNames`に登録する。`rc2/doc/directives.md`の表の更新は文書担当に任せる）。
+- パイプラインに新規ステージを追加する場合、既存の`--directive no<stagename>`パターン（`noinline`/`noconaltnative`/`nomutualloop`/`noloop`/`nosink`/`nodualabi`/`nodeadcode`等）に倣い、同様のトグルを追加するのが通常望ましい（`Stage.idr`の`Stage`にコンストラクタを足し、`stageDirective`と`allStages`と`inAllStages`も更新する。`rc2/doc/directives.md`の表の更新は文書担当に任せる）。
 - ドキュメントを読めばわかる事はコードのコメントに書かず、`rc2/doc/`への参照リンクに留める。
 
 ## 報告規約

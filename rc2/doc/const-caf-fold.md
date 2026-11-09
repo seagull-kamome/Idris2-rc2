@@ -123,7 +123,7 @@ normalization and Phase 2 annotation:
 
 ```idris2
 (preFolded, infos) <- normalizeProgram incremental main defs   -- in lowerProgram
-folded <- if "noconstfold" `elem` disabled
+folded <- if stageOff NoConstFold disabled
              then pure preFolded
              else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ pure (foldConstProgram preFolded)
 reused <- ... traverse (\(n, d) => do d1 <- toRCDefPostFold d; ...) folded
@@ -331,7 +331,7 @@ pass in Phase 1) now lives in this same traversal, so it is
 gated by `noconstfold` too:
 
 ```idris2
-folded <- if "noconstfold" `elem` disabled
+folded <- if stageOff NoConstFold disabled
              then pure preFolded
              else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ pure (foldConstProgram preFolded)
 ```
