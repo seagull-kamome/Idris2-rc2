@@ -55,7 +55,7 @@ renameNamesG f cl = go
     go : RCExp -> RCExp
     go (RV fc v) = RV fc (l v)
     go (RAppName fc lazy n args) = RAppName fc lazy (f n) (ls args)
-    go (RAppNameRep fc n argReps retRep postDrop args) = RAppNameRep fc (f n) argReps retRep (ls postDrop) (ls args)
+    go (RAppNameRep {sameLen} fc n argReps retRep postDrop args) = mapRepCallArgs fc (f n) argReps retRep (ls postDrop) args l
     go (RAppFFIInline fc ccs fargs ret postDrop args) = RAppFFIInline fc ccs fargs ret (ls postDrop) (ls args)
     go (RUnderApp fc n missing args) = let (n', missing') = cl n missing in RUnderApp fc n' missing' (ls args)
     go (RDelay fc lr n caps) = RDelay fc lr (f n) (ls caps)

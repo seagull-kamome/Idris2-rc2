@@ -429,7 +429,7 @@ mutual
                               -- the same problem emitNativeReturn solves
                               -- on the native side.
                               _ => case remaining of
-                                       RAppNameRep fc' n argReps retRep postDrop args =>
+                                       RAppNameRep {sameLen} fc' n argReps retRep postDrop args =>
                                            emitAppNameRepInto sink tailPosition fc' n argReps retRep postDrop args
                                        RAppFFIInline fc' ccs fargs ret postDrop args =>
                                            emitAppFFIInlineInto sink tailPosition fc' ccs fargs ret postDrop args

@@ -35,7 +35,7 @@ rewriteTails ok = go
   where
     go : RCExp -> Core RCExp
     go e@(RAppName fc _ n args) =
-        pure (if ok n args then RAppNameRep fc n (map (const RBoxed) args) RBoxed [] args else e)
+        pure (if ok n args then RAppNameRep fc n (map (const RBoxed) args) RBoxed [] args {sameLen = lengthMap args} else e)
     go (RLoop {sameLen} fc ps initial pd k) = RLoop fc ps initial pd <$> go k
     go e = fromMaybe (pure e) (traverseTailChildren @{Applicative.CORE} go e)
 
