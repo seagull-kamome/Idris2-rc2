@@ -36,7 +36,7 @@ rewriteTails ok = go
     go : RCExp -> Core RCExp
     go e@(RAppName fc _ n args) =
         pure (if ok n args then RAppNameRep fc n (map (const RBoxed) args) RBoxed [] args else e)
-    go (RLoop fc ps initial pd k) = RLoop fc ps initial pd <$> go k
+    go (RLoop {sameLen} fc ps initial pd k) = RLoop fc ps initial pd <$> go k
     go e = fromMaybe (pure e) (traverseTailChildren @{Applicative.CORE} go e)
 
 ||| The tail-call graph over the functions of `defs`.

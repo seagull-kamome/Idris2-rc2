@@ -308,7 +308,7 @@ mutual
       in case the (RCExp, Bool) (if tryFlat then stackChain ok env x (flatten (RLet fc x rep value' body')) else (RLet fc x rep value' body', False)) of
               (flat, True) => flat
               _ => fst (letWith ok env' fc x rep value' body')
-  stackWalk ok env noFlat (RLoop fc ps initial pd k) =
+  stackWalk ok env noFlat (RLoop {sameLen} fc ps initial pd k) =
       RLoop fc ps initial pd (stackWalk ok (foldl (\m, (i, r) => insert i r m) env ps) noFlat k)
   stackWalk ok env noFlat (RConCase fc sc alts mDef) =
       let boxedScrut = case sc of

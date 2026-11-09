@@ -17,6 +17,7 @@ import Core.TT
 
 import Data.DPair
 import public Data.List.Elem
+import Data.List
 import Data.List.Quantifiers
 import Data.List1
 import Data.SortedSet
@@ -433,7 +434,13 @@ data RCExp : Type where
      ||| or anything else exits. `prologueDrop`: top-level args dead in
      ||| Boxed form once their native shadow is declared. Only produced
      ||| by `Compiler.RC2.Loop`'s `applyLoop` -- see `doc/loop-conversion.md`.
-     RLoop : FC -> (loopParams : List (Int, Rep)) -> (initial : List RCLocal) -> (prologueDrop : List RCLocal) -> RCExp -> RCExp
+     |||
+     ||| `sameLen`: one starting value per carried local. Erased, so every
+     ||| pass that rebuilds an `RLoop` must keep the two lists in step,
+     ||| and `Compiler.RC2.Emit`'s `zip` of them drops nothing.
+     RLoop : FC -> (loopParams : List (Int, Rep)) -> (initial : List RCLocal)
+          -> {auto 0 sameLen : length loopParams = length initial}
+          -> (prologueDrop : List RCLocal) -> RCExp -> RCExp
      ||| Continue the nearest enclosing `RLoop` with `args` as each loop
      ||| param's new value (ownership already decided by Phase 2,
      ||| unchanged here). `postDrop` decided separately by `applyLoop`
@@ -490,6 +497,19 @@ data RCDef : Type where
      MkRCCon : (tag : Maybe Int) -> (arity : Nat) -> (nt : Maybe Nat) -> RCDef
      MkRCForeign : (ccs : List String) -> (fargs : List CFType) -> CFType -> RCDef
      MkRCError : RCExp -> RCDef
+
+||| An `RLoop` like the given one with `pf` applied to each carried local and
+||| `inf` to each starting value: both lists keep their length, which is what
+||| `RLoop`'s erased `sameLen` asks for.
+export
+mapLoop : FC -> (loopParams : List (Int, Rep)) -> (initial : List RCLocal)
+       -> {auto 0 sameLen : length loopParams = length initial}
+       -> (pf : (Int, Rep) -> (Int, Rep)) -> (inf : RCLocal -> RCLocal)
+       -> (prologueDrop : List RCLocal) -> RCExp -> RCExp
+mapLoop fc loopParams initial pf inf prologueDrop body =
+    RLoop fc (map pf loopParams) (map inf initial)
+          {sameLen = trans (lengthMap loopParams) (trans sameLen (sym (lengthMap initial)))}
+          prologueDrop body
 
 ------------------------------------------------------------------------
 -- Structural analyses used by RC.idr (ownership annotation) and
@@ -1031,7 +1051,7 @@ mapChildren f (RDrop fc vs k) = RDrop fc vs (f k)
 mapChildren f (RFree fc x k) = RFree fc x (f k)
 mapChildren f (RReleaseReuse fc x k) = RReleaseReuse fc x (f k)
 mapChildren f (RReuseOffer fc sc ds us k) = RReuseOffer fc sc ds us (f k)
-mapChildren f (RLoop fc ps initial pd k) = RLoop fc ps initial pd (f k)
+mapChildren f (RLoop {sameLen} fc ps initial pd k) = RLoop fc ps initial pd (f k)
 mapChildren f (RMemoize fc n r k) = RMemoize fc n r (f k)
 mapChildren _ e = e
 
@@ -1052,6 +1072,6 @@ traverseChildren f (RDrop fc vs k) = RDrop fc vs <$> f k
 traverseChildren f (RFree fc x k) = RFree fc x <$> f k
 traverseChildren f (RReleaseReuse fc x k) = RReleaseReuse fc x <$> f k
 traverseChildren f (RReuseOffer fc sc ds us k) = RReuseOffer fc sc ds us <$> f k
-traverseChildren f (RLoop fc ps initial pd k) = RLoop fc ps initial pd <$> f k
+traverseChildren f (RLoop {sameLen} fc ps initial pd k) = RLoop fc ps initial pd <$> f k
 traverseChildren f (RMemoize fc n r k) = RMemoize fc n r <$> f k
 traverseChildren _ e = pure e

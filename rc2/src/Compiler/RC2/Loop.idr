@@ -449,7 +449,7 @@ dupInvariantBoxed p (RReuseOffer fc sc dupOnShared dropOnUnique cont) = RReuseOf
 -- redirected to the shadow id wherever `p` itself was invariant) --
 -- `wrapInvariantDups` on them is defensive totality, not a load-bearing
 -- path.
-dupInvariantBoxed p (RLoop fc loopParams initial prologueDrop body) =
+dupInvariantBoxed p (RLoop {sameLen} fc loopParams initial prologueDrop body) =
     wrapInvariantDups fc p (countInvariantDups p initial + countInvariantDups p prologueDrop)
       (RLoop fc loopParams initial prologueDrop (dupInvariantBoxed p body))
 -- Same defensive reasoning as `RLoop` above -- `markInvariantNative`
@@ -561,8 +561,14 @@ applyLoopFromId nextId0 calleeTable noPromote self (MkRCFun args retRep isWorker
                   invariantIds : SortedSet Int
                   invariantIds = fromList $ mapMaybe (\(p, finalId) => if contains p invariantIdsPre then Just finalId else Nothing)
                                    (zip argIds (map fst fullLoopParams))
+                  -- The still-loop-carried params with their starting values, kept
+                  -- paired so `loopParams` and `initial` cannot drift in length
+                  -- (`fullLoopParams` has one entry per `argIds`, so `zip` drops nothing).
+                  carried : List ((Int, Rep), RCLocal)
+                  carried = filter (\((p, _), _) => not (contains p invariantIds))
+                                   (zip fullLoopParams (map RCLoc argIds))
                   loopParams : List (Int, Rep)
-                  loopParams = filter (\(p, _) => not (contains p invariantIds)) fullLoopParams
+                  loopParams = map fst carried
                   finalBody : RCExp
                   finalBody = if null invariantIds
                                  then withPostDrop
@@ -594,10 +600,11 @@ applyLoopFromId nextId0 calleeTable noPromote self (MkRCFun args retRep isWorker
                   -- below, so no separate `hoistedExprs`/`finalBody2`
                   -- names -- just the two projections inline.
                   initial : List RCLocal
-                  initial = map snd $ filter (\((p, _), _) => not (contains p invariantIds))
-                                              (zip fullLoopParams (map RCLoc argIds))
+                  initial = map snd carried
                   innerLoop : RCExp
-                  innerLoop = RLoop emptyFC loopParams initial prologueDrop (snd hoistResult)
+                  innerLoop = RLoop emptyFC loopParams initial
+                                    {sameLen = trans (lengthMap carried) (sym (lengthMap carried))}
+                                    prologueDrop (snd hoistResult)
 
                   withHoistedExprs : RCExp
                   withHoistedExprs = foldr (\(var, rep, value), acc => RLet emptyFC var rep value acc) innerLoop (fst hoistResult)

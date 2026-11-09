@@ -299,7 +299,7 @@ mutual
       (done, RConstCase fc sc
                (map (\(MkRConstAlt c body) => MkRConstAlt c (mergeDupsExp ns body)) alts)
                (map (mergeDupsExp ns) mDef))
-  rewriteRegion ns counts done (RLoop fc loopParams initial prologueDrop body) =
+  rewriteRegion ns counts done (RLoop {sameLen} fc loopParams initial prologueDrop body) =
       (done, RLoop fc loopParams initial prologueDrop (mergeDupsExp ns body))
   rewriteRegion ns counts done e = (done, e)
 
