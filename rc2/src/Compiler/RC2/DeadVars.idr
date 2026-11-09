@@ -64,7 +64,7 @@ import Data.SortedSet
 ||| set it started from.
 eraseDeadConAltFields : SortedSet RCLocal -> List Int -> List Int
 eraseDeadConAltFields used args =
-    map (\i => if contains (RCLoc i) used then i else 0) args
+    map (\i => if contains (RCLoc i) used then i else deadId) args
 
 eraseDeadVars : SortedSet RCLocal -> RCExp -> RCExp
 eraseDeadVars used (RLet fc var rep value body) =

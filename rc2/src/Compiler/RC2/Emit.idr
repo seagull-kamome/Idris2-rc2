@@ -158,9 +158,9 @@ mutual
         case (scRep, projectChain var body) of
              (RRet _ _, _) => pure False
              (_, Just (f, chain)) =>
-                 if f == 0 || not (f `elem` args) then pure False else do
+                 if isDeadId f || not (f `elem` args) then pure False else do
                      _ <- foldlC (\k, arg => do
-                         when (arg /= 0) $
+                         unless (isDeadId arg) $
                              emit emptyFC "IDRIS2RC2_Value *\{varName (RCLoc (if arg == f then var else arg))} = ((IDRIS2RC2_Constructor*)\{varName sc})->args[\{show k}];"
                          pure (S k)) 0 args
                      _ <- peelWrappers chain
@@ -517,7 +517,7 @@ mutual
                             (RRet _ l, Just t) => retFieldType l t k
                             _ => Nothing
         _ <- foldlC (\k, arg => do
-            when (arg /= 0) $ case (isStruct, native k) of
+            unless (isDeadId arg) $ case (isStruct, native k) of
                  (True, Just ty) => do
                      update RepMap (insert arg (RNative (TPrim ty)))
                      emit emptyFC "\{nativeCType ty} var_\{show arg} = (\{nativeCType ty})\{sc'}.f\{show k}.\{retMember ty};"
