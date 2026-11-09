@@ -539,13 +539,8 @@ exportNfToCFType defs (NPrimVal _ (PrT ty)) = pure $ case ty of
     DoubleType => Just CFDouble; CharType => Just CFChar
     IntegerType => Just CFInteger; StringType => Just CFString
     WorldType => Just CFWorld
--- `NS (mkNamespace "PrimIO") (UN (Basic "IO"))` confirmed empirically
--- (a temporary `coreLift $ putStrLn "DEBUG NTCon: \{show fn}"` here,
--- compiling a probe `%export`ed `IO Int`-returning function and
--- observing "DEBUG NTCon: PrimIO.IO") rather than trusted from source
--- reading alone -- `IO`/`IORes` are both genuine `data` types
--- (`libs/prelude/PrimIO.idr`), so their `NTCon` name is exactly their
--- own declaration site's full name, no further unmangling needed.
+-- `IO`/`IORes` are `data` types (`libs/prelude/PrimIO.idr`), so their `NTCon`
+-- name is their declaration site's full name: `PrimIO.IO`, `PrimIO.IORes`.
 exportNfToCFType defs (NTCon _ n _ args) = do
     fn <- toFullNames n
     case fn of
@@ -562,15 +557,10 @@ exportNfToCFType defs (NTCon _ n _ args) = do
              ("AnyPtr", [])   => pure $ Just CFPtr
              ("GCPtr", [_])   => pure $ Just CFGCPtr
              ("GCAnyPtr", []) => pure $ Just CFGCPtr
-             -- Field list (the Struct type's own second argument)
-             -- deliberately unread -- CFStruct's fields are only ever
-             -- consulted for generating a C typedef ahead of a
-             -- getField/setField site (Emit/Util.idr's collectStructDefs,
-             -- populated solely from %foreign defs), never for
-             -- %export's own marshalling (cTypeOfCFType/extractValue/
-             -- packCFType's CFStruct cases already ignore them,
-             -- aliasing CFPtr verbatim) -- so an empty field list here
-             -- is not a shortcut, it's the whole story.
+             -- The field list (the Struct type's second argument) is left
+             -- empty on purpose: it only feeds the C typedef emitted for a
+             -- getField/setField site (`Emit/Util.idr`'s `collectStructDefs`,
+             -- from %foreign defs). %export marshals a struct as a `CFPtr`.
              ("Struct", [nArg, _]) => do
                  NPrimVal _ (Str sname) <- evalClosure defs nArg
                      | _ => pure Nothing

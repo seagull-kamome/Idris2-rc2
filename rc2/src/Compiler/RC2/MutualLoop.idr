@@ -26,6 +26,7 @@ import Compiler.RC2.RCExp
 import Compiler.RC2.CalleeTable
 import Compiler.RC2.Rewrite
 import Compiler.RC2.Util
+import Compiler.RC2.WorkerName
 
 import Core.Context
 

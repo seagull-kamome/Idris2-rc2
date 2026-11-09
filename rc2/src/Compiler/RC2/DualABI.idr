@@ -31,6 +31,7 @@ import Compiler.RC2.MutualLoop
 import Compiler.RC2.Emit.Util
 import Compiler.RC2.ForeignSpec
 import Compiler.RC2.Util
+import Compiler.RC2.WorkerName
 
 import Core.CompileExpr
 import Core.Context.Log

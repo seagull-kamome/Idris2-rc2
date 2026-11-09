@@ -120,17 +120,12 @@ boolResultOp _       = False
 ||| synthesis (no function body to analyse there, unlike
 ||| `paramEligibility`/`returnEligibility` -- the C ABI a `%foreign`
 ||| declaration commits to already decides eligibility by itself).
-||| `CFChar` included even though `Compiler.RC2.Emit.Util.nativeCType
-||| CharType` (`uint32_t`, a full Idris `Char`'s own Unicode codepoint)
-||| disagrees with `cTypeOfCFType CFChar` (a plain 1-byte C `char`,
-||| also `Compiler.RC2.Emit.Util`) -- unlike every other case here,
-||| where the two already agree and a native-eligible position can
-||| cross into `%foreign`'s own call verbatim, `Compiler.RC2.Emit`'s
-||| `emitFFIWorker` casts explicitly at that one call boundary instead
-||| of skipping the conversion. Same narrowing a `CFChar` argument/return
-||| already gets on the always-Boxed wrapper path (`idris2rc2_to_char`/
-||| `idris2rc2_mkChar`), just paid as a register-width cast instead of a
-||| box/unbox round trip.
+||| `CFChar` is included although `nativeCType CharType` is `uint32_t` (a
+||| codepoint) and `cTypeOfCFType CFChar` is a 1-byte C `char`
+||| (`Compiler.RC2.Emit.Util`): `emitFFIWorker` casts at that one call
+||| boundary, the narrowing the Boxed wrapper path does with
+||| `idris2rc2_to_char`/`idris2rc2_mkChar`, minus the box/unbox round trip.
+||| Every other case here has the same C type on both sides.
 export
 cfTypeNative : CFType -> Maybe PrimType
 cfTypeNative CFInt        = Just IntType
