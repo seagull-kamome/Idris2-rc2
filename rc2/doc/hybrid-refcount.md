@@ -54,6 +54,21 @@ it. From then on every operation is atomic.
 The flag is a plain `bool`. It is written once, before any other thread
 exists, and only read afterwards, so reading it needs no atomics.
 
+### The spin locks follow the same flag
+
+`IORef`, `IOArray` and `Lazy` guard their slot with `idris2rc2_spin_lock`
+(`idris2rc2_util.h`). While the flag is false, lock and unlock return at
+once: no second thread exists to race, and the runtime's own `fork` sets
+the flag outside every locked section. A section only loads, stores and
+`dup`s; the `drop` of the old value stays after the unlock, so that a
+teardown never runs under the lock. Before this, every `readIORef` and
+`writeIORef` of a single-threaded program paid a lock-prefixed `xchg` (x86).
+
+The obligation of case 2 above covers the locks too: set the flag by hand
+only before the foreign thread can run Idris code. If the flag came up while
+the main thread was inside a locked section, that section would have skipped
+its lock but its unlock would release a lock held by the other thread.
+
 ### Header: a union
 
 The count stays one 16-bit field, reachable two ways:
