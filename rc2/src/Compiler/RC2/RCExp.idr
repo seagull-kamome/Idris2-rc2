@@ -341,7 +341,11 @@ data RCExp : Type where
      ||| `Compiler.RC2.DualABI` and `Compiler.RC2.LeafTail`.
      ||| `postDrop`: see `ROp`'s own doc below.
      ||| See `doc/dual-abi.md`'s Bugs found #3.
-     RAppNameRep : FC -> Name -> (argReps : List Rep) -> (retRep : Rep) -> (postDrop : List RCLocal) -> List RCLocal -> RCExp
+     |||
+     ||| `sameLen`: one `argReps` entry per argument. Erased, so a pass that
+     ||| rebuilds the call must keep them in step (`mapAppNameRepArgs`).
+     RAppNameRep : FC -> Name -> (argReps : List Rep) -> (retRep : Rep) -> (postDrop : List RCLocal)
+                -> (args : List RCLocal) -> {auto 0 sameLen : length argReps = length args} -> RCExp
      ||| Inlined `%foreign` call, splicing `Emit.emitFFIWorker`'s own
      ||| marshalling logic directly at the call site instead of a
      ||| standalone C function. `ccs`/`fargs`/`ret`/`postDrop`/args are
@@ -501,6 +505,24 @@ data RCDef : Type where
      MkRCCon : (tag : Maybe Int) -> (arity : Nat) -> (nt : Maybe Nat) -> RCDef
      MkRCForeign : (ccs : List String) -> (fargs : List CFType) -> CFType -> RCDef
      MkRCError : RCExp -> RCDef
+
+||| An `RAppNameRep` when `argReps` has one entry per argument, else `Nothing`:
+||| for the passes whose `argReps` come from a table, not from the call.
+export
+repCall : FC -> Name -> (argReps : List Rep) -> (retRep : Rep) -> (postDrop : List RCLocal)
+       -> (args : List RCLocal) -> Maybe RCExp
+repCall fc n argReps retRep postDrop args = case decEq (length argReps) (length args) of
+    Yes sameLen => Just (RAppNameRep fc n argReps retRep postDrop args)
+    No _ => Nothing
+
+||| An `RAppNameRep` with `f` applied to every argument; the `argReps` still
+||| match them.
+export
+mapRepCallArgs : FC -> Name -> (argReps : List Rep) -> (retRep : Rep) -> (postDrop : List RCLocal)
+              -> (args : List RCLocal) -> {auto 0 sameLen : length argReps = length args}
+              -> (f : RCLocal -> RCLocal) -> RCExp
+mapRepCallArgs fc n argReps retRep postDrop args f =
+    RAppNameRep fc n argReps retRep postDrop (map f args) {sameLen = trans sameLen (sym (lengthMap args))}
 
 ||| An `RLoop` like the given one with `pf` applied to each carried local and
 ||| `inf` to each starting value: both lists keep their length, which is what

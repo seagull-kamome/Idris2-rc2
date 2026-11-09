@@ -730,6 +730,7 @@ synthesizeWorker existingNames original eligible0 retEligible args wrapperRetRep
         wrapperPostDrop = map RCLoc (mapMaybe (\(p, ty) => if tyAlwaysUnboxed ty then Nothing else Just p) eligible)
         wrapperBody : RCExp
         wrapperBody = RAppNameRep emptyFC workerName (map snd workerArgs) workerRetRep wrapperPostDrop (map RCLoc wrapperArgIds)
+                      {sameLen = trans (lengthMap workerArgs) (trans (lengthMap args) (trans (sym (lengthMap args)) (sym (lengthMap wrapperArgIds))))}
         wrapperDef : RCDef
         wrapperDef = MkRCFun args wrapperRetRep False wrapperBody
     pure (workerName, wrapperDef, workerDef)
@@ -1168,9 +1169,7 @@ applyCallSiteRewriteBody workers reps _ False value@(RAppName fc _ n args) =
     case lookup n workers of
          Nothing => value
          Just (MkWorkerInfo workerName argReps workerRetRep _) =>
-             if length args /= length argReps
-                then value
-                else RAppNameRep fc workerName argReps workerRetRep (postDropFor reps argReps args) args
+             fromMaybe value (repCall fc workerName argReps workerRetRep (postDropFor reps argReps args) args)
 -- A bare RAppName reached with inTail = True -- the whole function's
 -- own true tail position. Left alone for an ordinary worker
 -- (`OrdinaryWorker`: can still chain into further deferred tail calls, see
@@ -1181,9 +1180,7 @@ applyCallSiteRewriteBody workers reps _ False value@(RAppName fc _ n args) =
 applyCallSiteRewriteBody workers reps _ True value@(RAppName fc _ n args) =
     case lookup n workers of
          Just (MkWorkerInfo workerName argReps workerRetRep FfiWorker) =>
-             if length args /= length argReps
-                then value
-                else RAppNameRep fc workerName argReps workerRetRep (postDropFor reps argReps args) args
+             fromMaybe value (repCall fc workerName argReps workerRetRep (postDropFor reps argReps args) args)
          _ => value
 -- Every other shape: RV, RAppNameRep, RUnderApp, RApp, RCon, RExtPrim,
 -- RPrimVal, RErased, RCrash, RLoopContinue, RStructGet, RStructSet --
@@ -1221,7 +1218,7 @@ applyCallSiteRewrite typedCase ffiWorkers defs =
 ||| Rep-inference/ownership/tail-position logic of its own, unlike
 ||| Stage 4 -- much like `Rewrite.idr`'s own `renameRCExp`.
 inlineFFIWorkersExp : SortedMap Name (List String, List CFType, CFType) -> RCExp -> RCExp
-inlineFFIWorkersExp ffiInline (RAppNameRep fc workerName argReps retRep postDrop args) =
+inlineFFIWorkersExp ffiInline (RAppNameRep {sameLen} fc workerName argReps retRep postDrop args) =
     case lookup workerName ffiInline of
          Just (ccs, fargs, ret) => RAppFFIInline fc ccs fargs ret postDrop args
          Nothing => RAppNameRep fc workerName argReps retRep postDrop args
@@ -1304,9 +1301,9 @@ packTails _ _ _ (RV fc RCNull) = RRetPack fc nullConName 0 []
 packTails _ _ _ (RV fc RCErased) = RRetPack fc nullConName 0 []
 packTails _ _ _ (RV fc RCWorld) = RRetPack fc nullConName 0 []
 packTails ws _ reps e@(RAppName fc Nothing g args) = case lookup g ws of
-    Just (w, argReps, r) => RAppNameRep fc w argReps r (postDropFor reps argReps args) args
+    Just (w, argReps, r) => fromMaybe e (repCall fc w argReps r (postDropFor reps argReps args) args)
     Nothing => e
-packTails ws _ _ e@(RAppNameRep fc g argReps _ postDrop args) = case lookup g ws of
+packTails ws _ _ e@(RAppNameRep {sameLen} fc g argReps _ postDrop args) = case lookup g ws of
     Just (_, _, r) => RAppNameRep fc g argReps r postDrop args
     Nothing => e
 -- RLoopContinue, RCrash; anything else never reaches a tail of a
@@ -1329,7 +1326,8 @@ cellOf r shapes = do
 ||| The wrapper's body: call the struct worker, then build the cell the
 ||| original function returned (`cellOf`).
 materialize : {auto v : Ref VarId Int}
-           -> Name -> List Rep -> Rep -> List RCLocal -> List RCLocal -> SortedMap Int ConShape -> Core RCExp
+           -> Name -> (argReps : List Rep) -> Rep -> List RCLocal -> (args : List RCLocal)
+           -> {auto 0 sameLen : length argReps = length args} -> SortedMap Int ConShape -> Core RCExp
 materialize w argReps rep postDrop args shapes = do
     r <- freshVarId
     RLet emptyFC r rep (RAppNameRep emptyFC w argReps rep postDrop args) <$> cellOf r shapes
@@ -1385,7 +1383,8 @@ retargetCall ws reps (RDup fc x n k) = map (\(g, l, b) => (g, l, RDup fc x n b))
 retargetCall ws reps (RDrop fc vs k) = map (\(g, l, b) => (g, l, RDrop fc vs b)) (retargetCall ws reps k)
 retargetCall ws reps (RAppName fc Nothing g args) = do
     (w, argReps, r) <- lookup g ws
-    pure (g, r, RAppNameRep fc w argReps r (postDropFor reps argReps args) args)
+    call <- repCall fc w argReps r (postDropFor reps argReps args) args
+    pure (g, r, call)
 retargetCall _ _ _ = Nothing
 
 ||| `e` with every ownership operation on `f` gone: a field the struct
@@ -1399,7 +1398,7 @@ dropOwnership f (RDrop fc vs k) =
 dropOwnership f (RFree fc x k) = if x == RCLoc f then dropOwnership f k else RFree fc x (dropOwnership f k)
 dropOwnership f (ROp fc lazy op args pd) = ROp fc lazy op args (filter (/= RCLoc f) pd)
 dropOwnership f (RExtPrim fc lazy p args pd) = RExtPrim fc lazy p args (filter (/= RCLoc f) pd)
-dropOwnership f (RAppNameRep fc n argReps retRep pd args) = RAppNameRep fc n argReps retRep (filter (/= RCLoc f) pd) args
+dropOwnership f (RAppNameRep {sameLen} fc n argReps retRep pd args) = RAppNameRep fc n argReps retRep (filter (/= RCLoc f) pd) args
 dropOwnership f (RAppFFIInline fc ccs fargs ret pd args) = RAppFFIInline fc ccs fargs ret (filter (/= RCLoc f) pd) args
 dropOwnership f (RStructGet fc sv sf pd) = RStructGet fc sv sf (filter (/= RCLoc f) pd)
 dropOwnership f (RForce fc lr v pd) = RForce fc lr v (filter (/= RCLoc f) pd)
@@ -1601,7 +1600,7 @@ applyStructReturn mergedToo defs = do
         body' <- structSites ws plan empty body
         pure [(n, MkRCError body')]
     rewrite' _ _ _ (nd, Nothing) = pure [nd]
-    rewrite' ws wNames plan ((n, MkRCFun args retRep isWorker body), Just (w, argReps, isNew)) = do
+    rewrite' ws wNames plan ((n, MkRCFun args retRep isWorker body), Just (w, _, isNew)) = do
         let shapes = fromMaybe empty (lookup n plan)
             rep : Rep
             rep = case lookup n ws of { Just (_, _, r) => r; Nothing => RRet 1 [] }
@@ -1611,11 +1610,12 @@ applyStructReturn mergedToo defs = do
         case (isWorker, isNew, body) of
              (True, _, _) =>
                  pure [(n, MkRCFun args rep True struct)]
-             (False, False, RAppNameRep _ _ _ _ postDrop callArgs) => do
-                 wrapper <- materialize w argReps rep postDrop callArgs shapes
+             (False, False, RAppNameRep {sameLen} _ _ bodyArgReps _ postDrop callArgs) => do
+                 wrapper <- materialize w bodyArgReps rep postDrop callArgs shapes
                  pure [(n, MkRCFun args retRep False wrapper)]
              _ => do
-                 wrapper <- materialize w argReps rep [] (map (RCLoc . fst) args) shapes
+                 wrapper <- materialize w (map snd args) rep [] (map (RCLoc . fst) args)
+                              {sameLen = trans (lengthMap args) (sym (lengthMap args))} shapes
                  pure [ (n, MkRCFun args retRep False wrapper)
                       , (w, MkRCFun args rep True struct) ]
     rewrite' _ _ _ (nd, _) = pure [nd]

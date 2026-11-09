@@ -289,6 +289,6 @@ stripImmediatePostDrop imm e =
   where
     covering
     go : RCExp -> RCExp
-    go (RAppNameRep fc n argReps retRep pd args) =
-        RAppNameRep fc n argReps retRep (filter (\l => not (contains l imm)) pd) args
+    go (RAppNameRep {sameLen} fc n argReps retRep pd args) =
+        RAppNameRep {sameLen} fc n argReps retRep (filter (\l => not (contains l imm)) pd) args
     go x = mapChildren go x

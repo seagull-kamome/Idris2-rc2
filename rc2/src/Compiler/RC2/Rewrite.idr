@@ -126,8 +126,8 @@ mutual
   -- renameRCExp) have already finished. Kept total (as a plain
   -- pass-through) rather than assumed unreachable, same reasoning as
   -- this function's own RLoop case just above.
-  mapLocalsRCExp f g (RAppNameRep fc n argReps retRep postDrop args) =
-      RAppNameRep fc n argReps retRep (map f postDrop) (map f args)
+  mapLocalsRCExp f g (RAppNameRep {sameLen} fc n argReps retRep postDrop args) =
+      mapRepCallArgs fc n argReps retRep (map f postDrop) args f
   -- Never actually reached in practice, same reasoning as RAppNameRep
   -- just above -- Compiler.RC2.DualABI's own FFI-inline pass runs even
   -- later than RAppNameRep's own producer (Stage 4), strictly after
@@ -222,7 +222,7 @@ stripOwnership ids (RFill fc cell k value postDrop) =
     RFill fc cell k value (filter (keepUnlessOwned ids) postDrop)
 -- A worker call made before the promotion (struct return, doc/struct-return.md)
 -- already lists its Boxed arguments in `postDrop`.
-stripOwnership ids (RAppNameRep fc n argReps retRep postDrop args) =
+stripOwnership ids (RAppNameRep {sameLen} fc n argReps retRep postDrop args) =
     RAppNameRep fc n argReps retRep (filter (keepUnlessOwned ids) postDrop) args
 stripOwnership ids (RExtPrim fc lazy p args postDrop) =
     RExtPrim fc lazy p args (filter (keepUnlessOwned ids) postDrop)
