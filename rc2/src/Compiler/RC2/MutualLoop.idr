@@ -210,7 +210,7 @@ buildGroup calleeTable existingNames memberDefs groupNames = do
 
     freshName : {auto r : Ref FreshId Int} -> SortedSet Name -> Core Name
     freshName existing = do
-        let cand = MN "rc2_mutualLoop" !(freshId{r})
+        let cand = MN mutualLoopTag !(freshId{r})
         if contains cand existing
            then freshName{r} existing else pure cand
 

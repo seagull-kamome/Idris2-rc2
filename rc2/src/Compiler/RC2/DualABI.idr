@@ -707,7 +707,7 @@ synthesizeWorker : {auto r : Ref FreshId Int}
                  -> SortedSet Name -> Name -> List (Int, NativeTy) -> Maybe NativeTy -> List (Int, Rep) -> Rep -> RCExp
                  -> Core (Name, RCDef, RCDef)
 synthesizeWorker existingNames original eligible0 retEligible args wrapperRetRep body = do
-    workerName <- freshName "idris2rc2_worker_" existingNames original
+    workerName <- freshName workerPrefix existingNames original
     let nullSeeds : SortedMap Int NativeTy := fromList (filter (\(_, ty) => nullTy ty) eligible0)
         aliasTypes : SortedMap Int NativeTy := if null nullSeeds then empty else safeNullTypes nullSeeds body
         eligible : List (Int, NativeTy) := filter (\(p, ty) => not (nullTy ty) || isJust (lookup p aliasTypes)) eligible0
@@ -900,7 +900,7 @@ ffiWorkerTable defs = do
         in if (not (any anyNative argReps) && not (anyNative retRep)) || not (foreignUsable ccs)
               then pure ([], [])
               else do
-                workerName <- freshName "idris2rc2_ffiworker_" existingNames n
+                workerName <- freshName ffiWorkerPrefix existingNames n
                 pure ([(n, (MkWorkerInfo workerName argReps retRep FfiWorker))], [(workerName, (ccs, fargs, ret))])
     ffiEntry _ (_, _) = pure ([], [])
 
@@ -1585,7 +1585,7 @@ applyStructReturn mergedToo defs = do
                       if isJust (lookup w plan) then pure ((n, d), Just (w, argReps, False))
                       else pure ((n, d), Nothing)
                   _ => do
-                      w <- freshName "idris2rc2_worker_" existing n
+                      w <- freshName workerPrefix existing n
                       pure ((n, d), Just (w, map snd args, True))
     workerFor _ _ nd = pure (nd, Nothing)
 
