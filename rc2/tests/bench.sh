@@ -150,19 +150,27 @@ avg_time() {
 
 echo
 echo "=== Micro-benchmarks (rc2/tests/bench/Bench*.idr, $RUNS run(s) each) ==="
-printf '%-14s %10s %10s %8s\n' "benchmark" "rc2(s)" "refc(s)" "speedup"
+printf '%-14s %10s %10s %10s %8s %8s\n' "benchmark" "rc2(s)" "refc(s)" "chez(s)" "vsRefC" "vsChez"
 for bf in "$RC2_DIR"/tests/bench/Bench*.idr; do
     name="$(basename "$bf" .idr)"
     "$IDRIS2RC2" --cg rc2 "$bf" -o "$TMP/${name}_rc2" > "$TMP/${name}_rc2_build.log" 2>&1
     idris2 --cg refc "$bf" -o "$TMP/${name}_refc" > "$TMP/${name}_refc_build.log" 2>&1
+    # Chez is optional: %foreign "C:../CExpr" benchmarks cannot build there.
+    idris2 --cg chez --build-dir "$TMP/${name}_chezdir" "$bf" -o "${name}_chez" > "$TMP/${name}_chez_build.log" 2>&1
+    chez_bin="$TMP/${name}_chezdir/exec/${name}_chez"
     if [ ! -x "$TMP/${name}_rc2" ] || [ ! -x "$TMP/${name}_refc" ]; then
-        printf '%-14s %10s %10s %8s\n' "$name" "BUILD-FAIL" "-" "-"
+        printf '%-14s %10s %10s %10s %8s %8s\n' "$name" "BUILD-FAIL" "-" "-" "-" "-"
         continue
     fi
     rc2_t="$(avg_time "$TMP/${name}_rc2")"
     refc_t="$(avg_time "$TMP/${name}_refc")"
     speedup="$(awk -v r="$refc_t" -v c="$rc2_t" 'BEGIN { if (c > 0) printf "%.2fx", r / c; else print "n/a" }')"
-    printf '%-14s %10s %10s %8s\n' "$name" "$rc2_t" "$refc_t" "$speedup"
+    chez_t="-"; chez_speedup="-"
+    if [ -x "$chez_bin" ]; then
+        chez_t="$(avg_time "$chez_bin")"
+        chez_speedup="$(awk -v r="$chez_t" -v c="$rc2_t" 'BEGIN { if (c > 0) printf "%.2fx", r / c; else print "n/a" }')"
+    fi
+    printf '%-14s %10s %10s %10s %8s %8s\n' "$name" "$rc2_t" "$refc_t" "$chez_t" "$speedup" "$chez_speedup"
 done
 
 if [ "$DO_MISSING_CONTAINERS" -eq 1 ]; then

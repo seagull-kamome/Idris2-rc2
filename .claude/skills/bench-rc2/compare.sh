@@ -27,11 +27,11 @@ BEGIN {
 /^=== Micro/ { mode = "m"; next }
 /^=== idris2-missing/ { mode = "c"; next }
 /^===/ { mode = ""; next }
-mode == "m" && $1 ~ /^Bench/ && NF >= 3 { name[++nm] = $1; r[$1] = $2; f[$1] = $3 }
+mode == "m" && $1 ~ /^Bench/ && NF >= 3 && $2 != "BUILD-FAIL" { name[++nm] = $1; r[$1] = $2; f[$1] = $3; z[$1] = $4 }
 mode == "c" && ($1 == "rc2" || $1 == "refc" || $1 == "chez") && NF == 2 { cv[$1] = $2 }
 END {
-    print "| ベンチマーク | rc2(s) | refc(s) | 倍率(RefC比) | 前回のrc2(s) |"
-    print "|---|---|---|---|---|"
+    print "| ベンチマーク | rc2(s) | refc(s) | chez(s) | RefC比 | Chez比 | 前回のrc2(s) |"
+    print "|---|---|---|---|---|---|---|"
     for (i = 1; i <= nm; i++) order[i] = i
     for (i = 1; i <= nm; i++) for (j = i + 1; j <= nm; j++) {
         a = name[order[i]]; b = name[order[j]]
@@ -39,7 +39,7 @@ END {
     }
     for (i = 1; i <= nm; i++) {
         k = name[order[i]]
-        printf "| `%s.idr` | %s | %s | %s倍高速 | %s |\n", k, r[k], f[k], ratio(r[k], f[k]), (k in pm) ? pm[k] : "(新規)"
+        printf "| `%s.idr` | %s | %s | %s | %s倍 | %s | %s |\n", k, r[k], f[k], z[k], ratio(r[k], f[k]), (z[k] == "-") ? "-" : ratio(r[k], z[k]) "倍", (k in pm) ? pm[k] : "(新規)"
     }
     hdr = 0
     for (i = 1; i <= nm; i++) {
