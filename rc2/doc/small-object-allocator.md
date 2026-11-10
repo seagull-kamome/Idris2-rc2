@@ -1,8 +1,9 @@
 # A cell allocator for constructors and closures
 
-Status: design, not implemented. Open item of `TODO.md`
-("a small-object allocator in the runtime"). Reviewed against the runtime on
-2026-11-10; the review's findings are folded in below.
+Status: stages 0, 1a, 1b and 1c are implemented (`idris2rc2_pool.c`,
+`idris2rc2_pool.h`, `idris2rc2_memory.c`); stages 2 and 3 are not. Reviewed
+against the runtime on 2026-11-10; the review's findings are folded in below.
+"Results" at the end has the measurements.
 
 ## Problem
 
@@ -76,7 +77,7 @@ Nothing outside the runtime frees a cell: an `%export` result is a separate copy
 
 ### Which class
 
-One function, `idris2rc2_cellClass(size)`, maps a size to a class (`16..128` in
+One function, `idris2rc2_poolClass(size)`, maps a size to a class (`16..128` in
 steps of 8: 15 classes) or to "too big, use `malloc`". At an allocation site with
 a constant arity the class is a constant and the branch is gone. A closure of
 more than 14 arguments and a constructor of more than 15 fields (14 with a
@@ -87,18 +88,28 @@ the address; a cell that is in the pool is then found through its page.
 ## Layout
 
 - **Segment.** 4 MiB, 4 MiB aligned (`mmap` of twice the size, trimmed), 64 pages
-  of 64 KiB. Page 0 holds the **segment header**: the page descriptors, the
-  bitmap of free pages and a count of pages in use. The other 63 pages hold
-  cells.
-- **Page descriptor** (64 bytes, in the segment header, so that returning a page
-  to the OS cannot erase it): class, `free` (the free list), `used`, `owner`,
-  `thread_free` (an atomic stack of cells freed by other threads), a bump pointer
-  and the links of its heap's page lists.
+  of 64 KiB. Page 0 holds the **segment header**: the page descriptors and
+  `freeMask`, the bitmap of the pages no heap holds. The other 63 pages hold
+  cells. A segment is **never unmapped**: a thread that released a cell looks at
+  the page descriptor (`owner`, `inPending`) after the cell is on `thread_free`,
+  by which time the owner may have collected it, emptied the page and returned it.
+  A returned page's memory goes back to the OS (`madvise`); only the header page
+  of a segment stays resident.
+- **Page descriptor** (128 bytes, two cache lines, in the segment header, so
+  that returning a page to the OS cannot erase it). The first line is the
+  owner's alone: `free` (the free list), `used`, class, state, `bump` and `end`
+  (the part of the page not yet cut into cells), `base`, and the links of the
+  heap's list of the class. The second is written by other threads:
+  `thread_free` (an atomic stack of cells released by other threads), `owner`,
+  `inPending` and `pendingNext`.
 - **Heap.** One per thread, found through a `__thread` pointer that starts at a
   static *empty heap* whose `direct[k]` all point at a dummy page with an empty
   free list. So the fast path never tests for NULL: a thread that has no heap yet
   falls into the slow path, which creates it and registers the thread-exit hook.
-  This also covers a C thread that calls an `%export` function.
+  This also covers a C thread that calls an `%export` function. A heap holds, per
+  class, `direct` (the page being allocated from), `avail` (other pages with room)
+  and `full`; the list of empty pages; and `pending`, the stack of pages that
+  have cells waiting on their `thread_free` (on a cache line of its own).
 - **Free list link.** A free cell keeps its next pointer in its **second word**
   (offset 8), not in the header, so the header (reference count, tag) stays
   readable for check mode and for `isUnique`.
@@ -110,32 +121,56 @@ if (likely(c)) { pg->free = c->next; pg->used++; return c; }
 return slow_path(k);
 
 // release: the page is found through the segment header
-seg = p & ~(SEG - 1); pg = &seg->desc[(p - seg) >> 16];
+seg = p & ~(SEG - 1); pg = &seg->pages[(p - seg) / PAGE];
 if (atomic_load_relaxed(&pg->owner) == tl_heap) {   // own page: plain
-  c->next = pg->free; pg->free = c; if (--pg->used == 0) page_empty(pg); }
-else atomic_push(&pg->thread_free, c);              // anything else: remote
+  c->next = pg->free; pg->free = c; --pg->used;
+  if (pg->state != ACTIVE || (pg->used == 0 && pg != tl_heap->direct[pg->klass])) page_after(pg); }
+else push_remote(pg, c);                            // anything else: remote
 ```
 
 - **The slow path**, in this order: (1) extend `free` by the next 64 cells from
   the page's bump pointer, in address order, so a fresh page is touched as it is
-  used, its cells come out in sequence and the fast path stays one pop; (2) take
-  the page's `thread_free` (`atomic_exchange`) and add it to `free`; (3) go to the
-  next page of the class that has room, taking its `thread_free` first;
-  (4) adopt an abandoned page of the class; (5) take a new page. Step 2 and 3
-  come before 5 on purpose: a producer/consumer pair must reuse what the consumer
-  freed before it takes new pages.
+  used, its cells come out in sequence and the fast path stays one pop; (2) drain
+  `pending` and take the page's `thread_free` (`atomic_exchange`) into `free`;
+  (3) if the page is exhausted, put it on the `full` list and take another: an
+  `avail` page, an empty page of the heap, an abandoned page of the class
+  (adopting it), and only then a new page; before a new page is taken the
+  abandoned pages of every class that have something on `thread_free` are swept,
+  so that a producer and a consumer reuse what the consumer released instead of
+  growing the heap.
 - **Full pages** leave the class's list and go on a *full* list; the first release
-  into a full page (local or remote-collected) puts it back.
+  into a full page puts it back on `avail`.
 - **`used`** counts the cells of the page that are alive **or still on
   `thread_free`**. Only the owner changes it: a local release does `--used`, a
   collection of `thread_free` does `used -= n`. So a page with `used == 0` has
   nothing left on `thread_free`, and only then may it be emptied. A remote push
-  never touches `used`. A batched push (below) hands the stack's tail and its
-  length to the collector, or the collector counts them by walking the list.
+  never touches `used`.
+- **The handshake with `pending`.** A pusher pushes the cell onto `thread_free`
+  (compare-and-swap), then sets the page's `inPending` flag (it skips the
+  exchange if the flag is already set) and, if it was clear, pushes the page onto
+  its owner's `pending`. The owner takes the whole `pending` stack with
+  `atomic_exchange`, and for each page clears the flag *before* it collects
+  `thread_free`: a push that comes after the clear sees the flag clear and queues
+  the page again, one that came before is collected. All of it is `seq_cst`, and
+  the collection that follows the clear is unconditional: the relaxed
+  "is there anything" pre-check used elsewhere would let a pusher that saw the
+  flag set and a collector that saw `thread_free` empty both walk away.
+- **Stale entries.** A page can be emptied and returned while an entry for it is
+  still on its old owner's `pending` (the pusher's two steps are not atomic).
+  `pageReturn` makes `owner` the `abandonedHeap` sentinel before the page can be
+  taken again, and `pageInit` publishes the new owner last, so the old heap's
+  `owner == h` test fails for the entry and the old heap does not touch the page.
+  A heap does not return an empty page whose `inPending` is set; but a late
+  pusher can still set the flag on a page that is already returned. The only harm
+  is then that the new owner's page has `inPending` set until the old heap next
+  drains, so its remote releases wait for a collection that does not come from
+  the queue: the new owner finds them when it runs out of room in its direct page
+  or looks over its first few full pages before taking a new one, and a purge
+  finds all of them.
 - A cell on a page that was *abandoned* is released by the same remote path:
-  `owner` is the `ABANDONED` sentinel, not NULL, and the owner test is an atomic
-  load, so a thread that has just lost its heap does not take the page for its
-  own.
+  `owner` is the `abandonedHeap` sentinel, whose `pending` is `POOL_DEAD`, and the
+  owner test is an atomic load, so a thread that has just lost its heap does not
+  take the page for its own.
 
 ## What it does for constructors and for short-lived lists
 
@@ -169,7 +204,7 @@ else atomic_push(&pg->thread_free, c);              // anything else: remote
 The allocator does not look at `idris2rc2_threaded`: the heap is per thread from
 the start, so a program that goes multi-threaded later, or starts that way
 (`multithreaded`), uses the same path. Its few global structures (the segment
-list, the abandoned pages, the pool of empty pages) have their own lock;
+list and `freeMask`, the abandoned pages) have their own lock;
 `idris2rc2_spin_lock` is not it, because that one does nothing while the program
 is single-threaded.
 
@@ -178,99 +213,102 @@ is single-threaded.
   (compare-and-swap on the head). The only consumer that takes the stack is the
   page's owner (or whoever has just adopted the page), and it takes all of it with
   `atomic_exchange`, so a pusher can never see a stale head linked in (no ABA).
-- **A thread ends.** The runtime's own `pthread_key` of `rc2base`
-  (`concurrency_util.c`) drops the thread's data in its destructor, and that
-  destructor may run Idris code (a `GCPointer`'s `onCollect`) that allocates and
-  releases cells. glibc does not fix the order of destructors, so the heap is not
-  torn down by a destructor of its own. Instead:
-  1. the allocator's destructor re-arms itself (`pthread_setspecific`, at most
-     `PTHREAD_DESTRUCTOR_ITERATIONS` rounds) and abandons the heap only in the
-     last round;
-  2. abandoning sets every page's `owner` to the `ABANDONED` sentinel, puts the
-     pages with live cells on the global abandoned list (a page with `used == 0`
-     is released), and points `tl_heap` back at the static empty heap;
-  3. an allocation after that finds the empty heap and takes a **fresh** heap, so
-     a heap's address is never reused while a page can still name it. A cell
-     allocated that late is released by the usual remote path and collected when
-     its page is adopted.
+- **A thread ends.** The `pthread_key` of `rc2base` (`concurrency_util.c`) drops
+  the thread's data in its destructor, and that destructor may run Idris code (a
+  `GCPointer`'s `onCollect`) that allocates and releases cells. glibc does not fix
+  the order of destructors, so the allocator's own destructor re-arms itself
+  (`pthread_setspecific`) for the first rounds and gives the heap up in the last
+  round but one, not the last: ThreadSanitizer finishes the thread in the last
+  round and fails on a mutex taken after that. Giving the heap up:
+  1. `pending` is exchanged for `POOL_DEAD`, and the entries it held are
+     processed, so no thread pushes to this heap again; a pusher that finds
+     `POOL_DEAD` clears the flag it set and, if the page has a new owner by now,
+     queues it there;
+  2. every page with a live cell gets `owner = abandonedHeap` and goes on the
+     global list of its class, the others are returned;
+  3. `tl_heap` goes back to the static empty heap, so an allocation after that
+     takes a **new** heap. The heap structure of an ended thread is never freed
+     or reused (a few hundred bytes), because another thread may still hold its
+     address.
 - **Adopting.** A thread that is out of pages for a class adopts an abandoned page
-  of it: it sets `owner`, takes `thread_free` and corrects `used`. A release that
-  races with the change of owner is pushed to `thread_free` (any value of `owner`
-  other than the releasing heap sends it there), so nothing is lost.
-- **A page whose cells were all freed remotely** keeps `used > 0` until its owner
-  collects it or it is adopted. `idris2rc2_purge()` (below) adopts every abandoned
-  page for the moment, so it can empty them.
+  of it: it sets `owner` and takes `thread_free`. A release that races with the
+  change of owner is pushed to `thread_free` (any value of `owner` other than the
+  releasing heap sends it there), so nothing is lost.
+- **A page whose cells were all released remotely** keeps `used > 0` until it is
+  collected: by its owner, by an adopter, or by the sweep a thread makes before it
+  takes a new page, or by `idris2rc2_poolPurge()`.
 - **The main thread** does not run key destructors, so its heap is never
   abandoned; other threads release its cells to `thread_free`.
-- **`fork(2)`** is called only by `popen2`, which `exec`s at once in the child.
-  The global lock is taken in `pthread_atfork`'s prepare handler and released in
-  the parent and child handlers; a child that goes on without `exec`, in an
-  unusual FFI, leaks the pages of the threads that do not exist there.
+- **A heap created after the last round** (an allocation in a destructor that
+  ran late) is never abandoned: its pages stay with it.
+- **`fork(2)`** is called only by `popen2`, which `exec`s at once in the child;
+  nothing is done for it.
 - **Reference counts are unchanged:** the plain/atomic split stays as it is
   (`hybrid-refcount.md`).
 
 ## Returning memory
 
-- A page whose `used` falls to 0 stays on its heap's list of empty pages; only
-  the owner touches that list. A new page is taken from there first, then from the
-  segment's free bitmap, lowest address first, which keeps the committed part
-  compact.
-- A heap keeps empty pages up to the larger of 4 MiB and 1/8 of what it has
-  committed. Beyond that the oldest are given back to their segment's bitmap
-  (under the global lock) and returned with `madvise(MADV_DONTNEED)`, so the
-  resident size really drops. A heap's `direct` pages are never given up, so a
-  loop that allocates and releases in turn does not hand a page back and take it
-  again. Only the descriptors, which live in the segment header, survive the
-  `madvise`.
-- A segment whose count of pages in use is 0 is returned whole (`munmap`). The
-  count includes the pages that heaps keep as empty, so no heap holds a link into
-  a segment that goes away.
-- **`idris2rc2_purge()`** gives back what is empty now. It empties the calling
-  heap's list, adopts every abandoned page, collects their `thread_free`, and
-  returns what becomes empty. It does not touch the pages of another running
+- A page whose `used` falls to 0, other than the one a class is allocating from,
+  goes on its heap's list of empty pages (newest first); only the owner touches
+  that list. A page can be taken from there for any class.
+- A heap keeps empty pages up to the larger of 64 pages (4 MiB) and 1/8 of the
+  pages it holds, and starts to return only when it has a quarter more than that.
+  The oldest are returned: `madvise(MADV_DONTNEED)`
+  on the page, so the resident size really drops, then the page is marked free in
+  its segment's `freeMask` (under the global lock). A new page is taken from the
+  first segment with a free page, so the memory stays in few segments. A class's
+  `direct` page is never given up by this, so a loop that allocates and releases
+  in turn does not hand a page back and take it again.
+- **`idris2rc2_poolPurge()`** gives back what is empty now. It empties the calling
+  heap (its `direct` pages that have no live cell, and every empty page), and
+  sweeps the abandoned pages. It does not touch the pages of another running
   thread (that thread is the only one allowed to). It is for tests and for
   long-running programs.
 - Cells too big for the classes are `malloc`'s, which returns its own large
   blocks.
 - Transparent huge pages could keep a 64 KiB `MADV_DONTNEED` from lowering the
-  resident size; not measured. `madvise(MADV_NOHUGEPAGE)` on the segments is the
-  remedy.
+  resident size; not measured.
 
 ## Checking it
 
-- **Check mode, `IDRIS2RC2_POOL_CHECK`** (compile time). A released cell is
-  filled with a pattern; a second release, or a pointer that is not on a cell
-  boundary of its page, aborts, and so does a closure whose `filled` exceeds its
-  `arity`. The last matters because pool cells have no slack: `malloc` rounds a
-  32-byte request up to 40 and hid an overrun, whereas here it would overwrite
-  the next cell's header. The emitter keeps `idris2rc2_tailcallApplyClosure` to
-  the last hop of a chain for this reason (`Emit.idr`, the comment above
-  `applyChain`); stage 0 re-checks every place that writes `args[filled]`.
-  The whole of `verify.sh` runs in this mode as well.
-- **Pool off.** `IDRIS2RC2_POOL=0`, read once at start, makes the slow path call
-  `malloc` and `cellFree` call `free`: the one cost is a predictable branch on a
-  global in `cellFree`, not in the fast allocation path. `verify.sh` sets it for
-  its valgrind runs (`LEAK_SENSITIVE_TESTS`): a pool in 4 MiB `mmap` segments
-  hides every leak, double free and use after free from valgrind, so those
-  tests would pass without checking anything. The same switch is for ASan.
-  `tsan` is run in both modes: it sees the `thread_free` atomics, but it does not
-  follow the lifetime of a cell the pool reuses, so a same-thread reuse may
-  report a false race; not measured.
-- **Tests to add:** cells passed between threads through a `Channel` and freed on
-  the other side; many threads started and ended in turn (abandon and adopt),
-  including one whose key destructor allocates; a large list built and dropped,
-  with the resident size read from `/proc/self/statm` before and after
-  `idris2rc2_purge()`; a producer/consumer pair whose page count stays bounded;
-  the existing concurrency tests under `tsan`.
+- **Check mode, `IDRIS2RC2_POOL_CHECK`** (compile time). A released cell has its
+  `rc` and `reserved` set to a pattern and the rest of its body (past the link)
+  filled with `0xDD`; the allocation checks that the body is still all `0xDD`
+  (a write after the release) and that the page's class is the one asked for. A
+  second release of a cell, or a pointer that is not on a cell boundary of its
+  page, aborts. A closure whose `filled` exceeds its `arity` aborts too: pool
+  cells have no slack, where `malloc` rounds a 32-byte request up to 40 and hid an
+  overrun, so here it would overwrite the next cell's header. The emitter keeps
+  `idris2rc2_tailcallApplyClosure` to the last hop of a chain for this reason
+  (`Emit.idr`, the comment above `applyChain`).
+- **Pool off.** `IDRIS2RC2_POOL=0` (environment, read before any other
+  constructor) or `-DIDRIS2RC2_NO_POOL` (compile time) make every cell a `malloc`
+  block: `cellAlloc` and `cellFree` test `idris2rc2_poolOn`, a predictable branch.
+  `verify.sh` sets it for its valgrind runs (`LEAK_SENSITIVE_TESTS`): a pool in
+  4 MiB `mmap` segments hides every leak, double free and use after free from
+  valgrind, so those tests would pass without checking anything. The same switch
+  is for ASan.
+- **`rc2/tests/pool/run.sh`**, which `verify.sh` runs, builds
+  `poolstress.c` three ways (as it ships, in check mode, under ThreadSanitizer)
+  and runs it: producers and consumers on different threads; a ring of four
+  threads that all allocate and release the cells of the one before; 400
+  short-lived producers whose cells one long-lived consumer releases, and 300
+  threads that end with live cells (the peak number of pages in use must stay
+  small: the pages of ended threads are adopted or swept); local churn in
+  scrambled order; and a large
+  heap built and released, after which the resident size must fall (not asked
+  under ThreadSanitizer, whose shadow memory is resident). It does not cover
+  page reuse across classes while stale `pending` entries exist, nor a single
+  page released to by many threads at once.
 
-## Stages, and what decides each
+## Stages, and what decides each (0, 1a, 1b and 1c are done)
 
 | stage | content | measured against |
 |---|---|---|
 | 0 | `cellAlloc`/`cellFree`, the audit table above, the check for `args[filled]` writes, `verify.sh` valgrind runs with the pool off. Still `malloc`: no change of behaviour | `verify.sh` unchanged |
-| 1a | segments, pages, heaps, local release, remote release, the slow path and the full list; `newConstructor`/`mkClosure` still called out of line | `base` built by `stage1` (CC fixed to `gcc`), a list `map`/`filter`, `sort`: against glibc and against mimalloc by `LD_PRELOAD`, **in the same session** |
+| 1a | segments, pages, heaps, local release, remote release, the slow path and the full list; `newConstructor`/`mkClosure` still called out of line | `base` built by `stage1` (CC fixed to `gcc`), a list `map`/`filter`, `sort`: against glibc and against mimalloc by `LD_PRELOAD`, **in the same session**. Passed: see Results |
 | 1b | abandon/adopt, the thread-exit protocol, the tests for them | the concurrency tests, `tsan` |
-| 1c | return to the OS, `idris2rc2_purge()`, the memory test | resident size after the large-list test |
+| 1c | return to the OS, `idris2rc2_poolPurge()`, the memory test | resident size after the large-list test |
 | 2 | `newConstructor` and `mkClosure` inline with a constant class and header word; batched remote release | instructions of `stage1` (callgrind), time, and the size of the executable and the build time of the compiler |
 | 3 | `Integer` through `mp_set_memory_functions`; recycle at allocation, if the measurement says so | an `Integer`-heavy benchmark; how often `isUnique` fails |
 
@@ -308,3 +346,30 @@ and GMP passes the size to the release, which the pool does not need.
   not compacted.
 - Cells are 8-byte aligned, not 16: a 24-byte cell can straddle a cache line.
   Nothing relies on 16: the only pointer tag is bit 0 (`idris2rc2_is_unboxed`).
+
+## Results (2026-11-10, stages 0 to 1c)
+
+`base` and `prelude` of `idris2-src/libs` built by the same `stage1` (the rc2-built
+compiler, compiled with `gcc`), three runs each, in seconds:
+
+| allocator | `prelude` | `base` |
+|---|---|---|
+| the cell pool | 5.55 | 71.0 |
+| `malloc` (`IDRIS2RC2_POOL=0`) | 6.84 | 87.3 |
+| `malloc` with mimalloc preloaded | 5.97 | 75.5 |
+
+The pool is 18.7% faster than `malloc` and 6.0% faster than mimalloc on `base`. The
+same compiler built without the pool code (the state before stage 0) took 84.0 s,
+so against that build the gain is 15.5%; the `POOL=0` run is slower than that build
+by the class computation in `cellFree`.
+
+List-heavy programs (stage 1a, best of three, seconds): building, mapping, filtering
+and dropping a 300000-element list fifty times (`BenchListChurn`) 1.98 with the pool,
+3.01 with `malloc`, 2.47 with mimalloc; `Data.List.sort` of a million `Int`s
+(`BenchListSort`) 0.72, 0.86, 0.72.
+
+What is left: stage 2 (inline allocation and the batched remote release), stage 3
+(GMP, recycling at allocation). Known limits: the structure of a heap that has ended
+is never freed (a few hundred bytes); a heap created after the last destructor round
+is never given up; a stale entry on a heap that no longer runs delays the collection
+of the cells released to a page of another heap (see "Stale entries").

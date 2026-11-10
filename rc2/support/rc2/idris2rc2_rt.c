@@ -348,7 +348,7 @@ IDRIS2RC2_Value *idris2rc2_tailcallApplyClosure(IDRIS2RC2_Value *_c, IDRIS2RC2_V
   // arity, so growing by one argument is just a field write -- no
   // allocation, no copy, no free.
   if (idris2rc2_isUnique(c)) {
-#ifdef IDRIS2RC2_DEBUG
+#if defined(IDRIS2RC2_DEBUG) || defined(IDRIS2RC2_POOL_CHECK)
     IDRIS2RC2_VERIFY(c->filled < c->arity, "tailcallApplyClosure: filled %d >= arity %d", (int)c->filled, (int)c->arity);
 #endif
     c->args[c->filled] = arg;

@@ -75,10 +75,14 @@ static size_t idris2rc2_cellBytes(IDRIS2RC2_Value *v) {
 void idris2rc2_cellFree(void *cell) {
   if (!cell) return;
   int k = idris2rc2_poolClass(idris2rc2_cellBytes((IDRIS2RC2_Value *)cell));
-  if (__builtin_expect(k < 0 || !idris2rc2_poolOn, 0))
+  if (__builtin_expect(k < 0 || !idris2rc2_poolOn, 0)) {
     free(cell);
-  else
-    idris2rc2_poolFree(cell, k);
+    return;
+  }
+#ifdef IDRIS2RC2_POOL_CHECK
+  IDRIS2RC2_VERIFY(idris2rc2_poolPageClass(cell) == k, "cellFree: class %d, but the page is of class %d", k, idris2rc2_poolPageClass(cell));
+#endif
+  idris2rc2_poolFree(cell);
 }
 
 IDRIS2RC2_Constructor *idris2rc2_newConstructor(int arity, int tag) {
@@ -106,7 +110,7 @@ IDRIS2RC2_Closure *idris2rc2_mkClosure(IDRIS2RC2_Value *(*fn)(), uint8_t arity, 
   // and Idris2 functions rarely have many params.
   IDRIS2RC2_Closure *c = (IDRIS2RC2_Closure *)idris2rc2_cellAlloc(sizeof(IDRIS2RC2_Closure) +
                                              sizeof(IDRIS2RC2_Value *) * arity);
-#ifdef IDRIS2RC2_DEBUG
+#if defined(IDRIS2RC2_DEBUG) || defined(IDRIS2RC2_POOL_CHECK)
   IDRIS2RC2_VERIFY(filled <= arity, "mkClosure: filled %d > arity %d", (int)filled, (int)arity);
 #endif
   c->header.tag = IDRIS2RC2_TAG_CLOSURE;
