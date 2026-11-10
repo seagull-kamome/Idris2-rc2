@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 static unsigned long long errors;
@@ -160,6 +161,29 @@ static void *shortLived(void *arg) {
   return NULL;
 }
 
+// ---- 4. releasing on another thread while the allocating thread is alive ----
+
+enum { REMOTE_N = 4000000 };
+static void **remoteCells;
+static int remoteReady, remoteDone;
+static void *remoteAlloc(void *arg) {
+  (void)arg;
+  for (int i = 0; i < REMOTE_N; i++) { remoteCells[i] = idris2rc2_poolAlloc(1); *(uint64_t *)remoteCells[i] = 0; }
+  __atomic_store_n(&remoteReady, 1, __ATOMIC_SEQ_CST);
+  while (!__atomic_load_n(&remoteDone, __ATOMIC_SEQ_CST)) usleep(1000); // its heap is still the owner
+  return NULL;
+}
+static void *remoteRelease(void *arg) {
+  (void)arg;
+  for (int i = 0; i < REMOTE_N; i++) idris2rc2_poolFree(remoteCells[i]);
+  return NULL;
+}
+static double nowMs(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
+}
+
 static size_t rssKb(void) {
   FILE *f = fopen("/proc/self/statm", "r");
   unsigned long a = 0, b = 0;
@@ -214,6 +238,27 @@ int main(int argc, char **argv) {
   printf("threads that end: errors=%llu, pages in use at the peak: +%zu\n", errors, churn);
   // Without adopting and sweeping, each of the 300 threads would take a page for each of its 15 classes.
   if (churn > 64) fail("pages of ended threads are not reused");
+
+  {
+    size_t beforeR = idris2rc2_poolPagesInUse();
+    remoteCells = malloc(REMOTE_N * sizeof(void *));
+    if (!remoteCells) { fail("out of memory"); return 1; }
+    pthread_t a, r;
+    if (pthread_create(&a, 0, remoteAlloc, 0)) { fail("pthread_create"); return 1; }
+    while (!__atomic_load_n(&remoteReady, __ATOMIC_SEQ_CST)) usleep(1000);
+    double t0 = nowMs();
+    if (pthread_create(&r, 0, remoteRelease, 0)) { fail("pthread_create"); return 1; }
+    pthread_join(r, 0);
+    printf("release of %d cells on another thread: %.0f ms\n", REMOTE_N, nowMs() - t0);
+    __atomic_store_n(&remoteDone, 1, __ATOMIC_SEQ_CST);
+    pthread_join(a, 0);
+    free(remoteCells);
+    idris2rc2_poolPurge();
+    // Everything was released: the pages the allocating thread owned, and gave up when it ended, are back.
+    long left = (long)idris2rc2_poolPagesInUse() - (long)beforeR;
+    printf("after the purge: %+ld pages in use against before\n", left);
+    if (idris2rc2_poolPagesInUse() > beforeR + 16) fail("pages released on another thread were not recovered");
+  }
 
   enum { N = 2000000 };
   typedef struct { void *c; int k; int seq; } Cell;

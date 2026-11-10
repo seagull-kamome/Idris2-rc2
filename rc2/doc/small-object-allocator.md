@@ -1,7 +1,7 @@
 # A cell allocator for constructors and closures
 
-Status: stages 0, 1a, 1b and 1c are implemented (`idris2rc2_pool.c`,
-`idris2rc2_pool.h`, `idris2rc2_memory.c`); stages 2 and 3 are not. Reviewed
+Status: stages 0, 1a, 1b, 1c and 2 are implemented (`idris2rc2_pool.c`,
+`idris2rc2_pool.h`, `idris2rc2_memory.[ch]`); stage 3 is not. Reviewed
 against the runtime on 2026-11-10; the review's findings are folded in below.
 "Results" at the end has the measurements.
 
@@ -188,8 +188,22 @@ else push_remote(pg, c);                            // anything else: remote
   the children stay (`teardown` costs about 47 instructions per object today,
   of which `free` is a part, not all).
 - **A remote release is batched.** A chain of cells freed by another thread
-  usually sits on one page. The cells of one page are linked locally and pushed
-  to `thread_free` with one compare-and-swap instead of one per cell.
+  usually sits on one page. A thread keeps one batch (a page, and the cells it has
+  released to it, linked but not yet on `thread_free`) and pushes it with one
+  compare-and-swap when it has 64 cells, when the next cell is on another page,
+  when it takes the slow path of an allocation, in `idris2rc2_poolPurge()`, and in
+  every call of its thread-exit hook. A thread that only releases (a consumer)
+  gets a heap on its first remote release, for that hook. The cells of a batch
+  still count in the page's `used`, so the page cannot be emptied under them. The
+  cost is that a thread that blocks holds back up to 63 cells and the page they
+  are on until it runs again; and cells released by a key destructor that runs
+  after the last call of the thread's own destructor stay in the batch.
+- **Inline allocation.** `idris2rc2_newConstructor` and `idris2rc2_mkClosure` are
+  `static inline` in `memory.h`: with a constant arity the class is a constant, the
+  allocation is the pop of a free list, and the header (reference count, tag,
+  arity, constructor tag) is one 8-byte store. The release is not inlined:
+  forcing `dup`/`drop` inline once grew the compiler from 15 to 38 MB, and the
+  inline allocation grows it by 3%.
 - **A candidate, not in the first stages: recycle at allocation.** On the last
   release of a chain's head, keep the head instead of freeing it and tear its
   children down one per allocation, handing the cell just emptied to the next
@@ -301,7 +315,7 @@ is single-threaded.
   page reuse across classes while stale `pending` entries exist, nor a single
   page released to by many threads at once.
 
-## Stages, and what decides each (0, 1a, 1b and 1c are done)
+## Stages, and what decides each (0, 1a, 1b, 1c and 2 are done)
 
 | stage | content | measured against |
 |---|---|---|
@@ -368,8 +382,13 @@ and dropping a 300000-element list fifty times (`BenchListChurn`) 1.98 with the 
 3.01 with `malloc`, 2.47 with mimalloc; `Data.List.sort` of a million `Int`s
 (`BenchListSort`) 0.72, 0.86, 0.72.
 
-What is left: stage 2 (inline allocation and the batched remote release), stage 3
-(GMP, recycling at allocation). Known limits: the structure of a heap that has ended
-is never freed (a few hundred bytes); a heap created after the last destructor round
+Stage 2 (2026-11-10): the same `base` build, with the allocation inline, takes 69.5 s
+(71.0 s before), the compiler's executable grows from 15.27 to 15.78 MB (+3%) and
+its own build from 611 to 624 s (+2%). The batched remote release: 4 million cells
+released by a thread other than the one that allocated them (`poolstress`) take
+31 ms, against 125 ms with a compare-and-swap per cell.
+
+What is left: stage 3 (GMP, recycling at allocation). Known limits: the structure of a heap that has ended
+is never freed (a few hundred bytes; a thread that only releases cells gets one, and frees it again if no page was ever its own); a heap created after the last destructor round
 is never given up; a stale entry on a heap that no longer runs delays the collection
 of the cells released to a page of another heap (see "Stale entries").

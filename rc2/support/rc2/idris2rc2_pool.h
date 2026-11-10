@@ -52,6 +52,7 @@ typedef struct idris2rc2_Heap {
   idris2rc2_Page *empty, *emptyTail;              // pages with no live cell, newest first
   unsigned emptyCount;
   unsigned pagesHeld;
+  bool everOwned;                                 // a page has had this heap as its owner
   alignas(64) _Atomic(idris2rc2_Page *) pending;  // pages with released cells waiting
 } idris2rc2_Heap;
 

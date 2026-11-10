@@ -43,6 +43,16 @@ static Segment *segments;
 static idris2rc2_Page *abandoned[IDRIS2RC2_POOL_CLASSES];
 static _Atomic size_t pagesInUse, pagesPeak; // pages held by some heap, or abandoned with live cells
 
+#define BATCH_MAX 64
+static __thread struct {
+  idris2rc2_Page *pg;
+  void *head, *tail;
+  uint32_t n;
+  bool ended; // this thread has given its heap up; no more batching
+} rb;
+
+static void batchFlush(void);
+
 // Before any other constructor can allocate a cell.
 __attribute__((constructor(101))) static void poolInit(void) {
 #ifndef IDRIS2RC2_NO_POOL
@@ -141,6 +151,7 @@ static void pageInit(idris2rc2_Page *pg, idris2rc2_Heap *h, int k) {
   pg->bump = pg->base;
   pg->end = pg->base + (PAGE_BYTES / cs) * cs;
   pg->next = pg->prev = NULL;
+  h->everOwned = true;
   atomic_store(&pg->owner, h); // last: it publishes the page to the stale entries and to the pushers
 }
 
@@ -292,6 +303,7 @@ static idris2rc2_Page *adopt(idris2rc2_Heap *h, int k) {
   pthread_mutex_unlock(&globalLock);
   if (!pg) return NULL;
   pg->state = IDRIS2RC2_PAGE_ACTIVE;
+  h->everOwned = true;
   atomic_store(&pg->owner, h);
   h->pagesHeld++;
   poolCollect(pg);
@@ -367,7 +379,7 @@ static idris2rc2_Page *takePage(idris2rc2_Heap *h, int k) {
 static pthread_key_t heapKey;
 static pthread_once_t heapKeyOnce = PTHREAD_ONCE_INIT;
 static void heapEnd(void *heap);
-static void heapKeyInit(void) { pthread_key_create(&heapKey, heapEnd); }
+static void heapKeyInit(void) { IDRIS2RC2_VERIFY(pthread_key_create(&heapKey, heapEnd) == 0, "cell pool: pthread_key_create failed"); }
 
 static idris2rc2_Heap *heapNew(void) {
   idris2rc2_Heap *h = aligned_alloc(64, (sizeof(idris2rc2_Heap) + 63) & ~(size_t)63);
@@ -375,7 +387,7 @@ static idris2rc2_Heap *heapNew(void) {
   memset(h, 0, sizeof *h);
   for (int k = 0; k < IDRIS2RC2_POOL_CLASSES; k++) h->direct[k] = &dummyPage;
   pthread_once(&heapKeyOnce, heapKeyInit);
-  pthread_setspecific(heapKey, h);
+  IDRIS2RC2_VERIFY(pthread_setspecific(heapKey, h) == 0, "cell pool: pthread_setspecific failed");
   return h;
 }
 
@@ -416,15 +428,24 @@ static void heapAbandon(idris2rc2_Heap *h) {
 // finishes the thread in the last, and fails on a mutex taken after that).
 static void heapEnd(void *heap) {
   static __thread int rounds;
+  // Whatever the round, cells released so far reach their pages. Those released
+  // by a destructor that runs after the last call of this one stay in the batch.
+  batchFlush();
   if (++rounds < PTHREAD_DESTRUCTOR_ITERATIONS - 1) {
     pthread_setspecific(heapKey, heap);
     return;
   }
   if (idris2rc2_tlHeap == heap) idris2rc2_tlHeap = &emptyHeap;
-  heapAbandon(heap);
+  rb.ended = true;
+  idris2rc2_Heap *h = heap;
+  bool owned = h->everOwned;
+  heapAbandon(h);
+  // A heap that never owned a page is nobody's `owner`, so no pusher can hold it.
+  if (!owned) free(h);
 }
 
 void *idris2rc2_poolAllocSlow(int k) {
+  batchFlush();
   if (!idris2rc2_poolOn) {
     void *c = malloc(IDRIS2RC2_POOL_MIN_CELL + 8 * (size_t)k);
     IDRIS2RC2_VERIFY(c, "allocation failed");
@@ -485,12 +506,44 @@ static void queuePage(idris2rc2_Page *pg) {
   }
 }
 
-static void remotePush(idris2rc2_Page *pg, void *c) {
+// Cells this thread released to one page of another heap, linked but not yet
+// on the page's thread_free: the cells of a list are mostly on one page, and a
+// batch costs one compare-and-swap instead of one per cell. The cells still
+// count in the page's `used`, so the page cannot be emptied under them.
+static void remotePushChain(idris2rc2_Page *pg, void *head, void *tail) {
   void *old = atomic_load_explicit(&pg->thread_free, memory_order_relaxed);
   do {
-    setNext(c, old);
-  } while (!atomic_compare_exchange_weak(&pg->thread_free, &old, c));
+    setNext(tail, old);
+  } while (!atomic_compare_exchange_weak(&pg->thread_free, &old, head));
   queuePage(pg);
+}
+
+static void batchFlush(void) {
+  if (!rb.pg) return;
+  idris2rc2_Page *pg = rb.pg;
+  rb.pg = NULL;
+  remotePushChain(pg, rb.head, rb.tail);
+}
+
+static void remotePush(idris2rc2_Page *pg, void *c) {
+  if (rb.ended) {
+    remotePushChain(pg, c, c);
+    return;
+  }
+  // A thread that only releases (a consumer) still gets a heap, for the hook
+  // that flushes its batch when it ends.
+  if (idris2rc2_tlHeap == &emptyHeap) idris2rc2_tlHeap = heapNew();
+  if (rb.pg == pg) {
+    setNext(c, rb.head);
+    rb.head = c;
+    if (++rb.n >= BATCH_MAX) batchFlush();
+    return;
+  }
+  batchFlush();
+  setNext(c, NULL);
+  rb.pg = pg;
+  rb.head = rb.tail = c;
+  rb.n = 1;
 }
 
 void idris2rc2_poolFree(void *c) {
@@ -519,6 +572,7 @@ void idris2rc2_poolFree(void *c) {
 }
 
 void idris2rc2_poolPurge(void) {
+  batchFlush();
   idris2rc2_Heap *h = idris2rc2_tlHeap;
   if (h != &emptyHeap) {
     poolDrain(h);
