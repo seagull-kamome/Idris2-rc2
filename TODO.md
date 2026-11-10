@@ -337,22 +337,16 @@ user can do without the compiler's help:
   `idris2rc2_alloc` now calls `malloc`. Under glibc that saves about 2%
   (best of 7: 6.58s to 6.46s); map/filter and `sort` are unchanged.
 
-**Idea:** size-class pages inside the runtime, allocated in order and
-freed back to per-page free lists, as mimalloc does. That would get
-the locality without an external dependency. The open problems:
-- **Threads.** A page per thread avoids locks, but a cell freed on
-  another thread has to go back to its owner (mimalloc's delayed free
-  list). `idris2rc2_threaded` could keep the single-threaded path
-  lock-free.
-- **Returning memory.** Empty pages must go back to the OS, or a peak
-  of one size class is never reusable by another.
-- **Sizes.** Which classes, and what falls through to `malloc`: big
-  closures, strings, GMP.
-- **Interaction with reuse.** `reuse=` already recycles a dying cell
-  in place; the allocator only sees what reuse misses.
-- **Foreign code** that frees or reallocates runtime values.
-  `idris2rc2_free` and teardown are the only exits today; verify that
-  nothing else calls `free` on a value.
+**Plan:** `rc2/doc/small-object-allocator.md` -- an allocator for the cells
+(constructors, closures, `Lazy`/`IORef` cells, boxes) with per-thread heaps,
+64 KiB size-class pages, a lock-free release from other threads, and
+`madvise` to return empty pages. Cells are 95.6% of the allocations of the
+compiler's own build (callgrind, 2026-11-10; about 97.7% with the one-block
+`String`); strings and GMP stay `malloc`. The plan starts with a stage 0 that
+splits the cell allocation entry from the generic one.
+Mimalloc by `LD_PRELOAD` now gives -13.5% on the build of `base`
+(`BENCHMARKS.md`); stage 1a of the plan must get near that, or bundling mimalloc
+is weighed again.
 
 **Another case (2026-09-27): `idris2-missing-containers`' `read`.**
 It is the one step of that benchmark still slower than Chez: 0.378s
