@@ -272,32 +272,26 @@ enough depth:
   (`TODO.md`, "closure-valued loop parameters, beyond difference
   lists").
 
-## rc2: the cell pool keeps the heap of every thread that ends
+## rc2: the cell pool never gives up a heap that a late thread-exit destructor creates
 
-The cell pool (`rc2/doc/small-object-allocator.md`) gives each thread a heap
-structure of 448 bytes. When a thread ends, the pages it owns are passed on or
-returned, but the structure itself is never freed, so a program that starts and
-ends threads without bound grows by 448 bytes per thread (100000 threads: about
-45 MB). The cell memory is not the problem: it is recovered by adoption and by
-the return of empty pages.
+The cell pool (`rc2/doc/small-object-allocator.md`) gives a thread's heap up (its pages
+are passed on or returned, and the heap structure is handed to the next new thread) in
+the last round but one of the thread-exit destructors, and a heap created in the round
+after that is given up by the next call of the destructor. A heap created after the
+last call (a destructor of another key that runs in the last round and allocates a
+cell) is never given up: its 448 bytes and the pages it owns stay with it for the
+rest of the process. The cell
+memory of the other threads is not affected. It needs a thread-exit destructor that
+allocates in the last rounds (a `GCPointer`'s `onCollect` that builds data, for one),
+so a program has to end many such threads for it to show.
 
-The structure cannot simply be freed: a thread that releases a cell to a page of
-the ending thread reads the owner and then pushes onto its `pending` stack, and
-that read may come just before the ending thread frees the heap. The structure is
-freed only when no page was ever the heap's own (a thread that only releases
-cells).
+The main thread's heap is not given up either, which is harmless: the process ends.
 
-Related, in the same family:
-- A heap created after the last round of the thread-exit destructors (a key
-  destructor that allocates late) is never given up, and neither are its pages.
-- The main thread's heap is not given up either, which is harmless.
+Workaround: none needed for programs with a fixed set of threads. A program that keeps
+starting threads whose destructors allocate can run with `IDRIS2RC2_POOL=0`, which makes
+every cell a `malloc` block.
 
-Workaround: none needed for programs with a fixed set of threads. A program that
-keeps starting threads can run with `IDRIS2RC2_POOL=0`, which makes every cell a
-`malloc` block.
-
-Fix, if it is worth it: keep the structures of ended threads on a list and hand
-them to new threads (the memory stays valid, so a late reader finds a heap, and
-`processPending` already skips a page whose owner is another heap). That bounds
-the memory at the largest number of threads alive at once. The reset of the
-`POOL_DEAD` mark on `pending` and the order of the readers need care.
+Fix, if it is worth it: let the last destructor round give up whatever heap the thread
+holds at that point, and keep the batch of released cells flushing there too. The rounds
+of `PTHREAD_DESTRUCTOR_ITERATIONS` cannot be told from inside a destructor, so this
+needs a mark of the thread that says the exit has begun.

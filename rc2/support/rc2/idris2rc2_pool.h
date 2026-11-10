@@ -57,7 +57,7 @@ typedef struct idris2rc2_Heap {
   idris2rc2_Page *empty, *emptyTail;              // pages with no live cell, newest first
   unsigned emptyCount;
   unsigned pagesHeld;
-  bool everOwned;                                 // a page has had this heap as its owner
+  struct idris2rc2_Heap *nextRetired;             // the list of the heaps of ended threads
   alignas(64) _Atomic(idris2rc2_Page *) pending;  // pages with released cells waiting
 } idris2rc2_Heap;
 
@@ -78,6 +78,8 @@ void idris2rc2_poolPurge(void);
 // (tests, and the check mode).
 size_t idris2rc2_poolPagesInUse(void);
 size_t idris2rc2_poolPagesPeak(void);
+// Heap structures allocated over the life of the process (those of ended threads are reused).
+size_t idris2rc2_poolHeapsCreated(void);
 void idris2rc2_poolResetPeak(void);
 int idris2rc2_poolPageClass(void *cell);
 
