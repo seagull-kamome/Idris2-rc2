@@ -153,6 +153,48 @@ static void *stayingConsumer(void *arg) {
   return NULL;
 }
 
+// ---- 2c. threads that come and go: the heap of an ended thread is reused ----
+
+static void *comeAndGo(void *arg) {
+  (void)arg;
+  void *c[20];
+  for (int i = 0; i < 20; i++) { c[i] = idris2rc2_poolAlloc(i % IDRIS2RC2_POOL_CLASSES); *(uint64_t *)c[i] = 0; }
+  for (int i = 0; i < 20; i++) idris2rc2_poolFree(c[i]);
+  return NULL;
+}
+
+// ---- 2d. waves: threads that come and go while others release their cells ----
+//
+// Several drivers keep starting a worker that allocates, hands its cells to one
+// consumer and ends at once, so stale pushers meet reused heaps.
+
+static Queue wq;
+static void *waveWorker(void *arg) {
+  uint64_t base = (uint64_t)(uintptr_t)arg << 24;
+  for (int i = 0; i < 20; i++) {
+    int k = (int)(((base >> 3) + (uint64_t)i) % IDRIS2RC2_POOL_CLASSES);
+    void *c = idris2rc2_poolAlloc(k);
+    fill(c, k, base + i);
+    qput(&wq, (Item){c, k, base + i});
+  }
+  return NULL;
+}
+static void *waveDriver(void *arg) {
+  uint64_t id = (uint64_t)(uintptr_t)arg;
+  for (uint64_t r = 0; r < 300; r++) {
+    pthread_t w;
+    if (pthread_create(&w, 0, waveWorker, (void *)(uintptr_t)(id * 1000 + r))) { fail("pthread_create"); return NULL; }
+    pthread_join(w, 0);
+  }
+  return NULL;
+}
+static void *waveConsumer(void *arg) {
+  (void)arg;
+  Item it;
+  while (qget(&wq, &it, 1)) { check(it.c, it.k, it.seq); idris2rc2_poolFree(it.c); }
+  return NULL;
+}
+
 // ---- 3. threads that end with live cells ----
 
 static void *shortLived(void *arg) {
@@ -209,7 +251,32 @@ int main(int argc, char **argv) {
   for (int i = 0; i < RING; i++) { Item it; while (qget(&ring[i], &it, 0)) { check(it.c, it.k, it.seq); idris2rc2_poolFree(it.c); } }
   printf("ring: errors=%llu\n", errors);
 
+  size_t heapsBeforeG = idris2rc2_poolHeapsCreated();
+  for (int r = 0; r < 3000; r++) {
+    pthread_t th;
+    if (pthread_create(&th, 0, comeAndGo, 0)) { fail("pthread_create"); return 1; }
+    pthread_join(th, 0);
+  }
+  size_t heapsG = idris2rc2_poolHeapsCreated() - heapsBeforeG;
+  printf("3000 threads that come and go: heaps created=%zu\n", heapsG);
+  if (heapsG > 8) fail("the heaps of ended threads are not reused");
+
+  qinit(&wq);
+  size_t heapsBeforeW = idris2rc2_poolHeapsCreated();
+  {
+    pthread_t drivers[4], consumer;
+    pthread_create(&consumer, 0, waveConsumer, 0);
+    for (int i = 0; i < 4; i++) pthread_create(&drivers[i], 0, waveDriver, (void *)(uintptr_t)(i + 1));
+    for (int i = 0; i < 4; i++) pthread_join(drivers[i], 0);
+    qclose(&wq);
+    pthread_join(consumer, 0);
+  }
+  size_t heapsW = idris2rc2_poolHeapsCreated() - heapsBeforeW;
+  printf("waves of threads that come and go: errors=%llu, heaps created=%zu\n", errors, heapsW);
+  if (heapsW > 32) fail("the heaps of the threads of the waves are not reused");
+
   qinit(&dq);
+  size_t heapsBeforeD = idris2rc2_poolHeapsCreated();
   idris2rc2_poolResetPeak();
   size_t beforeD = idris2rc2_poolPagesInUse();
   pthread_t sc;
@@ -224,8 +291,12 @@ int main(int argc, char **argv) {
   size_t dying = idris2rc2_poolPagesPeak() - beforeD;
   printf("dying producers, one consumer: errors=%llu, pages in use at the peak: +%zu\n", errors, dying);
   if (dying > 128) fail("pages of dying producers are not reused");
+  size_t heapsD = idris2rc2_poolHeapsCreated() - heapsBeforeD;
+  printf("  heaps created=%zu\n", heapsD);
+  if (heapsD > 16) fail("the heaps of dying producers are not reused");
 
   idris2rc2_poolResetPeak();
+  size_t heapsBeforeE = idris2rc2_poolHeapsCreated();
   size_t before = idris2rc2_poolPagesInUse();
   static void *cells[1000];
   for (int r = 0; r < 300; r++) {
@@ -238,6 +309,9 @@ int main(int argc, char **argv) {
   printf("threads that end: errors=%llu, pages in use at the peak: +%zu\n", errors, churn);
   // Without adopting and sweeping, each of the 300 threads would take a page for each of its 15 classes.
   if (churn > 64) fail("pages of ended threads are not reused");
+  size_t heapsE = idris2rc2_poolHeapsCreated() - heapsBeforeE;
+  printf("  heaps created=%zu\n", heapsE);
+  if (heapsE > 8) fail("the heaps of threads that end with live cells are not reused");
 
   {
     size_t beforeR = idris2rc2_poolPagesInUse();

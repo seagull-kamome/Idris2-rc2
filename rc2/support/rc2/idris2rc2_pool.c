@@ -42,6 +42,8 @@ __thread idris2rc2_Heap *idris2rc2_tlHeap = &emptyHeap;
 static pthread_mutex_t globalLock = PTHREAD_MUTEX_INITIALIZER;
 static Segment *segments;
 static idris2rc2_Page *abandoned[IDRIS2RC2_POOL_CLASSES];
+static idris2rc2_Heap *retiredHeaps; // heaps of ended threads, for the next thread that needs one
+static _Atomic size_t heapsCreated;
 static _Atomic size_t pagesInUse, pagesPeak; // pages held by some heap, or abandoned with live cells
 
 #define BATCH_MAX 64
@@ -71,6 +73,7 @@ static inline Segment *segmentOf(void *p) {
 
 size_t idris2rc2_poolPagesInUse(void) { return atomic_load(&pagesInUse); }
 size_t idris2rc2_poolPagesPeak(void) { return atomic_load(&pagesPeak); }
+size_t idris2rc2_poolHeapsCreated(void) { return atomic_load(&heapsCreated); }
 void idris2rc2_poolResetPeak(void) { atomic_store(&pagesPeak, atomic_load(&pagesInUse)); }
 int idris2rc2_poolPageClass(void *cell) { return idris2rc2_poolPageOf(cell)->klass; }
 
@@ -148,7 +151,6 @@ static void pageInit(idris2rc2_Page *pg, idris2rc2_Heap *h, int k) {
   pg->bump = pg->base;
   pg->end = pg->base + (PAGE_BYTES / cs) * cs;
   pg->next = pg->prev = NULL;
-  h->everOwned = true;
   atomic_store(&pg->owner, h); // last: it publishes the page to the stale entries and to the pushers
 }
 
@@ -181,13 +183,14 @@ static void emptyRemove(idris2rc2_Heap *h, idris2rc2_Page *pg) {
   h->emptyCount--;
 }
 
-// A heap keeps this many empty pages for itself; the older ones go back.
-static void emptyTrim(idris2rc2_Heap *h, unsigned retain) {
+// A heap keeps this many empty pages for itself; the older ones go back. `force`:
+// the heap has ended, nothing is queued on its `pending` any more.
+static void emptyTrim(idris2rc2_Heap *h, unsigned retain, bool force) {
   while (h->emptyCount > retain) {
     idris2rc2_Page *pg = h->emptyTail;
     // An entry for it is on `pending` or on its way there: returned now, it
     // would carry the flag to the next heap that takes the page.
-    if (atomic_load(&pg->inPending)) break;
+    if (!force && atomic_load(&pg->inPending)) break;
     emptyRemove(h, pg);
     h->pagesHeld--;
     pageReturn(pg);
@@ -261,7 +264,7 @@ static void pageAfter(idris2rc2_Heap *h, idris2rc2_Page *pg) {
     emptyPush(h, pg);
     // Hysteresis: trim down to the retained number only after a quarter more.
     unsigned retain = retainOf(h);
-    if (h->emptyCount > retain + retain / 4) emptyTrim(h, retain);
+    if (h->emptyCount > retain + retain / 4) emptyTrim(h, retain, false);
   }
 }
 
@@ -300,7 +303,6 @@ static idris2rc2_Page *adopt(idris2rc2_Heap *h, int k) {
   pthread_mutex_unlock(&globalLock);
   if (!pg) return NULL;
   pg->state = IDRIS2RC2_PAGE_ACTIVE;
-  h->everOwned = true;
   atomic_store(&pg->owner, h);
   h->pagesHeld++;
   poolCollect(pg);
@@ -378,20 +380,42 @@ static pthread_once_t heapKeyOnce = PTHREAD_ONCE_INIT;
 static void heapEnd(void *heap);
 static void heapKeyInit(void) { IDRIS2RC2_VERIFY(pthread_key_create(&heapKey, heapEnd) == 0, "cell pool: pthread_key_create failed"); }
 
+static void heapReset(idris2rc2_Heap *h) {
+  for (int k = 0; k < IDRIS2RC2_POOL_CLASSES; k++) {
+    h->direct[k] = &dummyPage;
+    h->avail[k] = h->full[k] = NULL;
+  }
+  h->empty = h->emptyTail = NULL;
+  h->emptyCount = 0;
+  h->pagesHeld = 0;
+  h->nextRetired = NULL;
+  atomic_store(&h->pending, NULL); // last: it makes the heap live
+}
+
+// The heap of an ended thread if there is one (its memory is never given back:
+// a thread that released a cell to one of its pages may still read its `pending`),
+// else a new one.
 static idris2rc2_Heap *heapNew(void) {
-  idris2rc2_Heap *h = aligned_alloc(64, (sizeof(idris2rc2_Heap) + 63) & ~(size_t)63);
-  IDRIS2RC2_VERIFY(h, "cell pool: allocation of a heap failed");
-  memset(h, 0, sizeof *h);
-  for (int k = 0; k < IDRIS2RC2_POOL_CLASSES; k++) h->direct[k] = &dummyPage;
+  pthread_mutex_lock(&globalLock);
+  idris2rc2_Heap *h = retiredHeaps;
+  if (h) retiredHeaps = h->nextRetired;
+  pthread_mutex_unlock(&globalLock);
+  if (!h) {
+    h = aligned_alloc(64, (sizeof(idris2rc2_Heap) + 63) & ~(size_t)63);
+    IDRIS2RC2_VERIFY(h, "cell pool: allocation of a heap failed");
+    atomic_fetch_add_explicit(&heapsCreated, 1, memory_order_relaxed);
+  }
+  heapReset(h);
   pthread_once(&heapKeyOnce, heapKeyInit);
   IDRIS2RC2_VERIFY(pthread_setspecific(heapKey, h) == 0, "cell pool: pthread_setspecific failed");
   return h;
 }
 
 // A thread ends: its pages with live cells are passed on, the rest returned.
-// No other thread pushes to this heap's `pending` after the first step, and a
-// heap is never reused: a thread that still holds its address only finds
-// POOL_DEAD there.
+// No other thread pushes to this heap's `pending` after the first step. The
+// heap is reused later (heapNew): a thread that still holds its address finds
+// POOL_DEAD there until then, afterwards a live heap that does not own its page,
+// whose processPending skips the entry.
 static void heapAbandon(idris2rc2_Heap *h) {
   processPending(h, atomic_exchange(&h->pending, POOL_DEAD));
   for (int k = 0; k < IDRIS2RC2_POOL_CLASSES; k++) {
@@ -415,7 +439,7 @@ static void heapAbandon(idris2rc2_Heap *h) {
       }
     }
   }
-  emptyTrim(h, 0);
+  emptyTrim(h, 0, true);
   h->pagesHeld = 0;
 }
 
@@ -435,10 +459,15 @@ static void heapEnd(void *heap) {
   if (idris2rc2_tlHeap == heap) idris2rc2_tlHeap = &emptyHeap;
   rb.ended = true;
   idris2rc2_Heap *h = heap;
-  bool owned = h->everOwned;
   heapAbandon(h);
-  // A heap that never owned a page is nobody's `owner`, so no pusher can hold it.
-  if (!owned) free(h);
+  // No page names this heap as its owner any more (they were returned or given to
+  // `abandonedHeap`), so a stale entry on another heap's `pending` is skipped by
+  // the owner test, and a pusher that still holds the heap finds POOL_DEAD there
+  // or, once it is reused, a live heap that does not own its page.
+  pthread_mutex_lock(&globalLock);
+  h->nextRetired = retiredHeaps;
+  retiredHeaps = h;
+  pthread_mutex_unlock(&globalLock);
 }
 
 void *idris2rc2_poolAllocSlow(int k) {
@@ -579,7 +608,7 @@ void idris2rc2_poolPurge(void) {
         pageAfter(h, p);
       }
     }
-    emptyTrim(h, 0);
+    emptyTrim(h, 0, false);
   }
   // Pages of ended threads that only wait for their thread_free to be collected.
   sweepAbandoned();

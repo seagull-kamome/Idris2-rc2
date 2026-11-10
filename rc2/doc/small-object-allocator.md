@@ -168,7 +168,10 @@ else push_remote(pg, c);                            // anything else: remote
   drains, so its remote releases wait for a collection that does not come from
   the queue: the new owner finds them when it runs out of room in its direct page
   or looks over its first few full pages before taking a new one, and a purge
-  finds all of them.
+  finds all of them. The same happens when the late pusher's heap has been reused
+  by then: the entry lands on the `pending` of the new thread's heap, whose
+  `processPending` clears the flag and skips the page (it is not its own), and the
+  page's real owner sees the flag clear only from that drain on.
 - A cell on a page that was *abandoned* is released by the same remote path:
   `owner` is the `abandonedHeap` sentinel, whose `pending` is `POOL_DEAD`, and the
   owner test is an atomic load, so a thread that has just lost its heap does not
@@ -243,9 +246,18 @@ is single-threaded.
   2. every page with a live cell gets `owner = abandonedHeap` and goes on the
      global list of its class, the others are returned;
   3. `tl_heap` goes back to the static empty heap, so an allocation after that
-     takes a **new** heap. The heap structure of an ended thread is never freed
-     or reused (a few hundred bytes), because another thread may still hold its
-     address.
+     takes a heap again. The heap structure of the ended thread goes on a list
+     (`retiredHeaps`) for the next thread that needs one and its memory is never
+     given back, because another thread may still hold its address: a pusher
+     that read the owner of a page just before the thread ended pushes onto its
+     `pending`. It finds `POOL_DEAD` there or, once the heap is reused, the stack
+     of a live heap that does not own the page, whose `processPending` skips the
+     entry (see "Stale entries"). The cell it was to announce is collected by
+     whoever adopts the page. The heaps are reused only when no page names the heap
+     as its owner: the empty pages are returned whatever their `inPending` says,
+     since nothing more is queued on a dead heap. The number of heaps is therefore
+     the largest number of threads that were alive at once, plus the heaps of the
+     threads still in their destructors and the late heap of `KNOWN-BUGS.md`.
 - **Adopting.** A thread that is out of pages for a class adopts an abandoned page
   of it: it sets `owner` and takes `thread_free`. A release that races with the
   change of owner is pushed to `thread_free` (any value of `owner` other than the
@@ -439,7 +451,6 @@ So the `Integer` cell and GMP stay with `malloc`. Recycling at allocation (the
 candidate in "What it does for constructors and for short-lived lists") was not
 measured and is not planned: the gain it aims at, a cheaper allocation and release
 of a cell, is what the pool now does, and its cost (later reference counts, a later
-`onCollect`) was the reason it needed a measurement first. Known limits: the structure of a heap that has ended
-is never freed (a few hundred bytes; a thread that only releases cells gets one, and frees it again if no page was ever its own); a heap created after the last destructor round
-is never given up; a stale entry on a heap that no longer runs delays the collection
+`onCollect`) was the reason it needed a measurement first. Known limits: a heap created after the last destructor
+round is never given up (`KNOWN-BUGS.md`); a stale entry on a heap that no longer runs delays the collection
 of the cells released to a page of another heap (see "Stale entries").
