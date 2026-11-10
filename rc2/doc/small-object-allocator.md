@@ -1,7 +1,8 @@
 # A cell allocator for constructors and closures
 
 Status: stages 0, 1a, 1b, 1c and 2 are implemented (`idris2rc2_pool.c`,
-`idris2rc2_pool.h`, `idris2rc2_memory.[ch]`); stage 3 is not. Reviewed
+`idris2rc2_pool.h`, `idris2rc2_memory.[ch]`); stage 3 was measured and is not
+planned (see "Stage 3, measured"). Reviewed
 against the runtime on 2026-11-10; the review's findings are folded in below.
 "Results" at the end has the measurements.
 
@@ -324,7 +325,7 @@ is single-threaded.
 | 1b | abandon/adopt, the thread-exit protocol, the tests for them | the concurrency tests, `tsan` |
 | 1c | return to the OS, `idris2rc2_poolPurge()`, the memory test | resident size after the large-list test |
 | 2 | `newConstructor` and `mkClosure` inline with a constant class and header word; batched remote release | instructions of `stage1` (callgrind), time, and the size of the executable and the build time of the compiler |
-| 3 | `Integer` through `mp_set_memory_functions`; recycle at allocation, if the measurement says so | an `Integer`-heavy benchmark; how often `isUnique` fails |
+| 3 | `Integer` through `mp_set_memory_functions`; recycle at allocation, if the measurement says so | an `Integer`-heavy benchmark; how often `isUnique` fails. Measured, not done: see "Stage 3, measured" |
 
 The gate is stage 1a, before the hard parts (1b, 1c) are written: if it does not
 get near what mimalloc gives, there is little reason to carry an allocator of our
@@ -388,7 +389,33 @@ its own build from 611 to 624 s (+2%). The batched remote release: 4 million cel
 released by a thread other than the one that allocated them (`poolstress`) take
 31 ms, against 125 ms with a compare-and-swap per cell.
 
-What is left: stage 3 (GMP, recycling at allocation). Known limits: the structure of a heap that has ended
+What is left: nothing planned; see the next section for stage 3.
+
+## Stage 3, measured: not worth doing
+
+Stage 3 was to put GMP's allocations through the pool (`mp_set_memory_functions`) and
+to recycle at allocation. Measured on 2026-11-10 on the code as it stands (the cell
+pool of stage 2 in every run):
+
+- **Building `libs/prelude` with the rc2-built compiler**: GMP makes 439 allocations,
+  against 73.9 million in all (callgrind call counts), 0.0006%. An `Integer` that fits
+  in 62 bits is an immediate and never reaches GMP.
+- **An upper bound for every allocation outside the pool** (strings, `Integer`,
+  arrays, buffers): the same `stage1` with mimalloc preloaded on top of the pool,
+  three runs each: `base` 69.15 s against 69.00 s (-0.2%), `prelude` 5.52 s against
+  5.43 s (-1.6%). A pool for strings and `Integer` cannot gain more than that.
+- **Programs that do use big `Integer`s**: a loop on numbers of two or three limbs
+  (about 2^70 to 2^140, three million iterations, three `Integer` operations each,
+  every result a boxed `Integer` with its limb array) takes 1.51 s with the pool, 1.50 s
+  with `malloc`, 1.49 s with mimalloc (which also replaces GMP's allocations). The
+  time is in the GMP arithmetic; a pool for the `Integer` cell and for the limbs would
+  gain at most 1%.
+
+So the `Integer` cell and GMP stay with `malloc`. Recycling at allocation (the
+candidate in "What it does for constructors and for short-lived lists") was not
+measured and is not planned: the gain it aims at, a cheaper allocation and release
+of a cell, is what the pool now does, and its cost (later reference counts, a later
+`onCollect`) was the reason it needed a measurement first. Known limits: the structure of a heap that has ended
 is never freed (a few hundred bytes; a thread that only releases cells gets one, and frees it again if no page was ever its own); a heap created after the last destructor round
 is never given up; a stale entry on a heap that no longer runs delays the collection
 of the cells released to a page of another heap (see "Stale entries").
