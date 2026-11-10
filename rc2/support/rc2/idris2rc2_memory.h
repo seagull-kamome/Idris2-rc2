@@ -13,7 +13,7 @@ IDRIS2RC2_Value *idris2rc2_alloc(size_t size);
 // idris2rc2_cellFree (NULL allowed), never with a bare free().
 IDRIS2RC2_Value *idris2rc2_cellAlloc(size_t size);
 #define IDRIS2RC2_NEW_CELL(t) ((t *)idris2rc2_cellAlloc(sizeof(t)))
-static inline void idris2rc2_cellFree(void *cell) { free(cell); }
+void idris2rc2_cellFree(void *cell);
 
 // EXPERIMENTAL: idris2rc2_dup/idris2rc2_dup_n/idris2rc2_drop's own hot
 // path (the refcount check/adjust itself, atomic or plain depending on

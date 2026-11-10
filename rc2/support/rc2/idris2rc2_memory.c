@@ -1,4 +1,5 @@
 #include "idris2rc2_memory.h"
+#include "idris2rc2_pool.h"
 #include "idris2rc2_rt.h"
 #include "idris2rc2_util.h"
 
@@ -34,7 +35,50 @@ IDRIS2RC2_Value *idris2rc2_alloc(size_t size) {
 }
 
 IDRIS2RC2_Value *idris2rc2_cellAlloc(size_t size) {
-  return idris2rc2_allocWithHeader(size);
+  int k = idris2rc2_poolClass(size);
+  if (__builtin_expect(k < 0 || !idris2rc2_poolOn, 0))
+    return idris2rc2_allocWithHeader(size);
+  IDRIS2RC2_Value *v = (IDRIS2RC2_Value *)idris2rc2_poolAlloc(k);
+  v->header.rc = 1;
+  v->header.tag = IDRIS2RC2_TAG_NONE;
+  v->header.reserved = 0;
+  return v;
+}
+
+// The size idris2rc2_cellAlloc was asked for, from the cell's own tag and
+// arity: the release derives the same pool class as the allocation did.
+static size_t idris2rc2_cellBytes(IDRIS2RC2_Value *v) {
+  switch (v->header.tag) {
+  case IDRIS2RC2_TAG_CONSTRUCTOR: {
+    IDRIS2RC2_Constructor *c = (IDRIS2RC2_Constructor *)v;
+    return sizeof(IDRIS2RC2_Constructor) + sizeof(IDRIS2RC2_Value *) * (c->arity + (c->tag < 0 ? 1 : 0));
+  }
+  case IDRIS2RC2_TAG_CLOSURE:
+    return sizeof(IDRIS2RC2_Closure) + sizeof(IDRIS2RC2_Value *) * ((IDRIS2RC2_Closure *)v)->arity;
+  case IDRIS2RC2_TAG_IOREF:
+  case IDRIS2RC2_TAG_LAZY:
+    return sizeof(IDRIS2RC2_IORef);
+  case IDRIS2RC2_TAG_INT64:
+    return sizeof(IDRIS2RC2_Int64);
+  case IDRIS2RC2_TAG_BITS64:
+    return sizeof(IDRIS2RC2_Bits64);
+  case IDRIS2RC2_TAG_DOUBLE:
+    return sizeof(IDRIS2RC2_Double);
+  case IDRIS2RC2_TAG_GCPOINTER:
+    return sizeof(IDRIS2RC2_GCPointer);
+  default:
+    IDRIS2RC2_VERIFY(false, "cellFree: tag %d is not a cell", (int)v->header.tag);
+    return 0;
+  }
+}
+
+void idris2rc2_cellFree(void *cell) {
+  if (!cell) return;
+  int k = idris2rc2_poolClass(idris2rc2_cellBytes((IDRIS2RC2_Value *)cell));
+  if (__builtin_expect(k < 0 || !idris2rc2_poolOn, 0))
+    free(cell);
+  else
+    idris2rc2_poolFree(cell, k);
 }
 
 IDRIS2RC2_Constructor *idris2rc2_newConstructor(int arity, int tag) {

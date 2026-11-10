@@ -572,6 +572,9 @@ elif [ "$DO_VALGRIND" -eq 1 ]; then
     echo
     echo "=== valgrind (leak-sensitive tests) ==="
 
+    # IDRIS2RC2_POOL=0: the cell pool takes its memory in 4 MiB mmap segments,
+    # where valgrind sees no leak, double free or use after free of a cell
+    # (rc2/doc/small-object-allocator.md).
     # Each valgrind run is its own single-threaded process operating on
     # its own binary/log file, so the leak-sensitive subset (or the
     # full suite under --valgrind-all) parallelizes cleanly. Capped at
@@ -600,7 +603,7 @@ elif [ "$DO_VALGRIND" -eq 1 ]; then
         # leaves a leak summary in the log, of whatever was live then.
         {
             timeout --kill-after=5 "$((TEST_TIMEOUT * 10))" \
-                valgrind --leak-check=full --errors-for-leak-kinds=none --error-exitcode=1 "$TMP/${name}_rc2" \
+                env IDRIS2RC2_POOL=0 valgrind --leak-check=full --errors-for-leak-kinds=none --error-exitcode=1 "$TMP/${name}_rc2" \
                 > "$TMP/${name}_valgrind.log" 2>&1
             echo $? > "$TMP/${name}_valgrind.status"
         } &
