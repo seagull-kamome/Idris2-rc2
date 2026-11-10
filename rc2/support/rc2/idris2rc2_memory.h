@@ -6,6 +6,15 @@
 IDRIS2RC2_Value *idris2rc2_alloc(size_t size);
 #define IDRIS2RC2_NEW(t) ((t *)idris2rc2_alloc(sizeof(t)))
 
+// The allocation entry of the cell types, which are the tags idris2rc2_isCellTag
+// (memory.c) lists and must be kept in step with; every other type uses
+// idris2rc2_alloc. The two are split so that a cell allocator can take over the
+// cells alone: rc2/doc/small-object-allocator.md. A cell is released with
+// idris2rc2_cellFree (NULL allowed), never with a bare free().
+IDRIS2RC2_Value *idris2rc2_cellAlloc(size_t size);
+#define IDRIS2RC2_NEW_CELL(t) ((t *)idris2rc2_cellAlloc(sizeof(t)))
+static inline void idris2rc2_cellFree(void *cell) { free(cell); }
+
 // EXPERIMENTAL: idris2rc2_dup/idris2rc2_dup_n/idris2rc2_drop's own hot
 // path (the refcount check/adjust itself, atomic or plain depending on
 // whether the program has gone multi-threaded: rc2/doc/hybrid-refcount.md)

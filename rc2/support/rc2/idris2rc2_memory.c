@@ -17,7 +17,7 @@ int idris2rc2_isMultiThreaded(void) {
   return idris2rc2_threaded;
 }
 
-IDRIS2RC2_Value *idris2rc2_alloc(size_t size) {
+static inline IDRIS2RC2_Value *idris2rc2_allocWithHeader(size_t size) {
   // Plain malloc, not aligned_alloc: malloc already aligns to 16, which
   // leaves the tag bits free, and aligned_alloc takes a slow path in some
   // allocators (TODO.md, "a small-object allocator in the runtime").
@@ -29,8 +29,16 @@ IDRIS2RC2_Value *idris2rc2_alloc(size_t size) {
   return v;
 }
 
+IDRIS2RC2_Value *idris2rc2_alloc(size_t size) {
+  return idris2rc2_allocWithHeader(size);
+}
+
+IDRIS2RC2_Value *idris2rc2_cellAlloc(size_t size) {
+  return idris2rc2_allocWithHeader(size);
+}
+
 IDRIS2RC2_Constructor *idris2rc2_newConstructor(int arity, int tag) {
-  IDRIS2RC2_Constructor *c = (IDRIS2RC2_Constructor *)idris2rc2_alloc(
+  IDRIS2RC2_Constructor *c = (IDRIS2RC2_Constructor *)idris2rc2_cellAlloc(
       sizeof(IDRIS2RC2_Constructor) + sizeof(IDRIS2RC2_Value *) * (arity + (tag < 0 ? 1 : 0)));
   c->header.tag = IDRIS2RC2_TAG_CONSTRUCTOR;
   c->arity = (uint16_t)arity;
@@ -52,8 +60,11 @@ IDRIS2RC2_Closure *idris2rc2_mkClosure(IDRIS2RC2_Value *(*fn)(), uint8_t arity, 
   // (args[filled] = arg; filled++) instead of reallocating on every
   // partial application. Overhead is at most (arity - filled) pointers,
   // and Idris2 functions rarely have many params.
-  IDRIS2RC2_Closure *c = (IDRIS2RC2_Closure *)idris2rc2_alloc(sizeof(IDRIS2RC2_Closure) +
+  IDRIS2RC2_Closure *c = (IDRIS2RC2_Closure *)idris2rc2_cellAlloc(sizeof(IDRIS2RC2_Closure) +
                                              sizeof(IDRIS2RC2_Value *) * arity);
+#ifdef IDRIS2RC2_DEBUG
+  IDRIS2RC2_VERIFY(filled <= arity, "mkClosure: filled %d > arity %d", (int)filled, (int)arity);
+#endif
   c->header.tag = IDRIS2RC2_TAG_CLOSURE;
   c->fn = fn;
   c->arity = arity;
@@ -62,7 +73,7 @@ IDRIS2RC2_Closure *idris2rc2_mkClosure(IDRIS2RC2_Value *(*fn)(), uint8_t arity, 
 }
 
 IDRIS2RC2_Value *idris2rc2_mkDouble(double d) {
-  IDRIS2RC2_Double *v = IDRIS2RC2_NEW(IDRIS2RC2_Double);
+  IDRIS2RC2_Double *v = IDRIS2RC2_NEW_CELL(IDRIS2RC2_Double);
   v->header.tag = IDRIS2RC2_TAG_DOUBLE;
   v->v = d;
   return (IDRIS2RC2_Value *)v;
@@ -71,7 +82,7 @@ IDRIS2RC2_Value *idris2rc2_mkDouble(double d) {
 IDRIS2RC2_Value *idris2rc2_mkBits64(uint64_t i) {
   if (i < IDRIS2RC2_IMM_U64_LIMIT)
     return IDRIS2RC2_IMM_BITS64(i);
-  IDRIS2RC2_Bits64 *v = IDRIS2RC2_NEW(IDRIS2RC2_Bits64);
+  IDRIS2RC2_Bits64 *v = IDRIS2RC2_NEW_CELL(IDRIS2RC2_Bits64);
   v->header.tag = IDRIS2RC2_TAG_BITS64;
   v->v = i;
   return (IDRIS2RC2_Value *)v;
@@ -80,7 +91,7 @@ IDRIS2RC2_Value *idris2rc2_mkBits64(uint64_t i) {
 IDRIS2RC2_Value *idris2rc2_mkInt64(int64_t i) {
   if (i >= IDRIS2RC2_IMM_I64_MIN && i < IDRIS2RC2_IMM_I64_LIMIT)
     return IDRIS2RC2_IMM_INT64(i);
-  IDRIS2RC2_Int64 *v = IDRIS2RC2_NEW(IDRIS2RC2_Int64);
+  IDRIS2RC2_Int64 *v = IDRIS2RC2_NEW_CELL(IDRIS2RC2_Int64);
   v->header.tag = IDRIS2RC2_TAG_INT64;
   v->v = i;
   return (IDRIS2RC2_Value *)v;
@@ -171,7 +182,7 @@ IDRIS2RC2_String *idris2rc2_mkStringLen(char const *s, size_t len) {
 }
 
 IDRIS2RC2_GCPointer *idris2rc2_mkGCPointer(void *raw, IDRIS2RC2_Closure *onCollect) {
-  IDRIS2RC2_GCPointer *p = IDRIS2RC2_NEW(IDRIS2RC2_GCPointer);
+  IDRIS2RC2_GCPointer *p = IDRIS2RC2_NEW_CELL(IDRIS2RC2_GCPointer);
   p->header.tag = IDRIS2RC2_TAG_GCPOINTER;
   p->p = idris2rc2_mkPtr(raw);
   p->onCollect = onCollect;
@@ -221,6 +232,24 @@ IDRIS2RC2_Array *idris2rc2_mkArray(int length) {
 static inline int idris2rc2_hasChildren(IDRIS2RC2_Value *v) {
   return v->header.tag == IDRIS2RC2_TAG_CONSTRUCTOR || v->header.tag == IDRIS2RC2_TAG_CLOSURE ||
          v->header.tag == IDRIS2RC2_TAG_LAZY;
+}
+
+// The tags allocated with idris2rc2_cellAlloc, released with idris2rc2_cellFree;
+// every other tag is released with free().
+static inline int idris2rc2_isCellTag(uint8_t tag) {
+  switch (tag) {
+  case IDRIS2RC2_TAG_BITS64:
+  case IDRIS2RC2_TAG_INT64:
+  case IDRIS2RC2_TAG_DOUBLE:
+  case IDRIS2RC2_TAG_CLOSURE:
+  case IDRIS2RC2_TAG_CONSTRUCTOR:
+  case IDRIS2RC2_TAG_IOREF:
+  case IDRIS2RC2_TAG_LAZY:
+  case IDRIS2RC2_TAG_GCPOINTER:
+    return 1;
+  default:
+    return 0;
+  }
 }
 
 // Whether dropping `v` released its last reference, like idris2rc2_drop
@@ -362,7 +391,10 @@ again:
   default:
     break;
   }
-  free(v);
+  if (idris2rc2_isCellTag(v->header.tag))
+    idris2rc2_cellFree(v);
+  else
+    free(v);
   if (next) {
     v = next;
     goto again;
