@@ -7,14 +7,91 @@
 IDRIS2RC2_Value *idris2rc2_alloc(size_t size);
 #define IDRIS2RC2_NEW(t) ((t *)idris2rc2_alloc(sizeof(t)))
 
-// The allocation entry of the cell types, which are the tags idris2rc2_isCellTag
-// (memory.c) lists and must be kept in step with; every other type uses
+// The allocation entry of the cell types, which are the tags idris2rc2_cellPooled
+// (below) lists and must be kept in step with; every other type uses
 // idris2rc2_alloc. The two are split so that a cell allocator can take over the
 // cells alone: rc2/doc/small-object-allocator.md. A cell is released with
 // idris2rc2_cellFree (NULL allowed), never with a bare free().
 IDRIS2RC2_Value *idris2rc2_cellAlloc(size_t size);
 #define IDRIS2RC2_NEW_CELL(t) ((t *)idris2rc2_cellAlloc(sizeof(t)))
 void idris2rc2_cellFree(void *cell);
+
+// The sizes of the two cells that vary, and what ties the allocation to the
+// release: both decide pool or malloc from these (idris2rc2_poolClass of the size).
+#define IDRIS2RC2_CON_BYTES(arity, tag) \
+  (sizeof(IDRIS2RC2_Constructor) + sizeof(IDRIS2RC2_Value *) * ((arity) + ((tag) < 0 ? 1 : 0)))
+#define IDRIS2RC2_CLOSURE_BYTES(arity) (sizeof(IDRIS2RC2_Closure) + sizeof(IDRIS2RC2_Value *) * (arity))
+_Static_assert(sizeof(IDRIS2RC2_IORef) <= IDRIS2RC2_POOL_MAX_CELL && sizeof(IDRIS2RC2_Int64) <= IDRIS2RC2_POOL_MAX_CELL &&
+                   sizeof(IDRIS2RC2_Bits64) <= IDRIS2RC2_POOL_MAX_CELL && sizeof(IDRIS2RC2_Double) <= IDRIS2RC2_POOL_MAX_CELL &&
+                   sizeof(IDRIS2RC2_GCPointer) <= IDRIS2RC2_POOL_MAX_CELL,
+               "the fixed-size cells are in the pool (idris2rc2_cellPooled)");
+
+// Whether a cell was taken from the pool: idris2rc2_cellAlloc's decision again,
+// from the tag and the arity (a size of at most 128 bytes, and the pool on).
+static inline bool idris2rc2_cellPooled(IDRIS2RC2_Value *v) {
+  if (__builtin_expect(!idris2rc2_poolOn, 0)) return false;
+  switch (v->header.tag) {
+  case IDRIS2RC2_TAG_CONSTRUCTOR: {
+    IDRIS2RC2_Constructor *c = (IDRIS2RC2_Constructor *)v;
+    return idris2rc2_poolClass(IDRIS2RC2_CON_BYTES(c->arity, c->tag)) >= 0;
+  }
+  case IDRIS2RC2_TAG_CLOSURE:
+    return idris2rc2_poolClass(IDRIS2RC2_CLOSURE_BYTES(((IDRIS2RC2_Closure *)v)->arity)) >= 0;
+  case IDRIS2RC2_TAG_IOREF:
+  case IDRIS2RC2_TAG_LAZY:
+  case IDRIS2RC2_TAG_INT64:
+  case IDRIS2RC2_TAG_BITS64:
+  case IDRIS2RC2_TAG_DOUBLE:
+  case IDRIS2RC2_TAG_GCPOINTER:
+    return true;
+  default:
+    return false;
+  }
+}
+
+#ifdef IDRIS2RC2_POOL_CHECK
+static inline size_t idris2rc2_cellBytes(IDRIS2RC2_Value *v) {
+  switch (v->header.tag) {
+  case IDRIS2RC2_TAG_CONSTRUCTOR: {
+    IDRIS2RC2_Constructor *c = (IDRIS2RC2_Constructor *)v;
+    return IDRIS2RC2_CON_BYTES(c->arity, c->tag);
+  }
+  case IDRIS2RC2_TAG_CLOSURE:
+    return IDRIS2RC2_CLOSURE_BYTES(((IDRIS2RC2_Closure *)v)->arity);
+  case IDRIS2RC2_TAG_IOREF:
+  case IDRIS2RC2_TAG_LAZY:
+    return sizeof(IDRIS2RC2_IORef);
+  case IDRIS2RC2_TAG_INT64:
+    return sizeof(IDRIS2RC2_Int64);
+  case IDRIS2RC2_TAG_BITS64:
+    return sizeof(IDRIS2RC2_Bits64);
+  case IDRIS2RC2_TAG_DOUBLE:
+    return sizeof(IDRIS2RC2_Double);
+  case IDRIS2RC2_TAG_GCPOINTER:
+    return sizeof(IDRIS2RC2_GCPointer);
+  default:
+    IDRIS2RC2_VERIFY(false, "cellFree: tag %d is not a cell", (int)v->header.tag);
+    return 0;
+  }
+}
+#endif
+
+// idris2rc2_cellFree without the NULL test, and with what is not a pool cell
+// sent to free(). For the runtime's own code: the generated C calls
+// idris2rc2_cellFree, which is not inlined into every site.
+static inline void idris2rc2_cellFreeInline(void *cell) {
+  if (!idris2rc2_cellPooled((IDRIS2RC2_Value *)cell)) {
+    free(cell);
+    return;
+  }
+#ifdef IDRIS2RC2_POOL_CHECK
+  IDRIS2RC2_VERIFY(idris2rc2_poolPageClass(cell) == idris2rc2_poolClass(idris2rc2_cellBytes((IDRIS2RC2_Value *)cell)),
+                   "cellFree: the page is of class %d", idris2rc2_poolPageClass(cell));
+  idris2rc2_poolFree(cell);
+#else
+  idris2rc2_poolFreeInline(cell);
+#endif
+}
 
 // EXPERIMENTAL: idris2rc2_dup/idris2rc2_dup_n/idris2rc2_drop's own hot
 // path (the refcount check/adjust itself, atomic or plain depending on
@@ -144,8 +221,7 @@ static inline IDRIS2RC2_Value *idris2rc2_cellAllocInline(size_t size) {
 }
 
 static inline IDRIS2RC2_Constructor *idris2rc2_newConstructor(int arity, int tag) {
-  IDRIS2RC2_Constructor *c = (IDRIS2RC2_Constructor *)idris2rc2_cellAllocInline(
-      sizeof(IDRIS2RC2_Constructor) + sizeof(IDRIS2RC2_Value *) * (arity + (tag < 0 ? 1 : 0)));
+  IDRIS2RC2_Constructor *c = (IDRIS2RC2_Constructor *)idris2rc2_cellAllocInline(IDRIS2RC2_CON_BYTES(arity, tag));
   c->header.tag = IDRIS2RC2_TAG_CONSTRUCTOR;
   c->arity = (uint16_t)arity;
   c->tag = (int16_t)tag;
@@ -164,8 +240,7 @@ static inline IDRIS2RC2_Closure *idris2rc2_mkClosure(IDRIS2RC2_Value *(*fn)(), u
 #if defined(IDRIS2RC2_DEBUG) || defined(IDRIS2RC2_POOL_CHECK)
   IDRIS2RC2_VERIFY(filled <= arity, "mkClosure: filled %d > arity %d", (int)filled, (int)arity);
 #endif
-  IDRIS2RC2_Closure *c = (IDRIS2RC2_Closure *)idris2rc2_cellAllocInline(
-      sizeof(IDRIS2RC2_Closure) + sizeof(IDRIS2RC2_Value *) * arity);
+  IDRIS2RC2_Closure *c = (IDRIS2RC2_Closure *)idris2rc2_cellAllocInline(IDRIS2RC2_CLOSURE_BYTES(arity));
   c->header.tag = IDRIS2RC2_TAG_CLOSURE;
   c->fn = fn;
   c->arity = arity;

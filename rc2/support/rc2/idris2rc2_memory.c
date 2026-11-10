@@ -45,44 +45,9 @@ IDRIS2RC2_Value *idris2rc2_cellAlloc(size_t size) {
   return v;
 }
 
-// The size idris2rc2_cellAlloc was asked for, from the cell's own tag and
-// arity: the release derives the same pool class as the allocation did.
-static size_t idris2rc2_cellBytes(IDRIS2RC2_Value *v) {
-  switch (v->header.tag) {
-  case IDRIS2RC2_TAG_CONSTRUCTOR: {
-    IDRIS2RC2_Constructor *c = (IDRIS2RC2_Constructor *)v;
-    return sizeof(IDRIS2RC2_Constructor) + sizeof(IDRIS2RC2_Value *) * (c->arity + (c->tag < 0 ? 1 : 0));
-  }
-  case IDRIS2RC2_TAG_CLOSURE:
-    return sizeof(IDRIS2RC2_Closure) + sizeof(IDRIS2RC2_Value *) * ((IDRIS2RC2_Closure *)v)->arity;
-  case IDRIS2RC2_TAG_IOREF:
-  case IDRIS2RC2_TAG_LAZY:
-    return sizeof(IDRIS2RC2_IORef);
-  case IDRIS2RC2_TAG_INT64:
-    return sizeof(IDRIS2RC2_Int64);
-  case IDRIS2RC2_TAG_BITS64:
-    return sizeof(IDRIS2RC2_Bits64);
-  case IDRIS2RC2_TAG_DOUBLE:
-    return sizeof(IDRIS2RC2_Double);
-  case IDRIS2RC2_TAG_GCPOINTER:
-    return sizeof(IDRIS2RC2_GCPointer);
-  default:
-    IDRIS2RC2_VERIFY(false, "cellFree: tag %d is not a cell", (int)v->header.tag);
-    return 0;
-  }
-}
-
 void idris2rc2_cellFree(void *cell) {
   if (!cell) return;
-  int k = idris2rc2_poolClass(idris2rc2_cellBytes((IDRIS2RC2_Value *)cell));
-  if (__builtin_expect(k < 0 || !idris2rc2_poolOn, 0)) {
-    free(cell);
-    return;
-  }
-#ifdef IDRIS2RC2_POOL_CHECK
-  IDRIS2RC2_VERIFY(idris2rc2_poolPageClass(cell) == k, "cellFree: class %d, but the page is of class %d", k, idris2rc2_poolPageClass(cell));
-#endif
-  idris2rc2_poolFree(cell);
+  idris2rc2_cellFreeInline(cell);
 }
 
 IDRIS2RC2_Value *idris2rc2_wrapJust(IDRIS2RC2_Value *val) {
@@ -253,24 +218,6 @@ static inline int idris2rc2_hasChildren(IDRIS2RC2_Value *v) {
          v->header.tag == IDRIS2RC2_TAG_LAZY;
 }
 
-// The tags allocated with idris2rc2_cellAlloc, released with idris2rc2_cellFree;
-// every other tag is released with free().
-static inline int idris2rc2_isCellTag(uint8_t tag) {
-  switch (tag) {
-  case IDRIS2RC2_TAG_BITS64:
-  case IDRIS2RC2_TAG_INT64:
-  case IDRIS2RC2_TAG_DOUBLE:
-  case IDRIS2RC2_TAG_CLOSURE:
-  case IDRIS2RC2_TAG_CONSTRUCTOR:
-  case IDRIS2RC2_TAG_IOREF:
-  case IDRIS2RC2_TAG_LAZY:
-  case IDRIS2RC2_TAG_GCPOINTER:
-    return 1;
-  default:
-    return 0;
-  }
-}
-
 // Whether dropping `v` released its last reference, like idris2rc2_drop
 // minus the teardown itself.
 static inline int idris2rc2_releaseLast(IDRIS2RC2_Value *v) {
@@ -410,10 +357,7 @@ again:
   default:
     break;
   }
-  if (idris2rc2_isCellTag(v->header.tag))
-    idris2rc2_cellFree(v);
-  else
-    free(v);
+  idris2rc2_cellFreeInline(v);
   if (next) {
     v = next;
     goto again;

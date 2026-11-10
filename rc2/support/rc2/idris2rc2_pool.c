@@ -9,8 +9,8 @@
 
 // See rc2/doc/small-object-allocator.md.
 
-#define SEG_SIZE ((size_t)4 << 20)
-#define PAGE_BYTES ((size_t)64 << 10)
+#define SEG_SIZE IDRIS2RC2_POOL_SEG_SIZE
+#define PAGE_BYTES IDRIS2RC2_POOL_PAGE_BYTES
 #define PAGES_PER_SEG 64
 #define CARVE_BATCH 64
 #define RETAIN_MIN_PAGES 64
@@ -25,6 +25,7 @@ typedef struct Segment {
   struct Segment *next;
 } Segment;
 _Static_assert(sizeof(Segment) <= PAGE_BYTES, "the segment header fits in page 0");
+_Static_assert(offsetof(Segment, pages) == 0, "idris2rc2_poolPageOf takes the descriptors from the start of the segment");
 
 #ifdef IDRIS2RC2_NO_POOL
 bool idris2rc2_poolOn = false;
@@ -67,15 +68,11 @@ static inline void setNext(void *cell, void *next) { *(void **)((char *)cell + 8
 static inline Segment *segmentOf(void *p) {
   return (Segment *)((uintptr_t)p & ~(uintptr_t)(SEG_SIZE - 1));
 }
-static inline idris2rc2_Page *pageOf(void *p) {
-  Segment *s = segmentOf(p);
-  return &s->pages[((uintptr_t)p - (uintptr_t)s) / PAGE_BYTES];
-}
 
 size_t idris2rc2_poolPagesInUse(void) { return atomic_load(&pagesInUse); }
 size_t idris2rc2_poolPagesPeak(void) { return atomic_load(&pagesPeak); }
 void idris2rc2_poolResetPeak(void) { atomic_store(&pagesPeak, atomic_load(&pagesInUse)); }
-int idris2rc2_poolPageClass(void *cell) { return pageOf(cell)->klass; }
+int idris2rc2_poolPageClass(void *cell) { return idris2rc2_poolPageOf(cell)->klass; }
 
 // ---- check mode ----
 
@@ -85,7 +82,7 @@ static void fillBody(void *cell, size_t cellSize) {
   memset((char *)cell + 16, CELL_FILL, cellSize - 16);
 }
 void idris2rc2_poolCheckAlloc(void *cell, int klass) {
-  idris2rc2_Page *pg = pageOf(cell);
+  idris2rc2_Page *pg = idris2rc2_poolPageOf(cell);
   IDRIS2RC2_VERIFY(pg->klass == klass, "cell pool: class %d allocated from a page of class %d", klass, (int)pg->klass);
   for (size_t i = 16; i < pg->cellSize; i++)
     IDRIS2RC2_VERIFY(((unsigned char *)cell)[i] == CELL_FILL, "cell pool: %p written after its release (byte %zu)", cell, i);
@@ -546,10 +543,14 @@ static void remotePush(idris2rc2_Page *pg, void *c) {
   rb.n = 1;
 }
 
+void idris2rc2_poolAfter(idris2rc2_Heap *h, idris2rc2_Page *pg) { pageAfter(h, pg); }
+
+void idris2rc2_poolFreeRemote(idris2rc2_Page *pg, void *c) { remotePush(pg, c); }
+
 void idris2rc2_poolFree(void *c) {
-  idris2rc2_Page *pg = pageOf(c);
 #ifdef IDRIS2RC2_POOL_CHECK
   {
+    idris2rc2_Page *pg = idris2rc2_poolPageOf(c);
     IDRIS2RC2_Header *hd = (IDRIS2RC2_Header *)c;
     IDRIS2RC2_VERIFY(!(hd->rc == 0xDEAD && hd->reserved == 0xDE), "cell pool: double release of %p", c);
     IDRIS2RC2_VERIFY(((char *)c - pg->base) % pg->cellSize == 0, "cell pool: %p is not a cell boundary", c);
@@ -558,17 +559,7 @@ void idris2rc2_poolFree(void *c) {
     fillBody(c, pg->cellSize);
   }
 #endif
-  idris2rc2_Heap *h = idris2rc2_tlHeap;
-  if (atomic_load_explicit(&pg->owner, memory_order_relaxed) == h) {
-    setNext(c, pg->free);
-    pg->free = c;
-    pg->used--;
-    if (__builtin_expect(pg->state != IDRIS2RC2_PAGE_ACTIVE ||
-                         (pg->used == 0 && pg != h->direct[pg->klass]), 0))
-      pageAfter(h, pg);
-  } else {
-    remotePush(pg, c);
-  }
+  idris2rc2_poolFreeInline(c);
 }
 
 void idris2rc2_poolPurge(void) {
