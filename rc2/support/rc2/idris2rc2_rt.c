@@ -335,7 +335,7 @@ IDRIS2RC2_Value *idris2rc2_trampoline(IDRIS2RC2_Value *it) {
     // it each time it is returned. idris2rc2_rc_release leaves it alone (false), so
     // it is never freed.
     if (idris2rc2_rc_release(&c->header)) {
-      idris2rc2_cellFree(c);
+      idris2rc2_cellFreeInline(c);
     }
   }
   return it;
@@ -437,7 +437,7 @@ IDRIS2RC2_Value *idris2rc2_applyClosureN(IDRIS2RC2_Value *_c, IDRIS2RC2_Value **
       // idris2rc2_trampoline's own teardown after its own
       // dispatchClosure call.
       if (idris2rc2_rc_release(&c->header)) {
-        idris2rc2_cellFree(c);
+        idris2rc2_cellFreeInline(c);
       }
     } else {
       for (uint8_t i = 0; i < c->filled; ++i)

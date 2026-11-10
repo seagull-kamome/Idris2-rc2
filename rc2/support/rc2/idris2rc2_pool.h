@@ -2,7 +2,9 @@
 
 // The cell pool: per-thread heaps of 64 KiB size-class pages inside 4 MiB
 // segments. Design, stages and limits: rc2/doc/small-object-allocator.md.
-// Only idris2rc2_cellAlloc / idris2rc2_cellFree (memory.c) use this.
+// The allocation and the release of the cells go through memory.h
+// (idris2rc2_cellAlloc, idris2rc2_newConstructor, idris2rc2_cellFree and their
+// inline forms); the rest is for the tests.
 
 #include <stdalign.h>
 #include <stdatomic.h>
@@ -20,6 +22,9 @@ static inline int idris2rc2_poolClass(size_t size) {
   if (size <= IDRIS2RC2_POOL_MIN_CELL) return 0;
   return (int)((size + 7) / 8) - 2;
 }
+
+#define IDRIS2RC2_POOL_SEG_SIZE ((size_t)4 << 20)
+#define IDRIS2RC2_POOL_PAGE_BYTES ((size_t)64 << 10)
 
 enum { IDRIS2RC2_PAGE_ACTIVE = 0, IDRIS2RC2_PAGE_FULL = 1, IDRIS2RC2_PAGE_EMPTY = 2 };
 
@@ -79,6 +84,34 @@ int idris2rc2_poolPageClass(void *cell);
 #ifdef IDRIS2RC2_POOL_CHECK
 void idris2rc2_poolCheckAlloc(void *cell, int klass);
 #endif
+
+// The page descriptor of a pool cell: the descriptors are the first member of
+// the segment header, one per 64 KiB page.
+static inline idris2rc2_Page *idris2rc2_poolPageOf(void *cell) {
+  uintptr_t seg = (uintptr_t)cell & ~(uintptr_t)(IDRIS2RC2_POOL_SEG_SIZE - 1);
+  return (idris2rc2_Page *)seg + ((uintptr_t)cell - seg) / IDRIS2RC2_POOL_PAGE_BYTES;
+}
+
+// The rare cases of a release, out of line so that the common one stays small
+// where it is inlined: a page that changes state, and a cell of another heap's page.
+void idris2rc2_poolAfter(idris2rc2_Heap *h, idris2rc2_Page *pg);
+void idris2rc2_poolFreeRemote(idris2rc2_Page *pg, void *cell);
+
+// The release of a cell on the heap of its page, all of it plain.
+static inline void idris2rc2_poolFreeInline(void *cell) {
+  idris2rc2_Page *pg = idris2rc2_poolPageOf(cell);
+  idris2rc2_Heap *h = idris2rc2_tlHeap;
+  if (__builtin_expect(atomic_load_explicit(&pg->owner, memory_order_relaxed) != h, 0)) {
+    idris2rc2_poolFreeRemote(pg, cell);
+    return;
+  }
+  *(void **)((char *)cell + 8) = pg->free;
+  pg->free = cell;
+  pg->used--;
+  if (__builtin_expect(pg->state != IDRIS2RC2_PAGE_ACTIVE ||
+                       (pg->used == 0 && pg != h->direct[pg->klass]), 0))
+    idris2rc2_poolAfter(h, pg);
+}
 
 static inline void *idris2rc2_poolAlloc(int klass) {
   idris2rc2_Page *pg = idris2rc2_tlHeap->direct[klass];

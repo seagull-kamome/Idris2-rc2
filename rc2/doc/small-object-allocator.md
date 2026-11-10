@@ -69,9 +69,10 @@ types onto it, with no change of behaviour (it still calls `malloc`):
 | `mkInteger`, `mkArray`, `mkBuffer`, `mkThreadID`, the `String` of `cast Integer String` (`numeric.c:443`), `allocString` | no |
 | `libs/rc2base`'s `Mutex`/`Condition`/`Semaphore`/`Barrier`/`JoinHandle`/`Channel` (`concurrency_util.c`) | no |
 
-The release side is already split by tag in `idris2rc2_teardown`; only the cell
-tags branch to `cellFree`, the others keep the `free(v)` at its end. The closure
-shells freed by `idris2rc2_trampoline` and `idris2rc2_applyClosureN` (`rt.c`) and
+The release side is split by tag too: `idris2rc2_teardown` ends in
+`idris2rc2_cellFreeInline`, which asks `idris2rc2_cellPooled` (the allocation
+decision again, from the tag and the arity) and sends what is not a pool cell to
+`free()`. The closure shells freed by `idris2rc2_trampoline` and `idris2rc2_applyClosureN` (`rt.c`) and
 `idris2rc2_releaseReuse` (`rt.h`) are cells. The channel nodes
 (`concurrency_util.c`) and the thread primitives are not, and must not move.
 Nothing outside the runtime frees a cell: an `%export` result is a separate copy.
@@ -298,7 +299,8 @@ is single-threaded.
   (`Emit.idr`, the comment above `applyChain`).
 - **Pool off.** `IDRIS2RC2_POOL=0` (environment, read before any other
   constructor) or `-DIDRIS2RC2_NO_POOL` (compile time) make every cell a `malloc`
-  block: `cellAlloc` and `cellFree` test `idris2rc2_poolOn`, a predictable branch.
+  block: `cellAlloc` and `idris2rc2_cellPooled` test `idris2rc2_poolOn`, a predictable
+  branch.
   `verify.sh` sets it for its valgrind runs (`LEAK_SENSITIVE_TESTS`): a pool in
   4 MiB `mmap` segments hides every leak, double free and use after free from
   valgrind, so those tests would pass without checking anything. The same switch
@@ -376,7 +378,7 @@ compiler, compiled with `gcc`), three runs each, in seconds:
 The pool is 18.7% faster than `malloc` and 6.0% faster than mimalloc on `base`. The
 same compiler built without the pool code (the state before stage 0) took 84.0 s,
 so against that build the gain is 15.5%; the `POOL=0` run is slower than that build
-by the class computation in `cellFree`.
+by the pool-or-`malloc` test of the release path.
 
 List-heavy programs (stage 1a, best of three, seconds): building, mapping, filtering
 and dropping a 300000-element list fifty times (`BenchListChurn`) 1.98 with the pool,
@@ -390,6 +392,28 @@ released by a thread other than the one that allocated them (`poolstress`) take
 31 ms, against 125 ms with a compare-and-swap per cell.
 
 What is left: nothing planned; see the next section for stage 3.
+
+## The release path (2026-11-10)
+
+A callgrind profile of building `base` with the rc2-built compiler (439.6 G
+instructions) put the release of a cell at 9.7% of all instructions, three times the
+allocation: `idris2rc2_poolFree` cost about 39 instructions a call, because its rare
+cases (a page changing state, a cell of another heap's page) were inlined into it and
+every call saved six registers, and `idris2rc2_cellFree` about 22, because it worked
+out the size of the cell from its tag only to decide pool or `malloc`. The release is
+now `idris2rc2_poolFreeInline` (owner test, push on the free list, `used--`, one test
+of the state) with the rare cases out of line (`idris2rc2_poolAfter`,
+`idris2rc2_poolFreeRemote`), and `idris2rc2_cellPooled` decides pool or `malloc` from
+the tag and the arity with the same size macros the allocation uses
+(`IDRIS2RC2_CON_BYTES`, `IDRIS2RC2_CLOSURE_BYTES`). `teardown` and the closure-shell
+frees of the runtime inline it; the generated C still calls `idris2rc2_cellFree`, so
+the 10,739 `releaseReuse` sites do not grow.
+
+Measured on `prelude`: the instructions of the release (`poolFree`, `cellFree`) fall from
+3.2 G to 0.4 G, but most of it moves into the callers that inline it (`teardown`,
+`trampoline`), so the total goes from 31.5 G to 31.0 G (-1.6%), against the 3 to 5% that
+the profile suggested. The time of building `base`, in the same hour: 73.4 s to 71.7 s
+(-2.3%), `prelude` 5.87 s to 5.65 s (-3.7%).
 
 ## Stage 3, measured: not worth doing
 
