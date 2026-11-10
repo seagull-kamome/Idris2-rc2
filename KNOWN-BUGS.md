@@ -271,3 +271,33 @@ enough depth:
 - continuation-passing traversals and other closure chains
   (`TODO.md`, "closure-valued loop parameters, beyond difference
   lists").
+
+## rc2: the cell pool keeps the heap of every thread that ends
+
+The cell pool (`rc2/doc/small-object-allocator.md`) gives each thread a heap
+structure of 448 bytes. When a thread ends, the pages it owns are passed on or
+returned, but the structure itself is never freed, so a program that starts and
+ends threads without bound grows by 448 bytes per thread (100000 threads: about
+45 MB). The cell memory is not the problem: it is recovered by adoption and by
+the return of empty pages.
+
+The structure cannot simply be freed: a thread that releases a cell to a page of
+the ending thread reads the owner and then pushes onto its `pending` stack, and
+that read may come just before the ending thread frees the heap. The structure is
+freed only when no page was ever the heap's own (a thread that only releases
+cells).
+
+Related, in the same family:
+- A heap created after the last round of the thread-exit destructors (a key
+  destructor that allocates late) is never given up, and neither are its pages.
+- The main thread's heap is not given up either, which is harmless.
+
+Workaround: none needed for programs with a fixed set of threads. A program that
+keeps starting threads can run with `IDRIS2RC2_POOL=0`, which makes every cell a
+`malloc` block.
+
+Fix, if it is worth it: keep the structures of ended threads on a list and hand
+them to new threads (the memory stays valid, so a late reader finds a heap, and
+`processPending` already skips a page whose owner is another heap). That bounds
+the memory at the largest number of threads alive at once. The reset of the
+`POOL_DEAD` mark on `pending` and the order of the readers need care.

@@ -3,6 +3,7 @@
 #include <stdlib.h>
 
 #include "idris2rc2_datatypes.h"
+#include "idris2rc2_memory.h"
 #include "idris2rc2_util.h"
 
 
@@ -46,10 +47,8 @@ static inline void idris2rc2_releaseReuse(IDRIS2RC2_Constructor *c) {
     IDRIS2RC2_VERIFY(c->header.rc == 1, "reuse shell refCount %d",
                      (int)c->header.rc);
 #endif
-  // free(NULL) is a defined no-op, so no NULL branch on the shared path.
-  // idris2rc2_alloc is plain malloc today; a future small-object
-  // allocator must give this site its matching release (accepting NULL).
-  free(c);
+  // idris2rc2_cellFree accepts NULL, so there is no NULL branch on the shared path.
+  idris2rc2_cellFree(c);
 }
 
 IDRIS2RC2_Value *idris2rc2_applyClosure(IDRIS2RC2_Value *closure, IDRIS2RC2_Value *arg);

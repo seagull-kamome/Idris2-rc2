@@ -580,8 +580,9 @@ Why this is sound:
   moved them out (`dupOnShared`/`dropOnUnique` handle the survivors),
   so no recursive teardown is wanted -- the old path also never
   recursed.
-- `idris2rc2_alloc` is plain `malloc` today, matching `free`. A future
-  small-object allocator needs to give this site its matching release.
+- The shell is a cell: it is released with `idris2rc2_cellFree` (`memory.h`), the
+  release that matches `idris2rc2_cellAlloc`, so a cell allocator needs no change
+  here (`small-object-allocator.md`).
 - With `-DIDRIS2RC2_DEBUG` the helper additionally VERIFYs `rc == 1`.
 
 Measured (200000 x 100-element list loop whose cons alt fires

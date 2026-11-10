@@ -21,6 +21,7 @@ SRCS = \
 	idris2rc2_ioprims.c \
 	idris2rc2_memory.c \
 	idris2rc2_numeric.c \
+	idris2rc2_pool.c \
 	idris2rc2_rt.c \
 	idris2rc2_strings.c \
 	idris2rc2_utf8.c \
@@ -36,6 +37,7 @@ HDRS = \
 	idris2rc2_ioprims.h \
 	idris2rc2_memory.h \
 	idris2rc2_numeric.h \
+	idris2rc2_pool.h \
 	idris2rc2_rt.h \
 	idris2rc2_runtime.h \
 	idris2rc2_strings.h \

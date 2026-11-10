@@ -335,7 +335,7 @@ IDRIS2RC2_Value *idris2rc2_trampoline(IDRIS2RC2_Value *it) {
     // it each time it is returned. idris2rc2_rc_release leaves it alone (false), so
     // it is never freed.
     if (idris2rc2_rc_release(&c->header)) {
-      free(c);
+      idris2rc2_cellFree(c);
     }
   }
   return it;
@@ -348,6 +348,9 @@ IDRIS2RC2_Value *idris2rc2_tailcallApplyClosure(IDRIS2RC2_Value *_c, IDRIS2RC2_V
   // arity, so growing by one argument is just a field write -- no
   // allocation, no copy, no free.
   if (idris2rc2_isUnique(c)) {
+#if defined(IDRIS2RC2_DEBUG) || defined(IDRIS2RC2_POOL_CHECK)
+    IDRIS2RC2_VERIFY(c->filled < c->arity, "tailcallApplyClosure: filled %d >= arity %d", (int)c->filled, (int)c->arity);
+#endif
     c->args[c->filled] = arg;
     ++c->filled;
     return (IDRIS2RC2_Value *)c;
@@ -434,7 +437,7 @@ IDRIS2RC2_Value *idris2rc2_applyClosureN(IDRIS2RC2_Value *_c, IDRIS2RC2_Value **
       // idris2rc2_trampoline's own teardown after its own
       // dispatchClosure call.
       if (idris2rc2_rc_release(&c->header)) {
-        free(c);
+        idris2rc2_cellFree(c);
       }
     } else {
       for (uint8_t i = 0; i < c->filled; ++i)
@@ -538,7 +541,7 @@ char const idris2rc2_constr__percentWorld[] = "%World";
 // ---- Lazy values (rc2/doc/lazy-memoization.md) ----
 
 IDRIS2RC2_Value *idris2rc2_mkLazy(IDRIS2RC2_Value *thunk) {
-  IDRIS2RC2_IORef *c = IDRIS2RC2_NEW(IDRIS2RC2_IORef);
+  IDRIS2RC2_IORef *c = IDRIS2RC2_NEW_CELL(IDRIS2RC2_IORef);
   c->header.tag = IDRIS2RC2_TAG_LAZY;
   c->header.reserved = 0;
   atomic_flag_clear(&c->lock);

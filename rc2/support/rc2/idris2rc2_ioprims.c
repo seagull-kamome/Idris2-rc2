@@ -12,7 +12,7 @@
 IDRIS2RC2_Value *idris2rc2_Data_IORef_prim__newIORef(IDRIS2RC2_Value *erased,
 						     IDRIS2RC2_Value *v,
 						     IDRIS2RC2_Value *world) {
-  IDRIS2RC2_IORef *r = IDRIS2RC2_NEW(IDRIS2RC2_IORef);
+  IDRIS2RC2_IORef *r = IDRIS2RC2_NEW_CELL(IDRIS2RC2_IORef);
   r->header.tag = IDRIS2RC2_TAG_IOREF;
   atomic_flag_clear(&r->lock);
   r->v = idris2rc2_dup(v);
@@ -132,7 +132,7 @@ IDRIS2RC2_String const idris2rc2_codegenString = {
 
 IDRIS2RC2_Value *idris2rc2_Prelude_IO_prim__onCollectAny(
     IDRIS2RC2_Value *anyPtr, IDRIS2RC2_Value *onFree, IDRIS2RC2_Value *world) {
-  IDRIS2RC2_GCPointer *r = IDRIS2RC2_NEW(IDRIS2RC2_GCPointer);
+  IDRIS2RC2_GCPointer *r = IDRIS2RC2_NEW_CELL(IDRIS2RC2_GCPointer);
   r->header.tag = IDRIS2RC2_TAG_GCPOINTER;
   r->p = idris2rc2_dup(anyPtr);
   r->onCollect = (IDRIS2RC2_Closure *)idris2rc2_dup(onFree);
