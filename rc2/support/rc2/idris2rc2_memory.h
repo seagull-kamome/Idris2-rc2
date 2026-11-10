@@ -1,6 +1,7 @@
 #pragma once
 
 #include "idris2rc2_datatypes.h"
+#include "idris2rc2_pool.h"
 #include "idris2rc2_util.h"
 
 IDRIS2RC2_Value *idris2rc2_alloc(size_t size);
@@ -128,9 +129,49 @@ static inline void idris2rc2_drop(IDRIS2RC2_Value *v) {
 // RCExp.idr/RC.idr's module notes on RFree). A no-op for unboxed/NULL.
 void idris2rc2_free(IDRIS2RC2_Value *v);
 
-IDRIS2RC2_Constructor *idris2rc2_newConstructor(int arity, int tag);
-IDRIS2RC2_Closure *idris2rc2_mkClosure(IDRIS2RC2_Value *(*fn)(), uint8_t arity,
-				       uint8_t filled);
+// A cell whose size is known where it is made: the pool class is a constant
+// there, and the allocation is the pop of a free list, inline in the generated C
+// (rc2/doc/small-object-allocator.md, stage 2). With the pool off, the slow
+// path hands out a malloc'd cell.
+static inline IDRIS2RC2_Value *idris2rc2_cellAllocInline(size_t size) {
+  int k = idris2rc2_poolClass(size);
+  if (__builtin_expect(k < 0, 0)) return idris2rc2_cellAlloc(size);
+  IDRIS2RC2_Value *v = (IDRIS2RC2_Value *)idris2rc2_poolAlloc(k);
+  v->header.rc = 1;
+  v->header.tag = IDRIS2RC2_TAG_NONE;
+  v->header.reserved = 0;
+  return v;
+}
+
+static inline IDRIS2RC2_Constructor *idris2rc2_newConstructor(int arity, int tag) {
+  IDRIS2RC2_Constructor *c = (IDRIS2RC2_Constructor *)idris2rc2_cellAllocInline(
+      sizeof(IDRIS2RC2_Constructor) + sizeof(IDRIS2RC2_Value *) * (arity + (tag < 0 ? 1 : 0)));
+  c->header.tag = IDRIS2RC2_TAG_CONSTRUCTOR;
+  c->arity = (uint16_t)arity;
+  c->tag = (int16_t)tag;
+  if (tag < 0)
+    idris2rc2_setConName(c, NULL);
+  return c;
+}
+
+static inline IDRIS2RC2_Closure *idris2rc2_mkClosure(IDRIS2RC2_Value *(*fn)(), uint8_t arity,
+                                                     uint8_t filled) {
+  // Always allocate room for the full `arity`, not just `filled` -- lets
+  // idris2rc2_tailcallApplyClosure grow a unique closure in place
+  // (args[filled] = arg; filled++) instead of reallocating on every
+  // partial application. Overhead is at most (arity - filled) pointers,
+  // and Idris2 functions rarely have many params.
+#if defined(IDRIS2RC2_DEBUG) || defined(IDRIS2RC2_POOL_CHECK)
+  IDRIS2RC2_VERIFY(filled <= arity, "mkClosure: filled %d > arity %d", (int)filled, (int)arity);
+#endif
+  IDRIS2RC2_Closure *c = (IDRIS2RC2_Closure *)idris2rc2_cellAllocInline(
+      sizeof(IDRIS2RC2_Closure) + sizeof(IDRIS2RC2_Value *) * arity);
+  c->header.tag = IDRIS2RC2_TAG_CLOSURE;
+  c->fn = fn;
+  c->arity = arity;
+  c->filled = filled;
+  return c; // caller fills in args[]
+}
 
 // Prelude.Maybe's Just is always tag=1, arity=1: an ordinary
 // `Just x` lowers to `idris2rc2_newConstructor(1, 1)`, and ConstFold's

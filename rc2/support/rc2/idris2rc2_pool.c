@@ -425,6 +425,11 @@ static void heapEnd(void *heap) {
 }
 
 void *idris2rc2_poolAllocSlow(int k) {
+  if (!idris2rc2_poolOn) {
+    void *c = malloc(IDRIS2RC2_POOL_MIN_CELL + 8 * (size_t)k);
+    IDRIS2RC2_VERIFY(c, "allocation failed");
+    return c;
+  }
   idris2rc2_Heap *h = idris2rc2_tlHeap;
   if (h == &emptyHeap) {
     h = heapNew();

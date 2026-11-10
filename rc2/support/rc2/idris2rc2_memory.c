@@ -85,39 +85,10 @@ void idris2rc2_cellFree(void *cell) {
   idris2rc2_poolFree(cell);
 }
 
-IDRIS2RC2_Constructor *idris2rc2_newConstructor(int arity, int tag) {
-  IDRIS2RC2_Constructor *c = (IDRIS2RC2_Constructor *)idris2rc2_cellAlloc(
-      sizeof(IDRIS2RC2_Constructor) + sizeof(IDRIS2RC2_Value *) * (arity + (tag < 0 ? 1 : 0)));
-  c->header.tag = IDRIS2RC2_TAG_CONSTRUCTOR;
-  c->arity = (uint16_t)arity;
-  c->tag = (int16_t)tag;
-  if (tag < 0)
-    idris2rc2_setConName(c, NULL);
-  return c;
-}
-
 IDRIS2RC2_Value *idris2rc2_wrapJust(IDRIS2RC2_Value *val) {
   IDRIS2RC2_Constructor *just = idris2rc2_newConstructor(1, 1);
   just->args[0] = val;
   return (IDRIS2RC2_Value *)just;
-}
-
-IDRIS2RC2_Closure *idris2rc2_mkClosure(IDRIS2RC2_Value *(*fn)(), uint8_t arity, uint8_t filled) {
-  // Always allocate room for the full `arity`, not just `filled` -- lets
-  // idris2rc2_tailcallApplyClosure grow a unique closure in place
-  // (args[filled] = arg; filled++) instead of reallocating on every
-  // partial application. Overhead is at most (arity - filled) pointers,
-  // and Idris2 functions rarely have many params.
-  IDRIS2RC2_Closure *c = (IDRIS2RC2_Closure *)idris2rc2_cellAlloc(sizeof(IDRIS2RC2_Closure) +
-                                             sizeof(IDRIS2RC2_Value *) * arity);
-#if defined(IDRIS2RC2_DEBUG) || defined(IDRIS2RC2_POOL_CHECK)
-  IDRIS2RC2_VERIFY(filled <= arity, "mkClosure: filled %d > arity %d", (int)filled, (int)arity);
-#endif
-  c->header.tag = IDRIS2RC2_TAG_CLOSURE;
-  c->fn = fn;
-  c->arity = arity;
-  c->filled = filled;
-  return c; // caller fills in args[]
 }
 
 IDRIS2RC2_Value *idris2rc2_mkDouble(double d) {
