@@ -98,6 +98,7 @@ TESTS=(
     "TestUringFile||System.Linux.Uring: openat, write, fsync, read and close on a temp file"
     "TestUringSocket||System.Linux.Uring: accept, multishot accept, connect, send and recv on loopback"
     "TestPosixTermios||System.Posix.Termios: termios constants, tcgetattr/tcsetattr on a pty, cfmakeraw, tc* calls"
+    "TestPosixGettext||System.Posix.Gettext: the domain, its directory and charset, the gettext/ngettext families against a ja catalog"
     "TestNumberFormat||Text.NumberFormat: the nibble-to-char digit and a ToHex instance per fixed-width integer type"
 )
 
@@ -105,6 +106,15 @@ TESTS=(
 NEEDS_URING=" TestUringNop TestUringFile TestUringSocket "
 # Tests built with IDRIS2_CFLAGS=-D_GNU_SOURCE (declarations glibc hides otherwise).
 NEEDS_GNU_SOURCE=" TestPosixSpawn TestPosixTermios TestLinux "
+# Tests that need a locale that is not C, and the first one the host has (gettext does not
+# translate in C); the test is skipped without one. Run with LANGUAGE=ja and TEST_LOCALEDIR.
+NEEDS_LOCALE=" TestPosixGettext "
+find_locale() {
+    local l
+    for l in ja_JP.utf8 en_US.utf8; do
+        locale -a 2>/dev/null | grep -qix "$l" && { echo "$l"; return; }
+    done
+}
 have_uring_h() { echo '#include <liburing.h>' | gcc -E -x c - > /dev/null 2>&1; }
 
 echo "=== Check TESTS against the tests/*/ directories ==="
@@ -159,6 +169,15 @@ for entry in "${TESTS[@]}"; do
         echo "SKIP  $t -- liburing.h not found by gcc (install liburing's development files)"
         continue
     fi
+    run_env=()
+    if [[ "$NEEDS_LOCALE" == *" $t "* ]]; then
+        loc="$(find_locale)"
+        if [[ -z "$loc" ]]; then
+            echo "SKIP  $t -- no ja_JP.utf8 or en_US.utf8 locale (see locale -a)"
+            continue
+        fi
+        run_env=(LC_ALL="$loc" LANGUAGE=ja TEST_LOCALEDIR="$TESTS_DIR/$t/locale")
+    fi
     pflags=(-p rc2base)
     for p in $extra; do pflags+=(-p "$p"); done
 
@@ -174,7 +193,7 @@ for entry in "${TESTS[@]}"; do
 
     echo "=== Run and diff against $t.expected ==="
     rc=0
-    ( ulimit -v 4000000; timeout 20 "$TESTS_DIR/$t/build/exec/${t}_verify" <&3 ) > "$TMP/actual.out" 2>&1 || rc=$?
+    ( ulimit -v 4000000; env "${run_env[@]}" timeout 20 "$TESTS_DIR/$t/build/exec/${t}_verify" <&3 ) > "$TMP/actual.out" 2>&1 || rc=$?
     if [[ $rc -ne 0 ]]; then
         cat "$TMP/actual.out"
         fail "$t -- exited with status $rc (124 = 20s timeout)"
