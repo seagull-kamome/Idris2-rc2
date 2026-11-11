@@ -603,6 +603,12 @@ data InlineMap : Type where
 export
 data StructDefs : Type where
 
+-- Whether the file is a library (`--directive staticlib`/`sharedlib`): every function
+-- but the `%export` wrappers is `static`, so it cannot clash with the symbols of the
+-- host or of another library built by rc2 (rc2/doc/library-output.md).
+export
+data LibraryMode : Type where
+
 -- The boxed functions whose result is never a pending closure (`Compiler.RC2.Pending`):
 -- a non-tail call to one needs no trampoline.
 export

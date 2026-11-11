@@ -1225,6 +1225,7 @@ addCommaToList (x :: xs) = ("  " ++ x) :: map (", " ++) xs
 ||| (needs it as a forward prototype before any body) and createCFunctions
 ||| (emits it as the definition's own head line).
 fnSignature : {auto c : Ref Ctxt Defs}
+           -> {auto lm : Ref LibraryMode Bool}
            -> Name -> (args : List (Int, Rep)) -> (retRep : Rep) -> (isWorker : Bool)
            -> Core String
 fnSignature n args retRep isWorker = do
@@ -1261,7 +1262,8 @@ fnSignature n args retRep isWorker = do
     -- place, whole-program or incremental) sidesteps the whole
     -- question: distinct per-TU internal linkage never collides no
     -- matter how the two counters happen to line up.
-    let storageClass = if isMutualLoopMerged n || isMutualLoopWorker n then "static " else ""
+    library <- get LibraryMode
+    let storageClass = if library || isMutualLoopMerged n || isMutualLoopWorker n then "static " else ""
     pure $ "\{storageClass}\{retTypeStr}\{cName !(getFullName n)}"
             ++ (if nargs == 0 then "(void)"
                else if useVarArglist then "(IDRIS2RC2_Value *var_arglist[\{show nargs}])"
@@ -1278,6 +1280,7 @@ createCFunctions : {auto c : Ref Ctxt Defs}
                 -> {auto fl : Ref ForeignLibs (SortedSet String)}
                 -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
                 -> {auto tf : Ref TrampolineFree (SortedSet Name)}
+                -> {auto lm : Ref LibraryMode Bool}
                 -> Name
                 -> RCDef
                 -> Core ()
@@ -1355,12 +1358,13 @@ createCFunctions n (MkRCError exp) = throw $ InternalError ("[rc2] Error with ex
 
 ||| Every file-scope declaration `def` contributes, derivable from its own
 ||| outer shape alone -- no RCExp recursion needed.
-declarationsOf : {auto c : Ref Ctxt Defs} -> Name -> RCDef -> Core (List String)
+declarationsOf : {auto c : Ref Ctxt Defs} -> {auto lm : Ref LibraryMode Bool} -> Name -> RCDef -> Core (List String)
 declarationsOf n (MkRCFun args retRep isWorker _) = pure [ !(fnSignature n args retRep isWorker) ++ ";\n" ]
 declarationsOf n (MkRCCon Nothing _ _) = pure [ "char const idris2rc2_constr_\{cName n}[];" ]
 declarationsOf _ (MkRCCon _ _ _) = pure []
-declarationsOf n (MkRCForeign _ fargs _) =
-    pure [ "IDRIS2RC2_Value *\{cName n}(" ++ showSep ", " (replicate (length fargs) "IDRIS2RC2_Value *") ++ ");\n" ]
+declarationsOf n (MkRCForeign _ fargs _) = do
+    library <- get LibraryMode
+    pure [ (if library then "static " else "") ++ "IDRIS2RC2_Value *\{cName n}(" ++ showSep ", " (replicate (length fargs) "IDRIS2RC2_Value *") ++ ");\n" ]
 declarationsOf _ (MkRCError _) = pure []
 
 ||| Registers `n`'s own forward declaration(s) (`declarationsOf`) into
@@ -1373,7 +1377,7 @@ declarationsOf _ (MkRCError _) = pure []
 ||| prints the list as-is. Also the sole place `MkRCForeign`'s
 ||| own `validateForeign` failure and `MkRCError` are detected -- both surface
 ||| before `outn` is ever opened, so a failure leaves no half-written .c.
-collectDeclarations : {auto c : Ref Ctxt Defs} -> {auto f : Ref FunctionDefinitions (List String)}
+collectDeclarations : {auto c : Ref Ctxt Defs} -> {auto lm : Ref LibraryMode Bool} -> {auto f : Ref FunctionDefinitions (List String)}
                    -> {auto hf : Ref HeaderFiles (SortedSet String)} -> {auto fl : Ref ForeignLibs (SortedSet String)}
                    -> Name -> RCDef -> Core ()
 collectDeclarations n (MkRCError exp) = throw $ InternalError ("[rc2] Error with expression in " ++ show n)
@@ -1505,9 +1509,10 @@ generateCSourceFile : {auto c : Ref Ctxt Defs}
                    -> (injectedRuntime : String)
                    -> (externStructs : SortedSet String)
                    -> (directiveList : List String)
+                   -> (library : Bool)
                    -> (outn : String)
                    -> Core (List String)
-generateCSourceFile defs0 exports noMain entryHelper dropUnimplementableForeign injectedRuntime externStructs directiveList outn =
+generateCSourceFile defs0 exports noMain entryHelper dropUnimplementableForeign injectedRuntime externStructs directiveList library outn =
   do let defs = if dropUnimplementableForeign then filter hasUsableForeignImpl defs0 else defs0
      _ <- newRef ArgCounter 0
      _ <- newRef FunctionDefinitions []
@@ -1532,6 +1537,7 @@ generateCSourceFile defs0 exports noMain entryHelper dropUnimplementableForeign 
                              Data.SortedMap.empty defs
      _ <- newRef StructDefs structDefs
      _ <- newRef TrampolineFree (trampolineFree defs)
+     _ <- newRef LibraryMode library
      -- Pass 1: every declaration with a whole-program forward-reference
      -- requirement (function prototypes, plus the header/lib metadata
      -- and early validateForeign/MkRCError error detection that ride along --

@@ -44,6 +44,7 @@ import Compiler.RC2.DualABI
 import Compiler.RC2.DeadVars
 import Compiler.RC2.DupMerge
 import Compiler.RC2.LeafTail
+import Compiler.RC2.LibraryFiles
 import Compiler.RC2.Pending
 import Compiler.RC2.KnownPartial
 import Compiler.RC2.PushApply
@@ -757,7 +758,13 @@ compileExprWhole c s _ outputDir tm outfile =
      -- `nomain`: not a stage disable, only controls whether `Emit.idr`'s
      -- `footer` emits a C `main()` -- see rc2/doc/directives.md and
      -- rc2/doc/export-support.md's "Linking as a library" section.
-     let noMain = "nomain" `elem` directiveList
+     -- `staticlib`/`sharedlib`: a library of the `%export`ed functions, so no `main()` either.
+     let staticLib = "staticlib" `elem` directiveList
+     let sharedLib = "sharedlib" `elem` directiveList
+     when (staticLib && sharedLib) $
+         throw $ GenericMsg EmptyFC "[rc2] --directive staticlib and --directive sharedlib cannot be used together"
+     let library = staticLib || sharedLib
+     let noMain = ("nomain" `elem` directiveList) || library
      cdata <- getCompileDataWith ["RC2", "RefC", "C"] False Cases tm
      exportNames <- traverse (\(n, _) => getFullName n) (exported cdata)
      -- Top-level `Delay` definitions onto CAF memoization; whole program
@@ -835,10 +842,28 @@ compileExprWhole c s _ outputDir tm outfile =
      -- rc2/doc/directives.md.
      let externStructs = getExternStructs directiveList
 
-     foreignLibs <- logTime 2 "rc2: C generation" $ generateCSourceFile defs exportedSigs noMain Nothing False injectedRuntime externStructs directiveList outn
-     Just _ <- logTime 2 "rc2: C compile" $ compileCObjectFile outn outobj dumpCC
+     foreignLibs <- logTime 2 "rc2: C generation" $ generateCSourceFile defs exportedSigs noMain Nothing False injectedRuntime externStructs directiveList library outn
+     -- A shared library's code is position independent, and reads the runtime's thread-local
+     -- heap through the initial-exec model (the runtime is loaded with the host,
+     -- rc2/doc/library-output.md).
+     Just _ <- logTime 2 "rc2: C compile" $ compileCObjectFile outn outobj (if sharedLib then ["-fPIC", "-ftls-model=initial-exec"] else []) dumpCC
        | Nothing => pure Nothing
-     logTime 2 "rc2: C link" $ compileCFile [outobj] outexec foreignLibs dumpCC
+     the (Core (Maybe String)) $ if library
+        then do
+          let libFile = outputDir </> (if isPrefixOf "lib" outfile then outfile else "lib" ++ outfile) ++ (if sharedLib then ".so" else ".a")
+          made <- the (Core (Maybe String)) $ logTime 2 "rc2: library" $
+              if sharedLib then linkSharedLibrary [outobj] libFile dumpCC
+                           else archiveObjectFiles [outobj] libFile dumpCC
+          case made of
+            Nothing => pure Nothing
+            Just _ => do
+              Right () <- coreLift $ writeFile (outputDir </> outfile ++ ".h") (libraryHeader outfile exportedSigs)
+                | Left err => throw (FileErr (outputDir </> outfile ++ ".h") err)
+              flags <- linkTail (("sharedruntime" `elem` directiveList) || sharedLib) foreignLibs
+              Right () <- coreLift $ writeFile (outputDir </> outfile ++ ".link") (unwords flags ++ "\n")
+                | Left err => throw (FileErr (outputDir </> outfile ++ ".link") err)
+              pure (Just libFile)
+        else logTime 2 "rc2: C link" $ compileCFile [outobj] outexec foreignLibs ("sharedruntime" `elem` directiveList) dumpCC
 
 ||| Resolves a per-module incremental object filename -- as returned by
 ||| `incCompile` below and accumulated into `allIncData` (always a
@@ -946,11 +971,11 @@ compileExprInc c s tmpDir outputDir tm outfile = do
                    else do
                      Right () <- coreLift $ writeFile mainC (entrySource ("multithreaded" `elem` directiveList) (entryHelperName entry))
                        | Left err => throw (FileErr mainC err)
-                     map (\_ => [mainO]) <$> logTime 2 "rc2: incremental main" (compileCObjectFile mainC mainO dumpCC)
+                     map (\_ => [mainO]) <$> logTime 2 "rc2: incremental main" (compileCObjectFile mainC mainO [] dumpCC)
     let Just mainObjs' = mainObjs
         | Nothing => pure Nothing
     logTime 2 "rc2: incremental link" $
-        compileCFile (mainObjs' ++ [outar]) outexec (nub libs) dumpCC
+        compileCFile (mainObjs' ++ [outar]) outexec (nub libs) ("sharedruntime" `elem` directiveList) dumpCC
 
 export
 compileExpr : Ref Ctxt Defs
@@ -962,7 +987,10 @@ compileExpr : Ref Ctxt Defs
            -> Core (Maybe String)
 compileExpr c s tmpDir outputDir tm outfile = do
     sesh <- getSession
-    if not (wholeProgram sesh) && ((Other "rc2") `elem` incrementalCGs sesh)
+    -- A library is built from the whole program: its symbols are made `static` in one file.
+    directiveList <- rc2Directives
+    let library = ("staticlib" `elem` directiveList) || ("sharedlib" `elem` directiveList)
+    if not library && not (wholeProgram sesh) && ((Other "rc2") `elem` incrementalCGs sesh)
        then compileExprInc c s tmpDir outputDir tm outfile
        else compileExprWhole c s tmpDir outputDir tm outfile
 
@@ -1019,9 +1047,9 @@ incCompile c s sourceFile = do
          outO <- getTTCFileName sourceFile "o"
          objRel <- getObjFileName sourceFile "o"
          foreignLibs <- logTime 2 "rc2: incremental C generation" $
-             generateCSourceFile defs [] True entryHelper True injectedRuntime externStructs directiveList outC
+             generateCSourceFile defs [] True entryHelper True injectedRuntime externStructs directiveList False outC
          Just _ <- logTime 2 "rc2: incremental C compile" $
-             compileCObjectFile outC outO ("dumpcc" `elem` directiveList)
+             compileCObjectFile outC outO [] ("dumpcc" `elem` directiveList)
            | Nothing => pure Nothing
          pure (Just (objRel, foreignLibs))
 

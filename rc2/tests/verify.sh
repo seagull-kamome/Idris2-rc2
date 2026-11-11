@@ -670,6 +670,16 @@ while IFS= read -r line; do
 done < <("$SCRIPT_DIR/pool/run.sh" 2>&1)
 
 echo
+echo "=== libraries: staticlib, sharedlib, sharedruntime (library/run.sh) ==="
+while IFS= read -r line; do
+    case "$line" in
+        "PASS  "*) report_pass "${line#PASS  }" ;;
+        "FAIL  "*) report_fail "${line#FAIL  }" ;;
+        *) echo "$line" ;;
+    esac
+done < <("$SCRIPT_DIR/library/run.sh" 2>&1)
+
+echo
 echo "== $pass passed, $known known (pre-existing, see KNOWN-BUGS.md), $fail failed =="
 if [ "$fail" -gt 0 ] || [ "$refc_suite_status" -ne 0 ]; then
     [ "${#failed_names[@]}" -gt 0 ] && echo "Failed: ${failed_names[*]}"

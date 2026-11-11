@@ -12,6 +12,7 @@ import Core.Directory
 import System
 import Idris.Env
 
+import Data.Maybe
 import Data.String
 import Libraries.Utils.Path
 
@@ -73,9 +74,10 @@ export
 compileCObjectFile : {auto c : Ref Ctxt Defs}
                   -> (sourceFile : String)
                   -> (objectFile : String)
+                  -> (extraFlags : List String)
                   -> (verbose : Bool)
                   -> Core (Maybe String)
-compileCObjectFile sourceFile objectFile verbose
+compileCObjectFile sourceFile objectFile extraFlags verbose
     = do cc <- coreLift findCC
          cFlags <- coreLift findCFlags
          cppFlags <- coreLift findCPPFlags
@@ -97,7 +99,7 @@ compileCObjectFile sourceFile objectFile verbose
                   "-ffunction-sections", "-fdata-sections", "-c", sourceFile,
                   "-o", objectFile,
                   "-I" ++ rc2Dir,
-                  "-I" ++ cDir] ++ map ("-I" ++) depLibDirs)
+                  "-I" ++ cDir] ++ map ("-I" ++) depLibDirs ++ extraFlags)
                   ++ " " ++ cppFlags ++ " " ++ cFlags
 
          log "compiler.refc.cc" 10 runccobj
@@ -147,7 +149,38 @@ archiveObjectFiles objectFiles archivePath verbose
            | _ => pure Nothing
          pure (Just archivePath)
 
-||| `foreignLibs` -- distinct link-library names collected from every
+||| What follows the object files on a link line: the `-l` flags of the
+||| program's own `%foreign` libraries, the rc2 runtime, the upstream support
+||| library, the search paths and the system libraries. `sharedRuntime` links
+||| the runtime as `shared/libidris2rc2.so` (one copy for the host and every
+||| library it loads, rc2/doc/library-output.md) instead of the archive.
+|||
+||| `-lidris2rc2` must resolve before `supportFile` (the shared
+||| `libidris2_support.a`): C static linking resolves an unresolved symbol from
+||| the first library on the command line that provides it, and rc2's own
+||| runtime provides native implementations (e.g. `idrnet_*`) for symbols the
+||| shared library also happens to define -- rc2's own must shadow the shared
+||| one, not the other way around. Anything rc2 doesn't provide natively still
+||| resolves from `supportFile` afterwards, unaffected by this reordering.
+export
+linkTail : {auto c : Ref Ctxt Defs}
+        -> (sharedRuntime : Bool)
+        -> (foreignLibs : List String)
+        -> Core (List String)
+linkTail sharedRuntime foreignLibs
+    = do dirs <- getDirs
+         rc2Dir <- findDataFile "rc2"
+         supportFile <- findLibraryFile "libidris2_support.a"
+         depLibDirs <- depPkgLibDirs
+         let runtime = if sharedRuntime
+                          then ["-L" ++ rc2Dir </> "shared", "-Wl,-rpath," ++ rc2Dir </> "shared", "-lidris2rc2"]
+                          else ["-L" ++ rc2Dir, "-lidris2rc2"]
+         pure (map ("-l" ++) (filter (/= "idris2_support") foreignLibs)
+               ++ runtime ++ [supportFile]
+               ++ clibdirs (lib_dirs dirs) ++ clibdirs depLibDirs
+               ++ ["-lgmp", "-lm", "-lpthread"])
+
+||| (`linkTail`'s) `foreignLibs` -- distinct link-library names collected from every
 ||| program-level `%foreign` declaration's own lib field (see
 ||| `Compiler.RC2.Emit`'s `generateCSourceFile`/`linkLibName`) --
 ||| become `-l<name>` flags placed right after `objectFiles`, ahead of
@@ -173,29 +206,16 @@ compileCFile : {auto c : Ref Ctxt Defs}
             -> (objectFiles : List String)
             -> (outFile : String)
             -> (foreignLibs : List String)
+            -> (sharedRuntime : Bool)
             -> (verbose : Bool)
             -> Core (Maybe String)
-compileCFile objectFiles outFile foreignLibs verbose
+compileCFile objectFiles outFile foreignLibs sharedRuntime verbose
     = do cc <- coreLift findCC
          cFlags <- coreLift findCFlags
          ldFlags <- coreLift findLDFlags
          ldLibs <- coreLift findLDLibs
+         tail <- linkTail sharedRuntime foreignLibs
 
-         dirs <- getDirs
-         rc2Dir <- findDataFile "rc2"
-         supportFile <- findLibraryFile "libidris2_support.a"
-         --libdir <- pkgGlobalDirectory
-         depLibDirs <- depPkgLibDirs
-
-         -- `-lidris2rc2` must resolve before `supportFile` (the shared
-         -- `libidris2_support.a`): C static linking resolves an
-         -- unresolved symbol from the first library on the command
-         -- line that provides it, and rc2's own runtime provides
-         -- native implementations (e.g. `idrnet_*`) for symbols the
-         -- shared library also happens to define -- rc2's own must
-         -- shadow the shared one, not the other way around. Anything
-         -- rc2 doesn't provide natively still resolves from
-         -- `supportFile` afterwards, unaffected by this reordering.
          -- `-Wno-error=deprecated-declarations`: see `compileCObjectFile`'s
          -- own comment on the same flag -- kept here too since this
          -- step's own `cc` invocation could in principle also compile
@@ -206,16 +226,8 @@ compileCFile objectFiles outFile foreignLibs verbose
          -- comment for why this matters specifically for incremental
          -- mode's own per-module `.o`s.
          let runcc = (escapeCmd $
-             [cc, "-Werror", "-Wno-error=deprecated-declarations", "-Wl,--gc-sections"] ++ objectFiles ++ [
-                  "-o", outFile
-                  -- "-L" ++ libdir ++ "/lib",
-                  -- "-Wl,-rpath," ++ libdir ++ "/lib",
-                  -- "-lidris2_support"
-                  ] ++ map ("-l" ++) (filter (/= "idris2_support") foreignLibs) ++ [
-                    "-L" ++ rc2Dir, "-lidris2rc2",
-                    supportFile
-                  ] ++ clibdirs (lib_dirs dirs) ++ clibdirs depLibDirs ++ [
-                  "-lgmp", "-lm", "-lpthread"])
+             [cc, "-Werror", "-Wno-error=deprecated-declarations", "-Wl,--gc-sections"] ++ objectFiles
+                  ++ ["-o", outFile] ++ tail)
                   ++ " " ++ (unwords [cFlags, ldFlags, ldLibs])
 
          log "compiler.refc.cc" 10 runcc
@@ -223,4 +235,27 @@ compileCFile objectFiles outFile foreignLibs verbose
          0 <- coreLift $ system runcc
            | _ => pure Nothing
 
+         pure (Just outFile)
+
+||| Links `objectFiles` into a shared library, with no runtime and no other
+||| library: what the library needs is named in the `.link` file written next
+||| to it, and the host links it (`Compiler.RC2.RC2`, rc2/doc/library-output.md).
+export
+linkSharedLibrary : {auto c : Ref Ctxt Defs}
+                 -> (objectFiles : List String)
+                 -> (outFile : String)
+                 -> (verbose : Bool)
+                 -> Core (Maybe String)
+linkSharedLibrary objectFiles outFile verbose
+    = do cc <- coreLift findCC
+         cFlags <- coreLift findCFlags
+         ldFlags <- coreLift findLDFlags
+         -- The soname is the file name, so a host that links it records the name, not a path
+         -- (rc2/doc/library-output.md, "Where a shared library is found").
+         let runcc = (escapeCmd ([cc, "-shared", "-Werror", "-Wl,-soname," ++ fromMaybe outFile (fileName outFile)] ++ objectFiles ++ ["-o", outFile]))
+                     ++ " " ++ unwords [cFlags, ldFlags]
+         log "compiler.refc.cc" 10 runcc
+         when verbose $ coreLift_ $ putStrLn runcc
+         0 <- coreLift $ system runcc
+           | _ => pure Nothing
          pure (Just outFile)
