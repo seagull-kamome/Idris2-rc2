@@ -48,6 +48,7 @@
 module Compiler.RC2.Emit
 
 import Compiler.RC2.RCExp
+import Compiler.RC2.Pending
 import Compiler.RC2.Types
 import Compiler.RC2.Stage
 import Compiler.RC2.TargetOs
@@ -93,6 +94,7 @@ EmitDeps retTy = {auto a : Ref ArgCounter Nat}
               -> {auto lm : Ref InlineMap (SortedMap Int (String, List String))}
               -> {auto fa : Ref LoopParams (List (String, List (Int, Rep)))}
               -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
+              -> {auto tf : Ref TrampolineFree (SortedSet Name)}
               -> retTy
 
 ||| A struct-return (`RRet`) value reached a place that has no struct
@@ -897,6 +899,7 @@ mutual
     emitNativeValue ty e = throw $ InternalError "[rc2] internal: expected a native-producing expression"
 
 emitAppNameRepInto sink tailPosition fc n argReps retRep postDrop args = do
+    free <- contains n <$> get TrampolineFree
     -- No `nargs` cap here: the call below is always a plain,
     -- positional, direct C call to a dual-ABI worker (`isWorker =
     -- True`, see `MkRCFun`'s own doc comment) -- never dispatched
@@ -914,7 +917,7 @@ emitAppNameRepInto sink tailPosition fc n argReps retRep postDrop args = do
     valStr <- case retRep of
                    RBoxed => pure $ case tailPosition of
                                   InTailPosition => call
-                                  NotInTailPosition => "idris2rc2_trampoline(\{call})"
+                                  NotInTailPosition => if free then call else "idris2rc2_trampoline(\{call})"
                    RNative ty => pure (tyMk ty call)
                    RInlineNative ty => pure (tyMk ty call)
                    RRet _ _ => pure call
@@ -970,7 +973,9 @@ emitRC sink (RAppName fc _ n args) NotInTailPosition = do
        then finalizeSink fc sink "idris2rc2_trampoline(\{!(makeClosure fc n args 0)})"
        else do
            argsWithPending <- traverse rcVarToBoxedC args
-           let valStr = "idris2rc2_trampoline(\{cName n}(\{concat $ intersperse ", " (map fst argsWithPending)}))"
+           free <- contains n <$> get TrampolineFree
+           let call = "\{cName n}(\{concat $ intersperse ", " (map fst argsWithPending)})"
+           let valStr = if free then call else "idris2rc2_trampoline(\{call})"
            finalizeSinkWithDrop fc sink valStr (concatMap snd argsWithPending)
 
 emitRC sink (RAppNameRep fc n argReps retRep postDrop args) _ = unreachableInEmitRC "RAppNameRep"
@@ -1272,6 +1277,7 @@ createCFunctions : {auto c : Ref Ctxt Defs}
                 -> {auto h : Ref HeaderFiles (SortedSet String)}
                 -> {auto fl : Ref ForeignLibs (SortedSet String)}
                 -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
+                -> {auto tf : Ref TrampolineFree (SortedSet Name)}
                 -> Name
                 -> RCDef
                 -> Core ()
@@ -1525,6 +1531,7 @@ generateCSourceFile defs0 exports noMain entryHelper dropUnimplementableForeign 
                                   _ => acc)
                              Data.SortedMap.empty defs
      _ <- newRef StructDefs structDefs
+     _ <- newRef TrampolineFree (trampolineFree defs)
      -- Pass 1: every declaration with a whole-program forward-reference
      -- requirement (function prototypes, plus the header/lib metadata
      -- and early validateForeign/MkRCError error detection that ride along --

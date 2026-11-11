@@ -146,6 +146,10 @@ produced its result (unlike section 2's stage disables, which
   `dumprcexpr`. See `doc/dual-abi.md`. A first line counts the functions
   eligible to return by value, and each such function's line ends in
   ` ret1` (`doc/struct-return.md`).
+- **`dumppending`** -- writes a `.pending` file for `Compiler.RC2.Pending`
+  (whole-program compiles only): how many non-tail call sites there are and
+  how many of them need no trampoline, then the C names of the functions
+  that never return a pending closure. See `doc/trampoline-elision.md`.
 - **`dumpcc`** -- prints the exact C compile/link command(s) about to
   run, to stdout.
 - **`dumplifts`** -- writes a `.lifts` file listing each lifted
