@@ -317,3 +317,42 @@ closure") to the module's own output next to its definitions, and read it back f
 imported ones, taking a callee with no recorded bit as pending. The bit has to be
 recomputed when a module is recompiled, and a change of a callee's bit forces its callers
 to be compiled again, which the per-module build does not track today.
+
+## rc2: libraries (`staticlib`, `sharedlib`) leave the native part of dependency packages to the host
+
+`--directive sharedlib` (`rc2/doc/library-output.md`) links no runtime and no other
+library into the `.so`; the host links what `<name>.link` lists. The runtime has a
+shared build (`shared/libidris2rc2.so`), but the native libraries of dependency packages
+(`libidris2rc2base.a` of `rc2base`, ...) are plain archives, not built `-fPIC`: a host
+links them statically, once, and a `.so` cannot take them in. A package whose native
+part keeps state of its own is therefore still one copy per process, which is right, but
+nothing builds a shared version of it. A library is also built from the whole program
+only; the incremental mode does not make one.
+
+Workaround: link the package's archive in the host. For a library built from a program
+that uses the native part of a package, the host must link that package's archive too
+(`<name>.link` has its `-L`/`-l`).
+
+Fix, if it is worth it: build the native part of a package as a second, `-fPIC` shared
+object next to its archive (as `support/rc2/Makefile` does for the runtime), and let
+`<name>.link` name it.
+
+## rc2: a library holds its own copy of the package code it uses, and of its global state
+
+A library built with `staticlib`/`sharedlib` (`rc2/doc/library-output.md`) is generated
+from the whole program, so the definitions of the packages it reaches (`prelude`,
+`base`, ...) are inside it, as `static` functions, next to the host's own copies. Only
+what the exports reach is there, and nothing clashes. But the global state of that code
+is copied too: a top-level constant or a global `IORef` (`unsafePerformIO`, a memoized
+CAF) exists once in the host and once in each library, and the copies are separate. Two
+libraries (or a library and the host) that use the same package-level global do not see
+each other's changes. What crosses an `%export` is a scalar, a `String`, a pointer or an
+`Integer`, so nothing else is affected.
+
+Workaround: keep such state on the host's side and pass it in through the exports, or
+give it to one library only.
+
+Fix, if it is worth it: share the Idris code of the packages between the host and the
+libraries. It needs the per-module (incremental) compile to produce a library, and the
+same package versions and compile options throughout, because the numbered and specialized
+names differ from one compile to another.

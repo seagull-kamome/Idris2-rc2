@@ -146,6 +146,15 @@ produced its result (unlike section 2's stage disables, which
   `dumprcexpr`. See `doc/dual-abi.md`. A first line counts the functions
   eligible to return by value, and each such function's line ends in
   ` ret1` (`doc/struct-return.md`).
+- **`staticlib`**, **`sharedlib`** -- build the `%export`ed functions into
+  `lib<name>.a` / `lib<name>.so` instead of an executable, and write
+  `<name>.h` (the prototypes) and `<name>.link` (the link flags) next to
+  it. Imply `nomain`; exclusive. Whole-program compiles only. See
+  `doc/library-output.md`.
+- **`sharedruntime`** -- link an executable, or write the `.link` of a static
+  library, against `shared/libidris2rc2.so` instead of the runtime archive:
+  the way for a program to use shared libraries built by rc2. See
+  `doc/library-output.md`.
 - **`dumppending`** -- writes a `.pending` file for `Compiler.RC2.Pending`
   (whole-program compiles only): how many non-tail call sites there are and
   how many of them need no trampoline, then the C names of the functions

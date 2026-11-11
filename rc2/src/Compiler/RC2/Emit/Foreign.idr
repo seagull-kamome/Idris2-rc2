@@ -205,6 +205,7 @@ linkLibName lib =
 export
 emitForeignDef : {auto oft : Ref OutfileText Output}
               -> {auto il : Ref IndentLevel Nat}
+              -> {auto lm : Ref LibraryMode Bool}
               -> Name -> (ccs : List String) -> (fargs : List CFType) -> (ret : CFType) -> Core ()
 emitForeignDef n ccs fargs ret = emitGenericForeignWrapper
   where
@@ -218,9 +219,12 @@ emitForeignDef n ccs fargs ret = emitGenericForeignWrapper
     emitFDef : (funcName:Name)
             -> (arglist:List (String, String, CFType))
             -> Core ()
-    emitFDef funcName [] = emit EmptyFC $ "IDRIS2RC2_Value *" ++ cName funcName ++ "(void)"
+    emitFDef funcName [] = do
+        library <- get LibraryMode
+        emit EmptyFC $ (if library then "static " else "") ++ "IDRIS2RC2_Value *" ++ cName funcName ++ "(void)"
     emitFDef funcName ((varType, varName, varCFType) :: xs) = do
-        emit EmptyFC $ "IDRIS2RC2_Value *" ++ cName funcName
+        library <- get LibraryMode
+        emit EmptyFC $ (if library then "static " else "") ++ "IDRIS2RC2_Value *" ++ cName funcName
         emit EmptyFC "("
         increaseIndentation
         emit EmptyFC $ "  IDRIS2RC2_Value *" ++ varName
@@ -323,6 +327,25 @@ emitForeignDef n ccs fargs ret = emitGenericForeignWrapper
           Right Nothing => throw $ UserError "[rc2] %foreign declaration \{show n} has no implementation rc2 can call: it needs a \"CExpr:\", \"RC2:\", \"RefC:\" or \"C:\" alternative"
           Left err => throw $ UserError "[rc2] invalid %foreign declaration \{show n}: \{err}"
 
+||| The C signature of the wrapper for an `%export` declaration, without the
+||| `;` or the body; `named` gives the parameters the names the wrapper body
+||| reads (`p_<i>`, `out`), else they are bare types, as a header wants them.
+||| An `Integer` result comes back through a leading `mpz_t out` parameter, a
+||| `String` result is a `char *` the caller frees.
+export
+exportSignature : (named : Bool) -> (exportedCName : String) -> List CFType -> CFType -> String
+exportSignature named exportedCName fargs ret =
+    let ret' = peelIORes ret
+        isIntegerReturn = case ret' of CFInteger => True; _ => False
+        isStringReturn = case ret' of CFString => True; _ => False
+        retC = the String (if isIntegerReturn then "void"
+                            else if isStringReturn then "char *"
+                            else cTypeOfCFType ret')
+        params = zip (getArgsNrList fargs 0) fargs
+        paramDecls = map (\(i, ty) => cTypeOfCFType ty ++ (if named then " p_\{show i}" else "")) params
+        allParamDecls = if isIntegerReturn then ("mpz_t" ++ (if named then " out" else "")) :: paramDecls else paramDecls
+    in "\{retC} \{exportedCName}(" ++ (if isNil allParamDecls then "void" else showSep ", " allParamDecls) ++ ")"
+
 ||| The C wrapper for one validated `%export` declaration: user-given
 ||| `exportedCName`, native C types, boxes arguments, calls the always-Boxed
 ||| entry point, unboxes the result. Never `static` (only external C calls
@@ -348,12 +371,7 @@ emitExportWrapper n exportedCName fargs ret = do
                             else if isStringReturn then "char *"
                             else cTypeOfCFType ret')
     let params = zip (getArgsNrList fargs 0) fargs
-    let paramDecls = map (\(i, ty) => cTypeOfCFType ty ++ " p_\{show i}") params
-    let allParamDecls = if isIntegerReturn then "mpz_t out" :: paramDecls else paramDecls
-    let sig = "\{retC} \{exportedCName}("
-            ++ (if isNil allParamDecls then "void" else showSep ", " allParamDecls)
-            ++ ")"
-    emit EmptyFC sig
+    emit EmptyFC (exportSignature True exportedCName fargs ret)
     emit EmptyFC "{"
     increaseIndentation
     traverse_ (\(i, ty) => emit EmptyFC "IDRIS2RC2_Value *a_\{show i} = \{argPack ty i};") params

@@ -95,7 +95,7 @@ history, not there.
   passes the world to a function returning a closure waiting for it,
   so its callers call instead of applying, `leaf-tail-calls.md` for
   calling a known function directly from a tail position, instead of
-  through a closure, unless the call stays inside a cycle of tail calls, `trampoline-elision.md` for leaving out the
+  through a closure, unless the call stays inside a cycle of tail calls, `library-output.md` for building the `%export`ed functions into a static or shared library, `trampoline-elision.md` for leaving out the
   trampoline around a call whose callee never returns a pending closure, `static-closures.md` for closures over
   constants only built once as file-scope statics, `trmc.md` for tail recursion
   modulo constructor, which turns `x :: f xs`-shaped recursion into a
