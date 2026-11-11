@@ -315,7 +315,7 @@ static inline IDRIS2RC2_Value *idris2rc2_dispatchWithExtra(IDRIS2RC2_Closure *c,
   }
 }
 
-IDRIS2RC2_Value *idris2rc2_trampoline(IDRIS2RC2_Value *it) {
+IDRIS2RC2_Value *idris2rc2_trampolineLoop(IDRIS2RC2_Value *it) {
   while (it && !idris2rc2_is_unboxed(it) && it->header.tag == IDRIS2RC2_TAG_CLOSURE) {
     IDRIS2RC2_Closure *c = (IDRIS2RC2_Closure *)it;
     if (c->filled < c->arity)
