@@ -602,6 +602,11 @@ data InlineMap : Type where
 -- doc/c-struct-support.md's "Design" section, Parts B/C/D.
 export
 data StructDefs : Type where
+
+-- The boxed functions whose result is never a pending closure (`Compiler.RC2.Pending`):
+-- a non-tail call to one needs no trampoline.
+export
+data TrampolineFree : Type where
 -- Names from `%cg rc2 externStruct=<name>` (`Compiler.RC2.RC2`'s own
 -- `getExternStructs`) -- a subset of `StructDefs`'s own keys `header`
 -- must not emit its own `typedef struct` for, because `name` is

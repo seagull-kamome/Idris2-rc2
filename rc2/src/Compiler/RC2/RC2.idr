@@ -44,6 +44,7 @@ import Compiler.RC2.DualABI
 import Compiler.RC2.DeadVars
 import Compiler.RC2.DupMerge
 import Compiler.RC2.LeafTail
+import Compiler.RC2.Pending
 import Compiler.RC2.KnownPartial
 import Compiler.RC2.PushApply
 import Compiler.RC2.FunDedup
@@ -801,6 +802,11 @@ compileExprWhole c s _ outputDir tm outfile =
          coreLift_ $ writeFile (outputDir </> outfile ++ ".rcexpr")
              ("-- " ++ directiveText directiveList ++ "\n" ++
               prettyProgram (collectLazyCAFs (namedDefs cdata)) defs)
+     when ("dumppending" `elem` directiveList) $
+         coreLift_ $ writeFile (outputDir </> outfile ++ ".pending") (pendingReport defs)
+
+     when ("dumppending" `elem` directiveList) $
+         coreLift_ $ writeFile (outputDir </> outfile ++ ".pending") (pendingReport defs)
 
      -- `dumpdualabi`: dump Stage 2's own eligibility analysis -- see
      -- rc2/doc/dual-abi.md, rc2/doc/directives.md.
