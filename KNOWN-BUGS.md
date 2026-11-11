@@ -295,3 +295,25 @@ Fix, if it is worth it: let the last destructor round give up whatever heap the 
 holds at that point, and keep the batch of released cells flushing there too. The rounds
 of `PTHREAD_DESTRUCTOR_ITERATIONS` cannot be told from inside a destructor, so this
 needs a mark of the thread that says the exit has begun.
+
+## rc2: a call into another module is still wrapped in a trampoline
+
+`Compiler.RC2.Pending` (`rc2/doc/trampoline-elision.md`) leaves `idris2rc2_trampoline` off
+a non-tail call whose callee never returns a pending closure. It decides that from the
+definitions of the compile it runs in. A per-module (incremental) compile sees only its own
+definitions, so a callee in another module is unknown and is taken to be pending: every
+call across a module boundary keeps the wrapper. A whole-program compile (the compiler's
+own build, a program built with `-o`) has all the definitions and drops it for 87% of the
+non-tail call sites; the library packages (`prelude`, `base`) are built per module, so
+their cross-module calls do not get the gain.
+
+Only speed is affected; the output is correct. It cannot be told apart from a build with
+the pass off other than by the generated C or the `.pending` dump.
+
+Workaround: none needed.
+
+Fix, if it is worth it: write each boxed function's one bit ("may return a pending
+closure") to the module's own output next to its definitions, and read it back for the
+imported ones, taking a callee with no recorded bit as pending. The bit has to be
+recomputed when a module is recompiled, and a change of a callee's bit forces its callers
+to be compiled again, which the per-module build does not track today.
