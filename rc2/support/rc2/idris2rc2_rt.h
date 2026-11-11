@@ -58,7 +58,14 @@ IDRIS2RC2_Value *idris2rc2_tailcallApplyClosure(IDRIS2RC2_Value *closure, IDRIS2
 // this call), used for a source-level curried application
 // `Compiler.RC2.RC`'s `collectAppChain` merged into one `RApp` node.
 IDRIS2RC2_Value *idris2rc2_applyClosureN(IDRIS2RC2_Value *closure, IDRIS2RC2_Value **newArgs, uint8_t n);
-IDRIS2RC2_Value *idris2rc2_trampoline(IDRIS2RC2_Value *v);
+IDRIS2RC2_Value *idris2rc2_trampolineLoop(IDRIS2RC2_Value *v);
+// Runs the closure a call returned undispatched (a tail call). Most results are not
+// closures, so that test is inline and only a closure enters the loop.
+static inline IDRIS2RC2_Value *idris2rc2_trampoline(IDRIS2RC2_Value *v) {
+  if (__builtin_expect(v == NULL || idris2rc2_is_unboxed(v) || v->header.tag != IDRIS2RC2_TAG_CLOSURE, 1))
+    return v;
+  return idris2rc2_trampolineLoop(v);
+}
 
 // Lazy values (rc2/doc/lazy-memoization.md). mkLazy consumes a saturated
 // closure and returns a cell; force borrows `v` and returns its value
