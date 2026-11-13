@@ -147,22 +147,25 @@ that none of them has anything to take.
 - **A per-thread register instead of a heap closure for a pending call**, returned as a static marker.
   Only a closure that `Emit` builds for a tail `RAppName` could use it, and there are few (below).
 - **Direct application up to a depth** (a depth counter; past the limit, return the pending call as now).
-  It applies to the tail `apply` of an unknown closure, not to the calls above; it saves the return and
-  the loop test of one trampoline round, 10 to 20 instructions of the 100 or so of a dispatch, since the
-  closure's shell is still released and the arity still dispatched. A long loop (`loop = act >> loop`)
-  would run at the limit, as it does now, so only short chains gain. About 0.3-0.7% of the instructions
-  at best. Not done.
+  It applies only to the tail `apply` of an unknown closure, which is 2.3 million of the 24 million
+  applies of a `prelude` build (below); it saves the return and the loop test of one trampoline round,
+  10 to 20 instructions of the 100 or so of a dispatch, since the closure's shell is still released and
+  the arity still dispatched. A long loop (`loop = act >> loop`) would run at the limit, as it does now,
+  so only short chains gain. Under 0.2% of the instructions. Not done.
 
-Where the pending calls come from, `libs/prelude` built by the `rc2`-built compiler (counters in the
-runtime, 2026-11-13):
+Where the calls that reach the trampoline come from, `libs/prelude` built by the `rc2`-built compiler
+(counters in the runtime, and the callers of `idris2rc2_tailcallApplyClosure` in a callgrind profile,
+2026-11-13):
 
 | origin | count |
 |---|---|
 | a closure built for a tail `RAppName` | 32,394 |
-| a tail `apply` of a unique closure, grown in place | 8,779,370 |
-| a tail `apply` of a closure with other references, copied | 3,063,056 |
-| trampoline dispatches | 8,149,962 |
+| `idris2rc2_tailcallApplyClosure` called by a tail `apply` of generated code | 2.26 M |
+| `idris2rc2_tailcallApplyClosure` called by `idris2rc2_applyClosure`, the non-tail `apply`, which grows the closure and then trampolines it | 9.58 M |
+| (of those 11.84 M: unique closure grown in place / copied) | 8.78 M / 3.06 M |
+| trampoline dispatches | 8.15 M |
 
-99.6% of the pending calls are tail `apply`s of a closure that is not known where it is applied (the
-continuation of a monadic bind, for one). For those the known-callee rules here do nothing; removing them
-means making the closure known: `speculative-closure-specialization.md`.
+So most of the closures the trampoline runs are not returned pending calls: they are the closure of an
+ordinary (non-tail) `apply`, grown to its arity by `applyClosure` and dispatched at once. A tail `apply` in
+generated code is a fifth of the grow-and-run events. Where the applied closures come from, and what
+specializing them would take, is in `speculative-closure-specialization.md`, "Where the applies come from".
