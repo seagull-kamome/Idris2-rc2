@@ -1,0 +1,20 @@
+borrow statistics (places in the IR, not executions; evaluated on the final IR):
+  definitions with Boxed refcounted parameters        3
+  Boxed refcounted parameters                         3
+    borrowable                                        2  66.6% of parameters
+    definitions with at least one borrowable          2
+    of those, referenced indirectly (need an owned wrapper)        0  closure/partial/lazy thunk/constant closure
+  reasons a parameter is not borrowable (first matching; a parameter counts once):
+      argument of a non-loop tail call                1
+      more than one reason                            0  (also counted above under its first reason)
+  effect of borrowing every borrowable parameter (dup/drop operations):
+      callee drops removed                            1  in loops 0
+      callee dups removed                             0  in loops 0
+      caller dups removed (argument still used later)        0  in loops 0
+      caller drops added (the call was the last use)        1  in loops 0
+        of which tail calls (stop being tail calls)        1
+      net operations removed                          0  0.0% of 1 dup/drop operations; in loops 0
+    not counted: dups of a case field passed borrowed        0  in loops 0; needs the parent kept alive until the call
+  top 20 definitions by net operations removed (callee side for its parameters, caller side for its calls):
+         1  Main.useRead
+        -1  Main.viaCall

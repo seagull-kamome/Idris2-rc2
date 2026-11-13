@@ -1,0 +1,8 @@
+def Main.useRead  (fun args= ["v1:Boxed"] ret= Boxed)
+  op strLength [v1] postDrop= [v1]
+
+def Main.viaCall  (fun args= ["v1:Boxed"] ret= Boxed)
+  call Main.useRead [v1]
+
+def Main.viaDirect  (fun args= ["v1:Boxed"] ret= Boxed)
+  callRep Main.useRead ["Boxed"] -> Boxed postDrop= [] [v1]

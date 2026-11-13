@@ -468,8 +468,11 @@ RC annotate+Reuse+ConAltNative 3.03s、DualABI 3.02s、Inline 1.54s、ConstFold 
 今の形では導入しない。annotate前の推論は、借用を決める事実(`Reuse`・`MutualLoop`/`Loop`・`DualABI`・`LateInline`)が
 annotateの後で決まるので位置が合わない(借用にできた引数は5.9%、呼び出し側の`dup`の削減は0.6%)。annotate後(最終IR)で数えても、
 idris2-lspの静的な純減は全`dup`/`drop`の3.2%で、ループの中の重みはマイナス(実行時には逆効果になりうる)。計測の詳細:
-`rc2/doc/borrow-inference.md`。再検討するなら、`callRep`だけのwrapper定義が「ループでない末尾呼び出し」で除外されている点
-(実行時にはtrampolineされないので規則が厳しすぎる可能性)と、`case`のフィールドの`dup`を借用で扱えるか(再利用と衝突しうる)から。
+`rc2/doc/borrow-inference.md`。再検討するなら、`case`のフィールドの`dup`を借用で扱えるか(再利用と衝突しうる)から。
+直接の末尾呼び出し(`callRep`)を「ループでない末尾呼び出し」から外して数え直した(2026-11-13、`rcexpr-lint --borrow-stats-direct`、
+idris2-lsp): 純減は3.4%から4.6%、ループの中の重みは+142から+1,113になった。ただし`dup`/`drop`は命令数の約19%なので、
+命令数で約0.9%(多くて1〜2%)、時間はその半分以下の見込みで、導入の費用(規約を決めるパス、間接参照の定義1,584個の
+wrapper、`annotate`の後への配置)に見合わない。引き続き保留。詳細: `rc2/doc/borrow-inference.md`。
 
 ## dup/dropの押し込み: 残り(D)
 `PushDown`(`rc2/doc/pushdown.md`)ほかで、`case`の上の`dup`が枝の`drop`に打ち消される形(A)、`dup`と直後の`postDrop`の対(B)、

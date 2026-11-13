@@ -124,13 +124,13 @@ addReason v r = mapAt v (\p => { reasons := p.reasons .|. r } p)
         Just p => insert k (f p) m
         Nothing => m
 
-summarize : (String, RCDef) -> Maybe DInfo
-summarize (name, def@(RCFun args _ _ body)) =
+summarize : (directTail : Bool) -> (String, RCDef) -> Maybe DInfo
+summarize directTail (name, def@(RCFun args _ _ body)) =
     let exempt = leakExempt body
         eligible = mapMaybe (\(k, (v, r)) => case r of
                                                   Boxed => if contains v exempt then Nothing else Just (k, v)
                                                   _ => Nothing) (zip [0 .. length args] args)
-        evs = leakEvents (name, def)
+        evs = leakEvents directTail (name, def)
         aliases = foldl (\m, a => case a.kind of
                                        Spent (ByAlias w) _ _ _ => insert w a.var m
                                        _ => m) (the (SortedMap Int Int) empty) evs
@@ -158,7 +158,7 @@ summarize (name, def@(RCFun args _ _ body)) =
                            _ => ss
             in (ps1, ss1)
         _ => (ps, ss)
-summarize _ = Nothing
+summarize _ _ = Nothing
 
 -------------------------------------------------------------------------------
 -- Names reached other than by a direct call
@@ -390,10 +390,10 @@ histogram = foldl (\m, r => insertWith (+) (fromMaybe 99 (firstReason r)) 1 m) e
 
 ||| The report, one line per entry.
 export
-borrowStats : RCProgram -> List String
-borrowStats prog =
+borrowStats : (directTail : Bool) -> RCProgram -> List String
+borrowStats directTail prog =
     let ids = definitionIds prog
-        infos = mapMaybe (\nd => map (\d => { ident := fromMaybe (-1) (lookup d.name ids) } d) (summarize nd)) prog
+        infos = mapMaybe (\nd => map (\d => { ident := fromMaybe (-1) (lookup d.name ids) } d) (summarize directTail nd)) prog
         indirectNames = foldl indirectDef (the (SortedSet String) empty) prog
         elig = eligibleKeys infos
         rdefs = map (resolveDef ids elig) infos
@@ -657,7 +657,7 @@ export
 borrowTailStats : RCProgram -> List String
 borrowTailStats prog =
     let ids = definitionIds prog
-        infos = mapMaybe (\nd => map (\d => { ident := fromMaybe (-1) (lookup d.name ids) } d) (summarize nd)) prog
+        infos = mapMaybe (\nd => map (\d => { ident := fromMaybe (-1) (lookup d.name ids) } d) (summarize False nd)) prog
         indirectNames = foldl indirectDef (the (SortedSet String) empty) prog
         elig = eligibleKeys infos
         rdefs = map (resolveDef ids elig) infos
