@@ -131,3 +131,38 @@ an 8 MB stack ran 100 000 levels deep with the pass and 60 000 without it
 `Test154SccTail` (a callee that ends in a loop is called directly; a cycle
 kept by `--directive nomutualloop --directive noloop` keeps its closures
 and runs a million bounces).
+
+## What is left (2026-11-13)
+
+Three ideas were considered to go further, and a count (a throwaway patch: the class of each
+tail `RAppName` that stays a closure, and where each pending call at run time comes from) showed
+that none of them has anything to take.
+
+- **Direct calls inside a component, cutting only the back edges.** The rule above keeps the closure
+  on every edge inside a component. It would suffice to keep it on the back edges of a depth-first
+  search of each component (every cycle holds one), with the chains of direct calls bounded by the
+  longest path without them. In the final IR of `rc2-norepl` no component with a tail edge inside is left:
+  `MutualLoop` and `Loop` have turned every cycle into a loop. The 106 tail `RAppName` sites that stay
+  closures all call a function that cannot be called directly (a worker, an arity that does not match).
+- **A per-thread register instead of a heap closure for a pending call**, returned as a static marker.
+  Only a closure that `Emit` builds for a tail `RAppName` could use it, and there are few (below).
+- **Direct application up to a depth** (a depth counter; past the limit, return the pending call as now).
+  It applies to the tail `apply` of an unknown closure, not to the calls above; it saves the return and
+  the loop test of one trampoline round, 10 to 20 instructions of the 100 or so of a dispatch, since the
+  closure's shell is still released and the arity still dispatched. A long loop (`loop = act >> loop`)
+  would run at the limit, as it does now, so only short chains gain. About 0.3-0.7% of the instructions
+  at best. Not done.
+
+Where the pending calls come from, `libs/prelude` built by the `rc2`-built compiler (counters in the
+runtime, 2026-11-13):
+
+| origin | count |
+|---|---|
+| a closure built for a tail `RAppName` | 32,394 |
+| a tail `apply` of a unique closure, grown in place | 8,779,370 |
+| a tail `apply` of a closure with other references, copied | 3,063,056 |
+| trampoline dispatches | 8,149,962 |
+
+99.6% of the pending calls are tail `apply`s of a closure that is not known where it is applied (the
+continuation of a monadic bind, for one). For those the known-callee rules here do nothing; removing them
+means making the closure known: `speculative-closure-specialization.md`.
