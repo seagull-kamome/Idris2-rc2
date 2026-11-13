@@ -34,3 +34,29 @@ An inference that makes read-only arguments borrowed, to cut `dup`/`drop`, was e
   70% of the gain is the tail-call `drop`s that are already counted and would disappear; only 27 credits fall
   inside loops. Most of the 13,905 excluded arguments (10,093 sites whose callee is an owning position) move
   only if borrow inference is widened to other arguments (fewer owning positions).
+
+## Direct tail calls lifted (2026-11-13)
+
+`rcexpr-lint --borrow-stats-direct` counts a tail call that is a direct call (`callRep`, what `LeafTail` and
+`DualABI` make) as an ordinary call: its callee is not reached through a closure, and is outside any cycle of
+tail calls, so the caller can drop what it passed after the call without the stack growing without bound. A tail
+call made through a closure (`call`) must stay excluded, because the closure runs after the caller's `drop`.
+idris2-lsp on master 4a74924, 246,595 `dup`/`drop`s, final IR:
+
+| | rule as it was | direct tail calls lifted |
+|---|---|---|
+| borrowable parameters | 5,896 (19.2%) | 7,470 (24.3%) |
+| blocked only by "non-loop tail call" | 5,931 | 66 |
+| callee `drop`s removed | 11,785 | 13,608 |
+| caller `drop`s added | 7,409 | 6,953 |
+| net reduction | 8,534 (3.4%) | 11,579 (4.6%) |
+| net reduction in loops | +142 | +1,113 |
+
+The weight in loops turns positive, which was the worry of the 10-14 numbers. But `dup`/`drop` are about 19% of
+the instructions (`teardown` apart), so 4.6% of them is about 0.9% of the instructions, 1-2% at the most with the
+weight of loops. Wall time has followed the instruction count at less than half the rate in the changes of
+2026-11 (the inline guard of the trampoline: -4.5% instructions, -1.7% time). Against that, borrowing needs a pass
+that fixes the convention of every parameter over the call graph, an owned-convention wrapper for each of the 1,584
+definitions referenced indirectly, a place in the pipeline after `annotate` (the facts that decide it come from
+`Reuse`, `Loop` and `DualABI`), and a way for the 5,224 `dup`s of case fields, which collide with reuse. Still not
+adopted.

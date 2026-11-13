@@ -252,7 +252,11 @@ format by hand, and `rc2/doc/directives.md` for `dumprcexpr` itself.
 `rcexpr-lint --borrow-stats <file.rcexpr>` prints the borrow statistics
 and `rcexpr-lint --pushdown-stats <file.rcexpr>` the push-down statistics
 instead of the anomaly report (`--borrow-tail-stats` is described under
-"Borrow statistics").
+"Borrow statistics"). `--borrow-stats-direct` is `--borrow-stats` with a tail call
+that is a direct call (`callRep`) no longer counted as a tail call: the callee is not
+reached through a closure, so the caller can still drop what it passed once the call
+returns (it is not in a cycle of tail calls, so the stack does not grow without bound).
+A tail call made through a closure (`call`) stays excluded.
 
 A whole external package works the same way and is the more valuable
 run -- it covers shapes no hand-written test does:

@@ -73,6 +73,9 @@ record Env where
   ||| report every spend and `dup` as well (for `Borrow`)
   events : Bool
   inLoop : Bool
+  ||| a direct tail call (`callRep`) is not counted as a tail call: the caller can still drop
+  ||| its borrowed arguments after it (`rcexpr-lint --borrow-stats-direct`)
+  directTail : Bool
 
 ||| What `walk` is evaluating for: the function's own result (`Tail`:
 ||| every path must end owing nothing), or the value of a `let` of
@@ -487,7 +490,7 @@ mutual
       let (st', fs) = consumeFlagged env "call args" (\k => ByCall name k (isTail m)) st (map (const True) args) args
       in leaf env m st' ("call " ++ name) fs
   walk env m st (RCallRep name sig pd args) =
-      let (st1, f1) = consumeFlagged env "callRep args" (\k => ByCall name k (isTail m)) st (sigBoxed sig) args
+      let (st1, f1) = consumeFlagged env "callRep args" (\k => ByCall name k (isTail m && not env.directTail)) st (sigBoxed sig) args
           (st2, f2) = consumeAll env "callRep postDrop" ByDrop st1 pd
       in leaf env m st2 ("callRep " ++ name) (f1 ++ f2)
   walk env m st (RCallFFI desc pd args) =
@@ -676,29 +679,29 @@ dedupe as = go empty as
 
 ||| One `def`'s leak findings, starting from its own `args=[...]`.
 export
-leakDef : (wantEvents : Bool) -> String -> RCDef -> List Anomaly
-leakDef wantEvents name (RCFun args retRep _ body) =
+leakDef : (directTail : Bool) -> (wantEvents : Bool) -> String -> RCDef -> List Anomaly
+leakDef directTail wantEvents name (RCFun args retRep _ body) =
     let exempt = exemptLocals body
-        env0 = MkEnv name exempt retRep empty Nothing wantEvents False
+        env0 = MkEnv name exempt retRep empty Nothing wantEvents False directTail
         env = foldl (\e, (i, r) => case r of
                                         NativeRep s => if isRetRep s then { reps $= insert i s } e else e
                                         _ => e) env0 args
         st0 = foldl (\s, (i, r) => bindOwned env r i s) (MkSt empty empty empty 0 0) args
     in dedupe (walk env Tail st0 body).finds
-leakDef wantEvents name (RCErrorDef body) =
-    dedupe (walk (MkEnv name (exemptLocals body) Boxed empty Nothing wantEvents False) Tail (MkSt empty empty empty 0 0) body).finds
-leakDef _ _ (RCCon _ _ _) = []
-leakDef _ _ (RCForeign _) = []
+leakDef directTail wantEvents name (RCErrorDef body) =
+    dedupe (walk (MkEnv name (exemptLocals body) Boxed empty Nothing wantEvents False directTail) Tail (MkSt empty empty empty 0 0) body).finds
+leakDef _ _ _ (RCCon _ _ _) = []
+leakDef _ _ _ (RCForeign _) = []
 
 ||| Every leak finding across a whole parsed program, in `def` order.
 export
 leakProgram : RCProgram -> List Anomaly
-leakProgram = foldr (\(name, def), acc => leakDef False name def ++ acc) []
+leakProgram = foldr (\(name, def), acc => leakDef False False name def ++ acc) []
 
 ||| `leakProgram`, plus the spend/`dup` events `Borrow` is built from.
 export
-leakEvents : (String, RCDef) -> List Anomaly
-leakEvents (name, def) = leakDef True name def
+leakEvents : (directTail : Bool) -> (String, RCDef) -> List Anomaly
+leakEvents directTail (name, def) = leakDef directTail True name def
 
 ||| The `Boxed` locals of `body` that carry no refcount (see `Scan`).
 export
