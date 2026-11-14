@@ -75,6 +75,7 @@ own (RApply _ f as) = { consumes := f :: as } noOwn
 own (RLetIn _ _ _ _) = noOwn
 own (RConstruct _ _ as r) = { consumes := as ++ maybeToList r } noOwn
 own (RRetPackNode _ _ as) = { consumes := as } noOwn
+own (RStackConNode _ _ _) = noOwn
 own (ROpNode _ o as pd) = if consumingOp o then { consumes := as } noOwn else MkOwn [] as pd []
 own (RExtPrimNode _ _ as pd) = MkOwn [] as pd []
 own (RStructGetNode s _ pd) = MkOwn [] [s] pd []
@@ -205,6 +206,7 @@ brief (RApply _ f as) = "apply " ++ show f ++ " " ++ showLs as
 brief (RLetIn v _ _ _) = "let v" ++ show v
 brief (RConstruct n _ as r) = "con " ++ n ++ " " ++ showLs as ++ maybe "" (\x => " reuse=" ++ show x) r
 brief (RRetPackNode n _ as) = "retpack " ++ n ++ " " ++ showLs as
+brief (RStackConNode n _ as) = "stackcon " ++ n ++ " " ++ showLs as
 brief (ROpNode _ o as pd) = "op " ++ o ++ " " ++ showLs as ++ " postDrop=" ++ showLs pd
 brief (RExtPrimNode _ o as pd) = "extprim " ++ o ++ " " ++ showLs as ++ " postDrop=" ++ showLs pd
 brief (RStructGetNode s f pd) = "structGet " ++ show s ++ " " ++ f ++ " postDrop=" ++ showLs pd
@@ -441,6 +443,7 @@ valKind e = case e of
     other (RPrim _) = "constant"
     other RErasedNode = "constant"
     other (RRetPackNode _ _ _) = "retpack"
+    other (RStackConNode _ _ _) = "stackcon"
     other (RFillNode _ _ _ _) = "fill"
     other (RCallFFI _ _ _) = "ffi"
     other (RExtPrimNode _ _ _ _) = "extprim"

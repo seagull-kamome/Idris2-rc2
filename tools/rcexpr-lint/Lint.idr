@@ -231,6 +231,7 @@ mutual
       (st, checkReads dn "con args" st args
              ++ maybe [] (checkRead dn "con reuse" st) reuseFrom)
   walk dn st (RRetPackNode _ _ fields) = (st, concatMap (checkRead dn "retpack field" st) fields)
+  walk dn st (RStackConNode _ _ fields) = (st, concatMap (checkRead dn "stackcon field" st) fields)
   walk dn st (ROpNode _ _ args postDrop) =
       let readAs = checkReads dn "op args" st args
           (st', dropAs) = doDrops dn "op postDrop" st postDrop

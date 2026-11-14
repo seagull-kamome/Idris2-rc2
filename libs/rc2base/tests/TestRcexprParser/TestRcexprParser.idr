@@ -87,6 +87,11 @@ def Main.spacedStructSet  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
     structSet v1 . tm_mday ( struct tm ) = v2 postDrop= [v2]
   v3
 
+def Main.inFrame  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  let v3 : Boxed =
+    stackcon _builtin.CONS [cons] tag= 1 [v1, v2]
+  v3
+
 def Main.immCase  (fun args= ["v1:Boxed"] ret= Boxed)
   case v1 of
     u: 1 ->
@@ -103,7 +108,7 @@ main : IO ()
 main = case parseProgram sample of
     Left err => putStrLn ("PARSE ERROR: " ++ show err)
     Right prog => do
-        printLn (length prog == 8)
+        printLn (length prog == 9)
         traverse_ (\d => case lookup d prog of
                               Just (RCFun _ _ _ (RCall _ n _)) => putStrLn n
                               _ => putStrLn (d ++ " not found or not a single call"))
@@ -121,6 +126,10 @@ main = case parseProgram sample of
         case lookup "Main.spacedStructSet" prog of
              Just (RCFun _ _ _ (RLetIn _ _ (RStructSetNode _ f _ pd) _)) => putStrLn (f ++ " " ++ show (length pd))
              _ => putStrLn "Main.spacedStructSet not found or not a structSet"
+        -- `stackcon`: a constructor in the frame, its tag a plain number.
+        case lookup "Main.inFrame" prog of
+             Just (RCFun _ _ _ (RLetIn _ _ (RStackConNode n t fs) _)) => putStrLn (n ++ " " ++ t ++ " " ++ show (length fs))
+             _ => putStrLn "Main.inFrame not found or not a stackcon"
         case lookup "Main.example" prog of
              Just (RCFun _ _ _ body) => case body of
                  RLetIn 10 Boxed _ (RDupNode (RVar 10) 3 rest) => printLn (checkRest rest)

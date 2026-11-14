@@ -12,6 +12,9 @@
 # `Language.RCExpr.Parser.dupG`'s own doc comment.
 # `metrics.rcexpr` holds every node kind `Metrics.idr` counts, so each
 # figure is checked against a hand count at least once.
+# `stackcon.rcexpr`: a `stackcon` owns nothing (its fields are released by their
+# own drops), and a case on it takes only the alt of its tag, so the NIL arm that
+# drops one field only is dead and reports nothing.
 # `leakclean.rcexpr` holds the balanced shapes the leak check has to
 # accept (erased alts, always-unboxed locals, immortal lets, padded loop
 # params, struct fields, reuse, FFI/callRep consumption); `leak.rcexpr`
@@ -81,6 +84,7 @@ check "metrics.rcexpr (every counted node kind)" "$TESTS_DIR/metrics.rcexpr" 0
 check "fieldborrow.rcexpr (fields borrow from their scrutinee)" "$TESTS_DIR/fieldborrow.rcexpr" 1
 check "foreigntypes.rcexpr (struct and function types in %foreign signatures)" "$TESTS_DIR/foreigntypes.rcexpr" 0
 check "leakclean.rcexpr (balanced shapes the leak check must accept)" "$TESTS_DIR/leakclean.rcexpr" 0
+check "stackcon.rcexpr (a constructor in the frame: fields borrowed, the alt of its tag taken)" "$TESTS_DIR/stackcon.rcexpr" 0
 check "typedcase.rcexpr (typed-constant case scrutinees are refcount-free)" "$TESTS_DIR/typedcase.rcexpr" 0
 check "leak.rcexpr (every leak-check finding fires)" "$TESTS_DIR/leak.rcexpr" 1
 check "borrow.rcexpr (borrow statistics, hand-counted)" "$TESTS_DIR/borrow.rcexpr" 0 --borrow-stats

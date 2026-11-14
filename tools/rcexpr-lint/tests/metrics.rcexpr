@@ -56,3 +56,15 @@ def {idris2rc2_worker_TestMetricsRet1:0}  (fun args= ["v1:Boxed"] ret= Ret1 work
       retpack _builtin.NOTHING tag= 0 []
     _builtin.JUST [just] tag= Just 1 args= [v3] ->
       retpack _builtin.JUST tag= 1 [v3]
+
+def Main.inFrame  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  let v3 : Boxed =
+    stackcon _builtin.CONS [cons] tag= 1 [v1, v2]
+  case v3 of
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      drop [v1, v2]
+      #0
+    _builtin.CONS [cons] tag= Just 1 args= [v4, v5] ->
+      dup v4
+      drop [v1, v2]
+      v4

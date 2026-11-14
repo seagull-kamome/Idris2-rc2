@@ -216,6 +216,7 @@ indirect acc (RApply _ c args) = localsRefs (c :: args) acc
 indirect acc (RLetIn _ _ value body) = indirect (indirect acc value) body
 indirect acc (RConstruct _ _ args r) = localsRefs args (maybe acc (\l => localRefs l acc) r)
 indirect acc (RRetPackNode _ _ fs) = localsRefs fs acc
+indirect acc (RStackConNode _ _ fs) = localsRefs fs acc
 indirect acc (ROpNode _ _ args _) = localsRefs args acc
 indirect acc (RExtPrimNode _ _ args _) = localsRefs args acc
 indirect acc (RForceNode _ _ _) = acc
