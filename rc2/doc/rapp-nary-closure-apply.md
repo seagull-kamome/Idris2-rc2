@@ -426,3 +426,16 @@ in what got collected.
   the "clone per known target" idea documented there remains a
   separate, still-open follow-up for the cases where the closure's
   identity is *and stays* statically known.
+
+## The final argument of a unique closure (2026-11-14)
+
+`idris2rc2_applyClosure` had a fast path for a closure with other references that receives
+its last argument (`dispatchWithExtra`: the arguments are dup'd into the call, the closure is
+dropped), and sent a unique one, three applies in four in a `prelude` build (8.8 M of 11.8 M),
+through `idris2rc2_tailcallApplyClosure` (write the argument, grow in place) and then the
+trampoline's loop (tag test, arity test, dispatch, release of the shell). Now the unique
+closure's last argument is written into its slot and the call made from the shell's own
+argument array at once; the arguments went into the call, so only the shell is released
+(`idris2rc2_rc_release` + `cellFreeInline`, as the trampoline loop does), and the result is
+trampolined. `prelude` build: 29.04 G to 28.69 G instructions (-1.2%); the trampoline loop's
+own cost goes from 825 M to 327 M.
