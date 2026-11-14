@@ -72,9 +72,7 @@ IDRIS2RC2_Value *idris2rc2_mkBits64(uint64_t i) {
   return (IDRIS2RC2_Value *)v;
 }
 
-IDRIS2RC2_Value *idris2rc2_mkInt64(int64_t i) {
-  if (i >= IDRIS2RC2_IMM_I64_MIN && i < IDRIS2RC2_IMM_I64_LIMIT)
-    return IDRIS2RC2_IMM_INT64(i);
+IDRIS2RC2_Value *idris2rc2_mkInt64Boxed(int64_t i) {
   IDRIS2RC2_Int64 *v = IDRIS2RC2_NEW_CELL(IDRIS2RC2_Int64);
   v->header.tag = IDRIS2RC2_TAG_INT64;
   v->v = i;
@@ -146,7 +144,8 @@ IDRIS2RC2_String *idris2rc2_mkEmptyString(size_t bufLen) {
   if (bufLen == 1)
     return (IDRIS2RC2_String *)&idris2rc2_emptyStringValue;
   IDRIS2RC2_String *v = idris2rc2_allocString(bufLen - 1);
-  memset(v->str, 0, bufLen);
+  // Only the terminator: every caller writes the bufLen - 1 bytes before it.
+  v->str[bufLen - 1] = '\0';
   return v;
 }
 

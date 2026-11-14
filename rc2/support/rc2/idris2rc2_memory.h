@@ -285,7 +285,14 @@ IDRIS2RC2_Value *idris2rc2_mkDouble(double d);
 #define idris2rc2_mkBool(x) (idris2rc2_mkInt8(x))
 
 IDRIS2RC2_Value *idris2rc2_mkBits64(uint64_t i);
-IDRIS2RC2_Value *idris2rc2_mkInt64(int64_t i);
+// An Int64 is an immediate when it fits (rc2/doc/immediate-ints.md), nearly
+// always: that test is inline, only the box is a call.
+IDRIS2RC2_Value *idris2rc2_mkInt64Boxed(int64_t i);
+static inline IDRIS2RC2_Value *idris2rc2_mkInt64(int64_t i) {
+  if (__builtin_expect(i >= IDRIS2RC2_IMM_I64_MIN && i < IDRIS2RC2_IMM_I64_LIMIT, 1))
+    return IDRIS2RC2_IMM_INT64(i);
+  return idris2rc2_mkInt64Boxed(i);
+}
 
 // Aborts if `n` can't fit `len`'s own uint32_t (datatypes.h) -- shared by
 // every String constructor/concatenation that sums or measures a byte

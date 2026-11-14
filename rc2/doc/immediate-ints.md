@@ -196,3 +196,13 @@ output is unchanged.
 `missing-containers` is mostly strings and 64-bit hashes. A hash is
 spread over the whole `Bits64` range, so only about a quarter of them
 fall below 2^62 and become immediate.
+
+## The box is the slow path (2026-11-14)
+
+`idris2rc2_mkInt64` used to be a call for every native `Int` boxed by generated code
+(14.8 million in a `prelude` build, nearly all of them returning an immediate). The range
+test is now inline in `memory.h`, and only the box (`idris2rc2_mkInt64Boxed`) is a call.
+`cast_Integer_to_Int64` returns an immediate `Integer` as it is: it is an immediate `Int64`
+already, same layout and range. With `mkEmptyString` writing only the terminator instead
+of zeroing the buffer every caller overwrites, a `prelude` build goes from 29.04 G to
+28.55 G instructions (-1.7%).

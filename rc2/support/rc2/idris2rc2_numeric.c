@@ -422,7 +422,11 @@ static uint64_t idris2rc2_integerLsb(IDRIS2RC2_Value *x, mp_bitcnt_t bits) {
 IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Int8(IDRIS2RC2_Value *x) { return idris2rc2_mkInt8((int8_t)idris2rc2_integerLsb(x, 8)); }
 IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Int16(IDRIS2RC2_Value *x) { return idris2rc2_mkInt16((int16_t)idris2rc2_integerLsb(x, 16)); }
 IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Int32(IDRIS2RC2_Value *x) { return idris2rc2_mkInt32((int32_t)idris2rc2_integerLsb(x, 32)); }
-IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Int64(IDRIS2RC2_Value *x) { return idris2rc2_mkInt64((int64_t)idris2rc2_integerLsb(x, 64)); }
+// An immediate Integer is an immediate Int64 already (the same layout and range).
+IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Int64(IDRIS2RC2_Value *x) {
+  if (idris2rc2_is_unboxed(x)) return x;
+  return idris2rc2_mkInt64((int64_t)idris2rc2_integerLsb(x, 64));
+}
 IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Bits8(IDRIS2RC2_Value *x) { return idris2rc2_mkBits8((uint8_t)idris2rc2_integerLsb(x, 8)); }
 IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Bits16(IDRIS2RC2_Value *x) { return idris2rc2_mkBits16((uint16_t)idris2rc2_integerLsb(x, 16)); }
 IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Bits32(IDRIS2RC2_Value *x) { return idris2rc2_mkBits32((uint32_t)idris2rc2_integerLsb(x, 32)); }
