@@ -212,16 +212,34 @@ sigReps sig = case skipGroup (unpack sig) of
 sigBoxed : String -> List Bool
 sigBoxed sig = map (== "Boxed") (sigReps sig)
 
+||| The argument types of an inlined FFI call (`[ccs...] [Int, %World] -> ret`), as text.
+ffiArgTypes : String -> List String
+ffiArgTypes desc = case skipGroup (unpack desc) of
+    Nothing => []
+    Just (_, rest) => case skipGroup (dropWhile (== ' ') rest) of
+        Nothing => []
+        Just (inner, _) => map (\t => trim (pack t)) (splitTopLevel inner)
+  where
+    splitTopLevel : List Char -> List (List Char)
+    splitTopLevel cs = go (the Nat 0) [] [] cs
+      where
+        go : Nat -> List Char -> List (List Char) -> List Char -> List (List Char)
+        go _ cur acc [] = reverse (reverse cur :: acc)
+        go d cur acc (c :: rest) =
+            if c == ',' && d == 0 then go d [] (reverse cur :: acc) rest
+            else go (if c == '(' || c == '[' then S d else if (c == ')' || c == ']') then minus d 1 else d) (c :: cur) acc rest
+
+||| Per argument of an inlined FFI call: read at an always-unboxed type (a tagged immediate,
+||| `unboxedTypeNames` in the CFType spelling), so a `postDrop` of it is optional.
+ffiAlwaysUnboxed : String -> List Bool
+ffiAlwaysUnboxed desc = map (\t => elem t ["Int_8", "Int_16", "Int_32", "Bits_8", "Bits_16", "Bits_32", "Char", "%World"]) (ffiArgTypes desc)
+
 ||| Per argument of an inlined FFI call (`[ccs...] [Int, %World] -> ret`):
 ||| does the call itself consume it? Every type but the ones
 ||| `Compiler.RC2.Types.cfTypeNativeTy` reads natively (those are
 ||| discharged through `postDrop`): the scalars, `Ptr` and struct pointers.
 ffiBoxed : String -> List Bool
-ffiBoxed desc = case skipGroup (unpack desc) of
-    Nothing => []
-    Just (_, rest) => case skipGroup (dropWhile (== ' ') rest) of
-        Nothing => []
-        Just (inner, _) => map (\t => not (isNativeCF (trim (pack t)))) (splitTop inner)
+ffiBoxed desc = map (not . isNativeCF) (ffiArgTypes desc)
   where
     nativeCFTypes : List String
     nativeCFTypes = ["Int", "Int_8", "Int_16", "Int_32", "Int_64", "Bits_8", "Bits_16", "Bits_32", "Bits_64", "Double", "Char", "Ptr"]
@@ -229,16 +247,6 @@ ffiBoxed desc = case skipGroup (unpack desc) of
     isNativeCF : String -> Bool
     isNativeCF t = elem t nativeCFTypes || isPrefixOf "struct " t
 
-    splitTop : List Char -> List (List Char)
-    splitTop cs = go (the Nat 0) [] [] cs
-      where
-        go : Nat -> List Char -> List (List Char) -> List Char -> List (List Char)
-        go _ cur acc [] = reverse (reverse cur :: acc)
-        go d cur acc (c :: rest) =
-            if c == ',' && d == 0 then go d [] (reverse cur :: acc) rest
-            else if c == '[' || c == '(' then go (S d) (c :: cur) acc rest
-            else if c == ']' || c == ')' then go (minus d 1) (c :: cur) acc rest
-            else go d (c :: cur) acc rest
 
 isRetRep : String -> Bool
 isRetRep s = isPrefixOf "Ret" s
@@ -303,6 +311,15 @@ boundToComparison (RDupNode _ _ body) = boundToComparison body
 boundToComparison (RDropNode _ body) = boundToComparison body
 boundToComparison _ = False
 
+||| `value` is an op whose result is an immediate although it runs on the boxed path
+||| (rc2's `Types.immediateResultOp`: a `Char` out of a string, a cast to a small type).
+boundToImmediateOp : RCExp -> Bool
+boundToImmediateOp (ROpNode False op _ _) = immediateOp op
+boundToImmediateOp (RLetIn _ _ _ body) = boundToImmediateOp body
+boundToImmediateOp (RDupNode _ _ body) = boundToImmediateOp body
+boundToImmediateOp (RDropNode _ body) = boundToImmediateOp body
+boundToImmediateOp _ = False
+
 hasUnboxedType : String -> Bool
 hasUnboxedType t = any (\n => isInfixOf n t) unboxedTypeNames
 
@@ -312,14 +329,15 @@ scanExp sc (RCall _ _ _) = sc
 scanExp sc (RCallRep _ sig pd args) =
     foldl (\s, (t, l) => if hasUnboxedType t then noteUndischarged True [l] pd s else s) sc
           (zip (sigReps sig) args)
-scanExp sc (RCallFFI _ _ _) = sc
+scanExp sc (RCallFFI desc pd args) =
+    foldl (\s, (u, l) => if u then noteUndischarged True [l] pd s else s) sc (zip (ffiAlwaysUnboxed desc) args)
 scanExp sc (RPartial _ _ _) = sc
 scanExp sc (RDelayNode _ _ _) = sc
 scanExp sc (RApply _ _ _) = sc
 scanExp sc (RLetIn var rep value body) =
     let sc' = case (rep, value) of
                    (NativeRep t, RV (RVar x)) => if hasUnboxedType t then insert x sc else sc
-                   (Boxed, _) => if boundToComparison value then insert var sc else sc
+                   (Boxed, _) => if boundToComparison value || boundToImmediateOp value then insert var sc else sc
                    _ => sc
     in scanExp (scanExp sc' value) body
 scanExp sc (RConstruct _ _ _ _) = sc

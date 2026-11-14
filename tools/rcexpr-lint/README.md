@@ -163,6 +163,7 @@ Derived from `RC.annotate`, `Reuse.resolveAlt`, `DualABI.postDropFor` and
 | `dup v xN` | creates N |
 | `drop [..]`, `free`, every `postDrop=` list, `prologueDrop`, `dropOnUnique` | one per listed occurrence |
 | `call`, `partial`, `delay`, `apply` (callee too), `con`, `retpack`, `fill`'s value | every `Boxed` operand |
+| `let v : Boxed = op op_strindex|op_strhead|cast_*_to_<small type>` | nothing: the value is an immediate (rc2's `Types.immediateResultOp`), as a comparison's is |
 | `stackcon` | nothing: its fields are only read, and released by their own `drop`s; a `case` on it walks the alt of its tag only (the others are dead) |
 | `callRep` | operands at a `Boxed` parameter of its signature; the rest are read natively and dropped through `postDrop=` |
 | `callFFIInline` | operands whose type `Compiler.RC2.Types.cfTypeNative` does not read natively (`%World`, `Ptr`, ...); the rest through `postDrop=` |

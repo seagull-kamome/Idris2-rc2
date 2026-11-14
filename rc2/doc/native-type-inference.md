@@ -260,6 +260,23 @@ parameters) are untouched; this covers `let`-bound locals only. There is no
 `rcexpr-lint`'s leak check has the same rule (`Leak.idr`,
 `boundToComparison`), since it does not share `natives`.
 
+## A `Char` out of a string, a cast to a small type (2026-11-14)
+
+The same producer-side rule covers an op that runs on the boxed path but whose result is an
+immediate all the same: `StrHead`, `StrIndex` (a `Char`) and a `Cast` to an `alwaysUnboxed`
+type from a type that is not native-eligible (`Integer` to `Bits8`, say). `opResultRep` says
+`Nothing` for these, since the computation is not native, so their `Boxed` local was tracked:
+`Levenshtein.compute` passed the `Char` of `strIndex` to `isAlpha`'s worker with a `postDrop`
+and compared it after, and `rcexpr-lint` read that as a use after free. `Types.immediateResultOp`
+names the ops; `alwaysUnboxedBoxedLocalsR`'s `immProducer` puts the local into `natives`.
+
+The call site needs the same knowledge: DualABI's `postDropFor` drops a `Boxed` argument that
+the worker reads natively, and for a parameter of an `alwaysUnboxed` type that drop could only
+ever be a no-op (the value is a tagged pointer), so it is left out whatever the argument's own
+origin. The lint mirrors the producer rule (`Leak.idr`, `boundToImmediateOp`).
+`Test177CharOpExempt`.
+
+
 `Test13NativeArgChain`'s `check.sh` asserts that no comparison-bound local is
 dup'd or dropped. On idris2-lsp's final IR (`--directive dumprcexpr`):
 

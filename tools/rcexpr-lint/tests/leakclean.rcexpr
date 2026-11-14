@@ -77,3 +77,14 @@ def TestCleanFFI  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
 
 def TestCleanCallRep  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
   callRep {idris2rc2_worker_Main_g:0} ["Native Int", "Boxed"] -> Boxed postDrop= [v1] [v1, v2]
+
+def Main.charOut  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  let v3 : Boxed =
+    op op_strindex [v1, v2] postDrop= [v1, v2]
+  let v4 : Native Bits8 =
+    callRep {idris2rc2_worker_Main_isAlpha:0} ["Native Char"] -> Native Bits8 postDrop= [v3] [v3]
+  cmp ==Char [v3, #'a']
+  then
+    #1
+  else
+    #0

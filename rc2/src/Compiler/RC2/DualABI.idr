@@ -942,12 +942,21 @@ postDropFor : SortedMap Int Rep -> List Rep -> List RCLocal -> List RCLocal
 postDropFor reps argReps args =
     mapMaybe (\(r, a) => case (r, a) of
                               (RBoxed, _) => Nothing
+                              -- a Boxed value read as a Char or a small integer is an immediate
+                              -- (`Types.alwaysUnboxed`): its drop would do nothing
+                              (RNative ty, RCLoc _) => if tyAlwaysUnboxed ty then Nothing else dropIfBoxed a
+                              (RInlineNative ty, RCLoc _) => if tyAlwaysUnboxed ty then Nothing else dropIfBoxed a
                               -- a constant (`NULL` for a `NULL`-typed parameter, a folded
                               -- constructor) is not counted: nothing to drop
                               (_, RCLoc _) => case localRepIn reps a of
                                                    RBoxed => Just a
                                                    _ => Nothing
                               _ => Nothing) (zip argReps args)
+  where
+    dropIfBoxed : RCLocal -> Maybe RCLocal
+    dropIfBoxed a = case localRepIn reps a of
+                         RBoxed => Just a
+                         _ => Nothing
 
 ||| `e`'s own ultimate tail expression, peeling through every `RLet`'s
 ||| own `body` and every wrapper node's own `cont` -- the same peeling
