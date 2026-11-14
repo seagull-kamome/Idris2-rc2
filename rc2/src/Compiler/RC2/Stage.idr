@@ -57,6 +57,7 @@ data Stage : Type where
      NoReuseNested : Stage
      NoReuseRecheck : Stage
      NoStackCon : Stage
+     NoInlineCalls : Stage
 
 
 ||| The directive that disables `s`.
@@ -101,6 +102,7 @@ stageDirective NoFunDedup = "nofundedup"
 stageDirective NoReuseNested = "noreusenested"
 stageDirective NoReuseRecheck = "noreuserecheck"
 stageDirective NoStackCon = "nostackcon"
+stageDirective NoInlineCalls = "noinlinecalls"
 
 
 ||| Every `Stage`; `inAllStages` proves the list is complete.
@@ -144,7 +146,8 @@ allStages = [
     NoFunDedup,
     NoReuseNested,
     NoReuseRecheck,
-    NoStackCon
+    NoStackCon,
+    NoInlineCalls
   ]
 
 
@@ -190,6 +193,7 @@ inAllStages NoFunDedup = There (There (There (There (There (There (There (There 
 inAllStages NoReuseNested = There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There Here))))))))))))))))))))))))))))))))))
 inAllStages NoReuseRecheck = There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There Here)))))))))))))))))))))))))))))))))))
 inAllStages NoStackCon = There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There Here))))))))))))))))))))))))))))))))))))
+inAllStages NoInlineCalls = There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There Here)))))))))))))))))))))))))))))))))))))
 
 ||| A stage that runs only when its directive is given.
 public export
