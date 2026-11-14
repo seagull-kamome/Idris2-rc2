@@ -24,9 +24,11 @@ else
 fi
 
 # Every member that is still defined is a stub that only calls its
-# group's function with its tag. isEvenM, isOddM, stepA and cycleA are
-# called from the test, so they must be there; stepB, cycleB and cycleC
-# are only reached through the merged function and DeadCode drops them.
+# group's function with its tag. A member nothing names any more is gone:
+# `FwdAlias` makes the calls of a stub calls of the merged function
+# (rc2/doc/fwd-alias.md, "Constants added") and DeadCode drops the stub, as it
+# does for stepB, cycleB and cycleC, which are only reached through the
+# merged function.
 bad=""
 for f in isEvenM isOddM stepA stepB cycleA cycleB cycleC; do
     body="$(awk -v f="Test110Loop.SelfTailLoop.$f" '
@@ -34,8 +36,6 @@ for f in isEvenM isOddM stepA stepB cycleA cycleB cycleC; do
         /^def / { on = 0 }
         on && NF { print }' "$d")"
     if [ -z "$body" ]; then
-        case " stepB cycleB cycleC " in *" $f "*) continue ;; esac
-        bad="$bad $f(missing)"
         continue
     fi
     n="$(printf '%s\n' "$body" | wc -l)"

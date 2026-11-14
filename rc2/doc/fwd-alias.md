@@ -57,14 +57,40 @@ another order (`permuters`). `permRewrite` runs before the renaming above:
 `delay` and constant closures are not changed (a constant closure captures
 nothing, so a permutation always moves a missing parameter).
 
+## Constants added
+
+A wrapper that `MutualLoop` leaves for each member of a merged group has the shape
+
+```
+ping a b = {rc2_mutualLoop:0} #0 a b          -- the selector, then the parameters of the member
+eval a b c = {rc2_mutualLoop:155} #1 a b c [__] [__]   -- and the padding of the parameters it lacks
+```
+
+It passes every parameter once, with constants besides, so it is not an in-order forwarder or a
+permutation. `constForwarders` takes a boxed, non-worker `f` whose body is one `RAppName` of a boxed
+`g` where every parameter of `f` is passed once and the other arguments are constants (at least one);
+`repForwarders` takes the same for a function of any kind whose body is one `RAppNameRep` with no
+`postDrop`, the result in the representation of its own, and every parameter passed in its own
+representation (the wrapper of a worker, and the worker of a wrapper). `constRewrite` makes each call
+of such a function a call of its target, the arguments laid out as the wrapper laid them, constants
+included, and runs a few rounds so that a forwarder of a forwarder is followed. A closure keeps the
+function: what a later `apply` supplies would not land where the target takes it. The wrapper is
+removed by dead code elimination once nothing else names it.
+
+The pass runs before `LeafTail`, so a wrapper still has its tail call as an `RAppName`, and a call of
+it in a tail position stays a tail call of the target (closure or direct, as `LeafTail` decides).
+
+`Test175FwdAliasConst`: the calls of the wrappers of a merged `ping`/`pong` are calls of the merged
+function, with the same output as `--directive nofwdalias`.
+
 ## Not done
 
 - A closure that misses a parameter in the middle: `f` stays.
 - A closure over constants (`RCConstPartial`) of a forwarder with another order: it keeps `f`
   (only the function and what it misses are renamed, so an in-order forwarder is reached).
 - A forwarder to a permuter is followed one step only; a call that is already a
-  `RAppNameRep` is not rewritten.
-- A forwarder that drops a parameter, repeats one or passes a constant.
+  `RAppNameRep` is rewritten only for a forwarder with constants (above).
+- A forwarder that drops a parameter or repeats one. (One that passes a constant: see above.)
 - A forwarder to a `worker`: a closure must take boxed arguments, so the stub that
   unboxes them is needed.
 - References inside a constant constructor (see above).
@@ -87,3 +113,10 @@ from 16 to 3 (the three are named inside constant constructors).
 On `rc2-norepl` 137 of the 214 closures that named a forwarder with another order now
 name its target (77 are left: 64 forwarders that are not a permutation, 13 that miss a
 parameter in the middle), and the definitions go from 13175 to 13136.
+
+On `rc2-norepl` (a build of `libs/prelude` under callgrind, 2026-11-14), the extension for constants removes
+about 6.4 million calls of wrappers (the worker of `scan` 4.4 M, `eval` 0.8 M, the worker of `getFirstMatch`
+0.7 M, ...), and the instructions go from 29.222 G to 29.217 G (-0.02%), the executable from 15,574,448 to
+15,553,016 bytes (-0.14%). About one instruction per call: the C compiler already turns the wrapper's
+`return merged(sel, ...)` into a jump, so the call it saves was nearly free. It is a clean-up, not a speed-up.
+

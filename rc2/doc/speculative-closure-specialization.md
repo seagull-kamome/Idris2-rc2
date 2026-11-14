@@ -831,3 +831,55 @@ closure they built to the next iteration through `continue loop`:
 Scheme backends, `bindAll`, `treeMap` and others. A closure cell is not reused as a
 constructor cell is (`reuse-analysis.md`), so each iteration allocates it; how often
 these loops run was not measured.
+
+## Where the applies come from (2026-11-13)
+
+A throwaway pass over the final IR of `rc2-norepl` classified the operand of every `apply` by where
+the closure was bound: a parameter of the function, a field read from a constructor, the result of a
+call, a `partial` built there, a constant closure, a loop parameter, the result of another `apply`.
+For a call result, it also asked whether the callee returns a known closure (a `partial` or a
+constant closure) on every path, as the greatest fixed point over the functions that pass a result on
+(211 functions do). The run-time weight comes from the callers of `idris2rc2_applyClosure`,
+`idris2rc2_applyClosureN` and `idris2rc2_tailcallApplyClosure` in a callgrind profile of `libs/prelude`
+built by the same compiler, shared over the apply sites of each caller (exact for a function with one
+site; an approximation otherwise). The pass was not kept.
+
+Applies in the final IR, by origin of the closure (3,646 sites: 483 in a tail position, 3,163 not):
+
+| origin of the closure | tail | not tail |
+|---|---|---|
+| a parameter of the function | 222 | 686 |
+| a field read from a constructor | 67 | 455 |
+| result of a call to a function that returns a known closure on every path | 64 | 1,035 |
+| result of a call to any other function | 33 | 470 |
+| a `partial` built there | 27 | 28 |
+| a constant closure | 10 | 24 |
+| a loop parameter | 4 | 24 |
+| result of another `apply` | 7 | 30 |
+| other | 49 | 411 |
+
+Applies executed (`libs/prelude` build): 2.3 M in a tail position and about 22 M not, so a tail `apply` is
+a tenth of them, not the bulk.
+
+| origin of the closure | tail (2.26 M attributed) | not tail (17.4 M attributed) |
+|---|---|---|
+| a parameter | 73.6% | 55.7% |
+| a field read from a constructor | 8.1% | 25.7% |
+| result of a call to a known-closure returner | 16.0% | 9.5% |
+| result of a call to any other function | 0.5% | 0.4% |
+| result of another `apply` | 0.4% | 3.8% |
+| other | 1.4% | 4.9% |
+| a `partial` built there, a constant closure, a loop parameter | 0.2% | 0.2% |
+
+What this says:
+- **A closure that arrives as a parameter** is the largest source (about 11.4 M of the 20 M attributed
+  applies, 47%). Those are what `SpecClosure` is for; what is left are the parameters whose callers pass
+  a different closure each time, a closure built at run time, or one that fails the gates above.
+- **A closure read from a constructor field** is the next (4.7 M, 19%): a method of an interface
+  dictionary, or a function stored in a record. `constant-constructor-specialization.md` resolves a
+  dictionary that is a known constant; these are the ones that are not.
+- **A closure returned by a call** is 2.0 M applies (8%), and the whole of it is on callees that return a
+  known closure on every path (1,099 sites, 211 functions). Specializing from the return path (replace
+  `apply (call f a) x` by a direct call of the `partial`'s target, and the closure that `f` builds goes
+  with it) is not done by any pass: `ArityRaise` does it for the world argument only. Its ceiling is about
+  1% of the instructions (a closure allocation, an `apply` and a dispatch for each of the 2.0 M).
