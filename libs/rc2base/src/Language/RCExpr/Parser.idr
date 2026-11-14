@@ -614,6 +614,17 @@ retpackG = do
     fields <- localListG
     pure (name, tag, fields)
 
+||| `Pretty.idr`'s `stackcon <name> [ci] tag= N [field]`: the tag is a plain number.
+stackconG : Grammar () RcToken True (String, String, List RCLocal)
+stackconG = do
+    nameEq "stackcon"
+    name <- greedyWordsG
+    conInfoG
+    nameEq "tag="
+    tag <- anyName
+    fields <- localListG
+    pure (name, tag, fields)
+
 conG : Grammar () RcToken True (String, String, List RCLocal, Maybe RCLocal)
 conG = do
     nameEq "con"
@@ -946,6 +957,10 @@ mutual
           (name, tag, fields) <- runG ln retpackG line
           (_, st2) <- advanceLine st1
           Right (RRetPackNode name tag fields, st2)
+      else if isPrefixOf "stackcon " line then do
+          (name, tag, fields) <- runG ln stackconG line
+          (_, st2) <- advanceLine st1
+          Right (RStackConNode name tag fields, st2)
       else if isPrefixOf "con " line then do
           (name, tag, args, reuseFrom) <- runG ln conG line
           (_, st2) <- advanceLine st1

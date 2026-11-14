@@ -3,6 +3,7 @@ metrics (places in the IR, not executions):
   definitions        3  (functions 3, workers 0, constructors 0, foreign 0, error 0)
   con                0  (fresh 0, reusing a cell 0)
   retpack            0  (constructors returned by value, no cell)
+  stackcon           0  (constructors built in the frame, no count)
   partial            0  (closures built)
   apply              0  (closure calls)
   call               0  (plain 0, callRep 0, FFI inline 0)

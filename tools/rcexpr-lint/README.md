@@ -119,6 +119,7 @@ valgrind.
 | `definitions` | every `def`, by kind; `workers` are DualABI's `worker=True` functions |
 | `con` | constructor builds; `reusing a cell` has `reuse=`, `fresh` allocates |
 | `retpack` | constructors a struct-returning worker returns by value (rc2's `doc/struct-return.md`), no cell at all |
+| `stackcon` | constructors built in the C frame (rc2's `doc/stack-con.md`): no count, and their fields stay owned by the locals they came from |
 | `partial` / `apply` | closures built, closures applied |
 | `call` | direct calls: `call`, DualABI's `callRep`, inlined FFI calls |
 | `op` | primitive operations and `extprim` calls |
@@ -162,6 +163,7 @@ Derived from `RC.annotate`, `Reuse.resolveAlt`, `DualABI.postDropFor` and
 | `dup v xN` | creates N |
 | `drop [..]`, `free`, every `postDrop=` list, `prologueDrop`, `dropOnUnique` | one per listed occurrence |
 | `call`, `partial`, `delay`, `apply` (callee too), `con`, `retpack`, `fill`'s value | every `Boxed` operand |
+| `stackcon` | nothing: its fields are only read, and released by their own `drop`s; a `case` on it walks the alt of its tag only (the others are dead) |
 | `callRep` | operands at a `Boxed` parameter of its signature; the rest are read natively and dropped through `postDrop=` |
 | `callFFIInline` | operands whose type `Compiler.RC2.Types.cfTypeNative` does not read natively (`%World`, `Ptr`, ...); the rest through `postDrop=` |
 | `op`, `extprim`, `cmp`, `force`, `structGet`/`structSet`, `case` scrutinee | nothing (reads); `postDrop=` only |

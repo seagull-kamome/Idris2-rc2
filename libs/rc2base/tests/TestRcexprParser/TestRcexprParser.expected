@@ -4,4 +4,5 @@ Idris.Pretty.prettyPrec_Pretty_IdrisSyntax_(PBinder' KindedName)
 ["u:1", "u:\" \"", "7"]
 tm_year
 tm_mday 1
+_builtin.CONS 1 2
 True

@@ -74,3 +74,7 @@ compilation included).
 `glue`, which only cases it; `twice` shares it, `kept` stores it and `withDouble` holds a `Double` literal, so
 those stay on the heap. `nested` builds its `MkW` and the `MkP` in its field in the frame (`glueW` only
 passes that field on to `glue`); `leaky` builds its `MkV` there but not the `MkP` in it, which `keepP` returns.
+
+`tools/rcexpr-lint` reads a `stackcon` as owning nothing (its fields are released by their own
+`drop`s) and walks a `case` on it through the alt of its tag only; the other alts are dead code
+this pass leaves, which the lint used to report as a leak of the fields.

@@ -73,6 +73,8 @@ record Env where
   ||| report every spend and `dup` as well (for `Borrow`)
   events : Bool
   inLoop : Bool
+  ||| the `stackcon` locals, with their tag: a `case` on one takes the alt of that tag
+  stackTags : SortedMap Int String
   ||| a direct tail call (`callRep`) is not counted as a tail call: the caller can still drop
   ||| its borrowed arguments after it (`rcexpr-lint --borrow-stats-direct`)
   directTail : Bool
@@ -322,6 +324,7 @@ scanExp sc (RLetIn var rep value body) =
     in scanExp (scanExp sc' value) body
 scanExp sc (RConstruct _ _ _ _) = sc
 scanExp sc (RRetPackNode _ _ _) = sc
+scanExp sc (RStackConNode _ _ _) = sc
 scanExp sc (ROpNode _ op args pd) = noteUndischarged (hasUnboxedType op) args pd sc
 scanExp sc (RExtPrimNode _ _ _ _) = sc
 scanExp sc (RForceNode _ _ _) = sc
@@ -408,6 +411,8 @@ immortalValue (RV (RVar _)) = False
 immortalValue (RV _) = True
 immortalValue (RPrim _) = True
 immortalValue RErasedNode = True
+-- the cell is in the frame: no count, nothing to release (the fields are released by their own drops)
+immortalValue (RStackConNode _ _ _) = True
 immortalValue _ = False
 
 isTail : Mode -> Bool
@@ -525,6 +530,8 @@ mutual
   walk env m st (RRetPackNode name _ fields) =
       let (st', fs) = consumeAll env "retpack fields" (ByStore "constructor") st fields
       in leaf env m st' ("retpack " ++ name) fs
+  -- the fields are only read: the frame cell borrows them (rc2's doc/stack-con.md)
+  walk env m st (RStackConNode name _ _) = leaf env m st ("stackcon " ++ name) []
   walk env m st (ROpNode _ op _ pd) =
       let (st', fs) = consumeAll env "op postDrop" ByDrop st pd
       in leaf env m st' ("op " ++ op) fs
@@ -549,8 +556,16 @@ mutual
           r = combine env "cmp" m [walk env m st1 whenTrue, walk env m st1 whenFalse]
       in { finds := fs ++ r.finds } r
   walk env m st (RConCaseNode sc alts mDef) =
-      let altRes = map (walkAlt env m st sc) alts
-          defRes = maybe [] (\d => [walk env m st d]) mDef
+      let -- a case on a stackcon takes the alt of its tag (the others are dead code the
+          -- compiler did not fold); the default only when no alt has it
+          (alts', mDef') = case sc of
+              RVar s => case lookup s env.stackTags of
+                  Just t => let hit = filter (\a => a.tag == "Just " ++ t) alts
+                            in if null hit then (the (List RConAlt) [], mDef) else (hit, Nothing)
+                  Nothing => (alts, mDef)
+              _ => (alts, mDef)
+          altRes = map (walkAlt env m st sc) alts'
+          defRes = maybe [] (\d => [walk env m st d]) mDef'
       in combine env ("case " ++ show sc) m (altRes ++ defRes)
   walk env m st (RConstCaseNode sc alts mDef) =
       let altRes = map (\a => walk env m st a.altBody) alts
@@ -631,8 +646,9 @@ mutual
   walkLet : Env -> Mode -> St -> Int -> RRep -> RCExp -> RCExp -> Res
   walkLet env m st var rep value body =
       let vres = walk env (Val rep) st value
-          env' = case rep of
-                      NativeRep s => if isRetRep s then { reps $= insert var s } env else env
+          env' = case (rep, value) of
+                      (NativeRep s, _) => if isRetRep s then { reps $= insert var s } env else env
+                      (_, RStackConNode _ t _) => { stackTags $= insert var t } env
                       _ => env
       in case vres.out of
               Nothing => vres
@@ -682,14 +698,14 @@ export
 leakDef : (directTail : Bool) -> (wantEvents : Bool) -> String -> RCDef -> List Anomaly
 leakDef directTail wantEvents name (RCFun args retRep _ body) =
     let exempt = exemptLocals body
-        env0 = MkEnv name exempt retRep empty Nothing wantEvents False directTail
+        env0 = MkEnv name exempt retRep empty Nothing wantEvents False empty directTail
         env = foldl (\e, (i, r) => case r of
                                         NativeRep s => if isRetRep s then { reps $= insert i s } e else e
                                         _ => e) env0 args
         st0 = foldl (\s, (i, r) => bindOwned env r i s) (MkSt empty empty empty 0 0) args
     in dedupe (walk env Tail st0 body).finds
 leakDef directTail wantEvents name (RCErrorDef body) =
-    dedupe (walk (MkEnv name (exemptLocals body) Boxed empty Nothing wantEvents False directTail) Tail (MkSt empty empty empty 0 0) body).finds
+    dedupe (walk (MkEnv name (exemptLocals body) Boxed empty Nothing wantEvents False empty directTail) Tail (MkSt empty empty empty 0 0) body).finds
 leakDef _ _ _ (RCCon _ _ _) = []
 leakDef _ _ _ (RCForeign _) = []
 

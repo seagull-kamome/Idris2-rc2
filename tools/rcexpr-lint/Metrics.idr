@@ -21,7 +21,7 @@ public export
 record Metrics where
   constructor MkMetrics
   funDefs, workerDefs, conDefs, foreignDefs, errorDefs : Nat
-  cons, consReused, retpacks : Nat
+  cons, consReused, retpacks, stackcons : Nat
   partials, applies : Nat
   calls, callReps, ffiCalls : Nat
   ops, extPrims : Nat
@@ -34,7 +34,7 @@ record Metrics where
   delays, forces : Nat
 
 emptyMetrics : Metrics
-emptyMetrics = MkMetrics 0 0 0 0 0  0 0 0  0 0  0 0 0  0 0  0 0  0 0 0  0 0  0 0 0  0 0 0  0 0 0 0  0 0
+emptyMetrics = MkMetrics 0 0 0 0 0  0 0 0 0  0 0  0 0 0  0 0  0 0  0 0 0  0 0  0 0 0  0 0 0  0 0 0 0  0 0
 
 isBoxed : RRep -> Bool
 isBoxed Boxed = True
@@ -55,6 +55,7 @@ walk m (RLetIn _ rep value body) =
 walk m (RConstruct _ _ _ reuseFrom) =
     { cons $= S, consReused $= (+ maybe 0 (const 1) reuseFrom) } m
 walk m (RRetPackNode _ _ _) = { retpacks $= S } m
+walk m (RStackConNode _ _ _) = { stackcons $= S } m
 walk m (ROpNode _ _ _ pd) = { ops $= S, postDrops $= (+ length pd) } m
 walk m (RExtPrimNode _ _ _ pd) = { extPrims $= S, postDrops $= (+ length pd) } m
 walk m (RStructGetNode _ _ pd) = { postDrops $= (+ length pd) } m
@@ -100,6 +101,7 @@ renderMetrics m =
             "functions \{show m.funDefs}, workers \{show m.workerDefs}, constructors \{show m.conDefs}, foreign \{show m.foreignDefs}, error \{show m.errorDefs}")
       , ("con", m.cons, "fresh \{show (minus m.cons m.consReused)}, reusing a cell \{show m.consReused}")
       , ("retpack", m.retpacks, "constructors returned by value, no cell")
+      , ("stackcon", m.stackcons, "constructors built in the frame, no count")
       , ("partial", m.partials, "closures built")
       , ("apply", m.applies, "closure calls")
       , ("call", m.calls + m.callReps + m.ffiCalls,

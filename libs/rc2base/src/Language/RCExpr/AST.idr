@@ -114,6 +114,10 @@ mutual
     ||| `retpack`: a struct built in a struct-returning worker's tail
     ||| (rc2's `doc/struct-return.md`); its fields are consumed.
     RRetPackNode : (name : String) -> (tag : String) -> (fields : List RCLocal) -> RCExp
+    ||| `stackcon`: a constructor built in the C frame (rc2's `doc/stack-con.md`), with
+    ||| an immortal header. Its fields stay owned by the locals they came from (the
+    ||| `drop`s that follow release them); the cell itself has no count.
+    RStackConNode : (name : String) -> (tag : String) -> (fields : List RCLocal) -> RCExp
     ROpNode      : (isLazy : Bool) -> (op : String) -> List RCLocal -> (postDrop : List RCLocal) -> RCExp
     RExtPrimNode : (isLazy : Bool) -> (prim : String) -> List RCLocal -> (postDrop : List RCLocal) -> RCExp
     RStructGetNode : (structVar : RCLocal) -> (field : String) -> (postDrop : List RCLocal) -> RCExp

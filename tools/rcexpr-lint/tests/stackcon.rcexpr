@@ -1,0 +1,29 @@
+def Main.inFrame  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  let v3 : Boxed =
+    stackcon _builtin.CONS [cons] tag= 1 [v1, v2]
+  case v3 of
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      drop [v1]
+      #0
+    _builtin.CONS [cons] tag= Just 1 args= [v4, v5] ->
+      dup v4
+      drop [v1, v2]
+      v4
+
+def Main.passed  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  let v3 : Boxed =
+    stackcon _builtin.CONS [cons] tag= 1 [v1, v2]
+  let v4 : Boxed =
+    callRep Main.reads ["Boxed"] -> Boxed postDrop= [] [v3]
+  drop [v1, v2]
+  v4
+
+def Main.reads  (fun args= ["v1:Boxed"] ret= Boxed)
+  case v1 of
+    _builtin.CONS [cons] tag= Just 1 args= [v2, v3] ->
+      dup v2
+      drop [v1]
+      v2
+    _ ->
+      drop [v1]
+      #0
