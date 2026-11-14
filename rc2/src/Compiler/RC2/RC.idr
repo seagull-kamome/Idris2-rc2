@@ -472,8 +472,17 @@ alwaysUnboxedArgs (Just ty) args =
 alwaysUnboxedBoxedLocalsR : RCExp -> SortedSet RCLocal
 alwaysUnboxedBoxedLocalsR (RLet _ var rep value body) =
     let vs = union (alwaysUnboxedBoxedLocalsR value) (alwaysUnboxedBoxedLocalsR body) in
-    if boolProducer rep value || nullProducer value then insert (RCLoc var) vs else vs
+    if boolProducer rep value || nullProducer value || immProducer rep value then insert (RCLoc var) vs else vs
   where
+    ||| A Boxed `let` bound directly to an op whose result is an immediate although
+    ||| the op runs on the boxed path (`Types.immediateResultOp`: a `Char` out of a
+    ||| string, a cast to a small type). Producer-side evidence, as `boolProducer`.
+    immProducer : Rep -> RCExp -> Bool
+    immProducer RBoxed (ROp _ Nothing op _ _) = immediateResultOp op
+    -- the op under the `let`s of its own operands (`Types.repOf` peels them the same way)
+    immProducer RBoxed (RLet _ _ _ _ body) = immProducer RBoxed body
+    immProducer _ _ = False
+
     ||| A `let` bound directly to an erased value or the world token: C
     ||| `NULL`, which `idris2rc2_dup`/`drop` skip anyway.
     nullProducer : RCExp -> Bool

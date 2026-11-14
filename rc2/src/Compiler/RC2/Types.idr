@@ -198,6 +198,18 @@ opResultRep DoubleFloor = Just DoubleType
 opResultRep DoubleCeiling = Just DoubleType
 opResultRep _ = Nothing
 
+||| An op computed on the boxed path whose result is nonetheless always an immediate:
+||| a `Char` out of a string, or a cast to an `alwaysUnboxed` type from a type that is not
+||| native-eligible (`opResultRep` gives `Nothing` for these, since the computation is not
+||| native; the *value* is a tagged pointer all the same). Arithmetic on such a type gets a
+||| native let and needs no entry here.
+export
+immediateResultOp : PrimFn arity -> Bool
+immediateResultOp StrHead = True
+immediateResultOp StrIndex = True
+immediateResultOp (Cast _ o) = alwaysUnboxed o
+immediateResultOp _ = False
+
 ||| The range of an immediate Int/Int64 or Integer, [-2^62, 2^62)
 ||| (doc/immediate-ints.md). An `Integer` in it is always immediate, so
 ||| such a literal is a C constant like any fixed-width one.

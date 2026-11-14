@@ -203,6 +203,23 @@ uCaseLocals acc _ = acc
 immediateRefs : Nat
 immediateRefs = 1000000000
 
+||| An op whose result is an immediate although it runs on the boxed path (rc2's
+||| `Types.immediateResultOp`: a `Char` out of a string, a cast to a small type); a
+||| `Boxed` local bound to one is seeded like a `u:`-case local.
+export
+immediateOp : String -> Bool
+immediateOp op =
+    op == "op_strindex" || op == "op_strhead"
+    || (isPrefixOf "cast_" op && any (\t => isSuffixOf ("_to_" ++ t) op) ["Char", "Bits8", "Bits16", "Bits32", "Int8", "Int16", "Int32"])
+
+immediateValue : RCExp -> Bool
+immediateValue (ROpNode False op _ _) = immediateOp op
+-- the op sits under the `let`s of its own operands (rc2's ANF)
+immediateValue (RLetIn _ _ _ b) = immediateValue b
+immediateValue (RDupNode _ _ b) = immediateValue b
+immediateValue (RDropNode _ b) = immediateValue b
+immediateValue _ = False
+
 isImmediateEntry : Entry -> Bool
 isImmediateEntry e = e.owned >= immediateRefs
 
@@ -224,7 +241,7 @@ mutual
       (st, checkRead dn "apply target" st c ++ checkReads dn "apply args" st args)
   walk dn st (RLetIn var rep value body) =
       let (stAfterValue, valueAs) = walk dn st value
-          stWithVar = if isBoxedRep rep then insert var (owning 1) stAfterValue else stAfterValue
+          stWithVar = if isBoxedRep rep then insert var (owning (if immediateValue value then immediateRefs else 1)) stAfterValue else stAfterValue
           (stFinal, bodyAs) = walk dn stWithVar body
       in (stFinal, valueAs ++ bodyAs)
   walk dn st (RConstruct _ _ args reuseFrom) =
