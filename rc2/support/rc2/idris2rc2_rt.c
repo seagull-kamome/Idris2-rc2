@@ -378,8 +378,19 @@ IDRIS2RC2_Value *idris2rc2_applyClosure(IDRIS2RC2_Value *_c, IDRIS2RC2_Value *ar
   // non-unique closure receiving its FINAL argument can skip straight
   // to dispatch without ever materializing the grown closure that
   // would just be trampolined and torn down again right here.
-  if (!idris2rc2_isUnique(c) && c->arity - c->filled == 1 &&
-      c->arity >= 1 && c->arity <= 20) {
+  if (c->arity - c->filled == 1 && c->arity >= 1 && c->arity <= 20) {
+    if (idris2rc2_isUnique(c)) {
+      // The common case (three applies in four): the closure is ours, so the
+      // argument goes into its own slot and the call takes the arguments as they
+      // are, without the grow-then-trampoline round of
+      // idris2rc2_tailcallApplyClosure; only the shell is released after, as
+      // idris2rc2_trampolineLoop does (the arguments went into the call).
+      c->args[c->filled] = arg;
+      IDRIS2RC2_Value *result = idris2rc2_dispatchFn(c->fn, c->arity, c->args);
+      if (idris2rc2_rc_release(&c->header))
+        idris2rc2_cellFreeInline(c);
+      return idris2rc2_trampoline(result);
+    }
     IDRIS2RC2_Value *result = idris2rc2_dispatchWithExtra(c, arg);
     idris2rc2_drop((IDRIS2RC2_Value *)c);
     return idris2rc2_trampoline(result);
