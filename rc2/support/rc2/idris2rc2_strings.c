@@ -149,17 +149,9 @@ IDRIS2RC2_Value *idris2rc2_fastPackFixed(IDRIS2RC2_Value *charList) {
     byteLen += (size_t)idris2rc2_utf8EncodeLen(idris2rc2_to_char(cur->args[0]));
     cur = (IDRIS2RC2_Constructor *)cur->args[1];
   }
-  // No explicit trailing-NUL write here (unlike this file's own
-  // idris2rc2_strTail/strReverse/strCons/strAppend/strSubstr, which
-  // never need one to begin with, only ever memcpy-ing real payload
-  // bytes): idris2rc2_mkEmptyString's own malloc'd path already
-  // memset()s the whole buffer to zero, so byte `byteLen` (right after
-  // the last one this loop writes) is already '\0'. Byte-for-byte
-  // required for the byteLen == 0 case specifically -- mkEmptyString(1)
-  // hands back the shared immortal idris2rc2_emptyStringValue (a
-  // `const` static, `str = ""`), and a `r->str[0] = '\0'` write here
-  // would be a write into read-only memory (see
-  // rc2/doc/fastpack-fix.md).
+  // No trailing NUL written here: idris2rc2_mkEmptyString writes it (and for
+  // byteLen == 0 hands back the shared immortal empty string, which must not be
+  // written to; rc2/doc/fastpack-fix.md).
   IDRIS2RC2_String *r = idris2rc2_mkEmptyString(idris2rc2_checkedStrLen(byteLen) + 1);
   size_t pos = 0;
   cur = (IDRIS2RC2_Constructor *)charList;
@@ -226,12 +218,7 @@ IDRIS2RC2_Value *idris2rc2_fastConcatFixed(IDRIS2RC2_Value *strList) {
     total += ((IDRIS2RC2_String *)cur->args[0])->len;
     cur = (IDRIS2RC2_Constructor *)cur->args[1];
   }
-  // See idris2rc2_fastPackFixed's own matching comment: no explicit trailing-NUL
-  // write here either, and for the identical reason -- mkEmptyString(1)
-  // (the total == 0 case, e.g. `concat []`) hands back the shared
-  // immortal idris2rc2_emptyStringValue, a `const` static, so writing
-  // to it would fault; the malloc'd path is already memset() to zero,
-  // so the terminator's already correct without an explicit write.
+  // As in idris2rc2_fastPackFixed: the terminator comes from idris2rc2_mkEmptyString.
   IDRIS2RC2_String *r = idris2rc2_mkEmptyString(idris2rc2_checkedStrLen(total) + 1);
   size_t offset = 0;
   cur = (IDRIS2RC2_Constructor *)strList;
