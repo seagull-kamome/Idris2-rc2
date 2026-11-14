@@ -16,6 +16,10 @@ module Main
 -- DualABI produces for such a function, so it asks for them.
 %cg rc2 notinyinline
 
+-- `eligibleAdd` calls the foreign `prim__abs`, so Criterion A' (rc2/doc/inlining.md) would splice
+-- it too; the worker it gets from DualABI is what the checks below look for.
+%cg rc2 noinlinecalls
+
 %foreign "C:labs,libc,stdlib.h"
 prim__abs : Int -> Int
 

@@ -243,7 +243,7 @@ raiseNamed disabled main defs =
 inlineNamed : {auto c : Ref Ctxt Defs} -> List String -> Maybe (SortedSet Name) -> Maybe NamedCExp -> List (Name, FC, NamedDef) -> Core (Maybe NamedCExp, List (Name, FC, NamedDef))
 inlineNamed disabled keep main defs =
     if stageOff NoInline disabled then pure (main, defs)
-    else logTime 2 "rc2: Inline (before lifting)" $ inlineCExp keep main defs
+    else logTime 2 "rc2: Inline (before lifting)" $ inlineCExp (if stageOff NoInlineCalls disabled then 0 else inlineCallsThreshold) keep main defs
 
 ||| Optional pipeline-stage disabling via `--directive no<stagename>`,
 ||| for A/B regression isolation without editing `toRCDefs` itself and

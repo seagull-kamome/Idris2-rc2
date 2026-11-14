@@ -87,6 +87,33 @@ allLiteralArgs args = all isPrimVal args && any unfoldable args
     unfoldable (NmPrimVal _ c) = not (safeConst c)
     unfoldable _ = False
 
+||| The size bound of Criterion A': a body with calls (`inlining.md`, "Criterion A'").
+export
+inlineCallsThreshold : Nat
+inlineCallsThreshold = 6
+
+-- A small body with saturated calls (no lambda, delay, force or foreign call), as its size.
+callBodySize : NamedCExp -> Maybe Nat
+callBodySize (NmLocal _ _) = Just 1
+callBodySize (NmPrimVal _ _) = Just 1
+callBodySize (NmErased _) = Just 1
+callBodySize (NmCrash _ _) = Just 1
+callBodySize (NmLet _ _ v b) = (\x, y => 1 + x + y) <$> callBodySize v <*> callBodySize b
+callBodySize (NmCon _ _ _ _ args) = (\xs => 1 + sum xs) <$> traverse callBodySize args
+callBodySize (NmOp _ _ args) = (\xs => 1 + sum xs) <$> traverse callBodySize (toList args)
+callBodySize (NmApp _ (NmRef _ _) args) = (\xs => 1 + sum xs) <$> traverse callBodySize args
+callBodySize (NmConCase _ sc alts def) = do
+    s <- callBodySize sc
+    as <- traverse (\(MkNConAlt _ _ _ _ b) => callBodySize b) alts
+    d <- maybe (Just 0) callBodySize def
+    pure (1 + s + sum as + d)
+callBodySize (NmConstCase _ sc alts def) = do
+    s <- callBodySize sc
+    as <- traverse (\(MkNConstAlt _ b) => callBodySize b) alts
+    d <- maybe (Just 0) callBodySize def
+    pure (1 + s + sum as + d)
+callBodySize _ = Nothing
+
 -------------------------------------------------------------------------------
 -- Splicing
 
@@ -382,7 +409,7 @@ collapse e = MkSized 1 e
 -------------------------------------------------------------------------------
 -- The pass
 
-||| Criteria A and B over `main` and every definition. Definitions are
+||| Criteria A, A' (`callLimit` nodes, 0 for none) and B over `main` and every definition. Definitions are
 ||| rewritten callees first, so a Criterion B callee is spliced with its
 ||| own calls already inlined; a Criterion A callee is judged on its
 ||| rewritten body, call-free once its callees are in, so no second pass.
@@ -391,9 +418,9 @@ collapse e = MkSized 1 e
 ||| lifted, it would only duplicate the lambdas now lifted in its caller
 ||| until `Compiler.RC2.DeadCode` removes it.
 export
-inlineCExp : (keep : Maybe (SortedSet Name)) -> Maybe NamedCExp -> List (Name, FC, NamedDef) ->
+inlineCExp : (callLimit : Nat) -> (keep : Maybe (SortedSet Name)) -> Maybe NamedCExp -> List (Name, FC, NamedDef) ->
              Core (Maybe NamedCExp, List (Name, FC, NamedDef))
-inlineCExp keep main defs = do
+inlineCExp limit keep main defs = do
     f <- newRef Fresh 0
     let mainName = MN "__mainExpression" 0
         allDefs : List (Name, NamedDef) := mainDef mainName main ++ map (\(n, _, d) => (n, d)) defs
@@ -401,7 +428,12 @@ inlineCExp keep main defs = do
         callees : SortedMap Name (List Name) := map defCalls defOf
         sccs = tarjanSCCs (map SortedSet.fromList callees)
         single = singleCallerCallees defOf callees sccs
-    done <- rewriteAll defOf single empty empty (calleesFirst sccs)
+        cyclic : SortedSet Name :=
+            foldl (\acc, scc => case scc of
+                                      [n] => if elem n (fromMaybe [] (lookup n callees)) then insert n acc else acc
+                                      _ => foldl (flip insert) acc scc)
+                  (the (SortedSet Name) empty) sccs
+    done <- rewriteAll limit cyclic defOf single empty empty (calleesFirst sccs)
     let final = \n, d => fromMaybe d (lookup n done)
         called : SortedSet Name := foldl (\s, d => foldl (flip insert) s (defCalls d)) empty (values done)
         gone = \n => maybe False (\k => contains n single && not (contains n called) && not (contains n k)) keep
@@ -427,14 +459,20 @@ inlineCExp keep main defs = do
     origBody (MkNmError o) = o
     origBody _ = NmErased emptyFC
 
-    rewriteAll : {auto f : Ref Fresh Int} -> SortedMap Name NamedDef -> SortedSet Name -> SortedMap Name Eligible
+    smallWithCalls : Nat -> SortedSet Name -> Name -> List Name -> NamedCExp -> Bool
+    smallWithCalls Z _ _ _ _ = False
+    smallWithCalls limit cyclic n args b =
+        not (null args) && not (contains n cyclic) && maybe False (<= limit) (callBodySize b)
+
+    rewriteAll : {auto f : Ref Fresh Int} -> Nat -> SortedSet Name -> SortedMap Name NamedDef -> SortedSet Name -> SortedMap Name Eligible
               -> SortedMap Name NamedDef -> List Name -> Core (SortedMap Name NamedDef)
-    rewriteAll _ _ _ done [] = pure done
-    rewriteAll defOf single elig done (n :: ns) = case lookup n defOf of
-        Nothing => rewriteAll defOf single elig done ns
+    rewriteAll _ _ _ _ _ done [] = pure done
+    rewriteAll limit cyclic defOf single elig done (n :: ns) = case lookup n defOf of
+        Nothing => rewriteAll limit cyclic defOf single elig done ns
         Just d => do
             d' <- rewriteDef elig d
             let elig' = case d' of
-                             MkNmFun args b => if smallCallFree (origBody d) b || contains n single then insert n (MkEligible args b) elig else elig
+                             MkNmFun args b => if smallCallFree (origBody d) b || contains n single || smallWithCalls limit cyclic n args b
+                                                  then insert n (MkEligible args b) elig else elig
                              _ => elig
-            rewriteAll defOf single elig' (insert n d' done) ns
+            rewriteAll limit cyclic defOf single elig' (insert n d' done) ns

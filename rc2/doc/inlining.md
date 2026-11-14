@@ -132,6 +132,38 @@ same pass and adds callees to the same map as it goes; see "Criterion B:
 loop-free single-caller callees" below. Its call graph reuses
 `Compiler.RC2.MutualLoop`'s `Graph`/`tarjanSCCs`.
 
+## Criterion A': a small body with calls (2026-11-14)
+
+Criterion A takes a body with no call at all. A function that only calls one or two others
+(`f x = shrink (shrink x) + 1`, a forwarder, a wrapper) was out, and with it everything that
+splicing exposes to the caller: a `case` on a constructor the callee builds, an interface method
+whose dictionary the callee fixes, a closure it applies. `callBodySize` accepts a body made of the
+call-free nodes and `NmApp (NmRef g) args` with arguments of the same kind, at most
+`inlineCallsThreshold` (6) nodes, not in a call cycle (a self-call included). A lambda, `delay`,
+`force` and a foreign call keep a body out, as does a bare reference to a function. The definitions
+are rewritten callees first as before, so the calls inside the spliced body are already the
+rewritten ones; `--directive noinlinecalls` turns the criterion off.
+
+Measured on `idris2-lsp` (final `RCExp`) and on a `libs/prelude` build by `rc2-norepl` (callgrind):
+
+| bound | lines | definitions | `apply` nodes | `call` |
+|---|---|---|---|---|
+| off | 637,058 | 12,250 | 3,220 | 45,673 |
+| 6 | 642,428 (+0.8%) | 12,123 | 3,076 (-4.5%) | 46,775 |
+| 12 | 650,791 (+2.2%) | 12,025 | 3,064 (-4.8%) | 47,307 |
+
+With the bound 6 the instructions go from 29.222 G to 29.036 G (-0.64%) and the executable from
+15,574,448 to 15,674,504 bytes (+0.64%). The executed applies fall 3.3% (`applyClosure`), 5.0%
+(`applyClosureN`) and 7.1% (tail), and `dup`, `drop` and allocations do not move (+-0.4%), so
+what a splice exposes here is the closure that gets applied, not a constructor that gets
+matched. The bound 12 adds code and no fewer `apply`s.
+
+Building `libs/prelude` and `libs/base` with the `rc2`-built compiler, three runs each: `prelude` 5.37 s
+to 5.28 s (-1.7%), `base` 68.5 s to 67.4 s (-1.5%), more than the instructions, in the three runs alike.
+
+`Test176InlineCalls`: `viaTwice` (calls a recursive function) is spliced at its two call sites;
+`bigCalls`, over the bound, stays a call; the output is the same with `noinlinecalls`.
+
 ## The `allLiteralArgs` guard
 
 A call whose arguments are *all* bare `NmPrimVal` literals, at least one

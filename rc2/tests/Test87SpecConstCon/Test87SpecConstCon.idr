@@ -6,6 +6,10 @@ import Test87SpecConstCon.ConstConForwarding
 -- clones must not be merged into one (doc/fun-dedup.md).
 %cg rc2 nofundedup
 
+-- `chain1`/`chain2` only forward to another function, which Criterion A' (rc2/doc/inlining.md)
+-- would splice into their callers, leaving no forwarding chain to specialize.
+%cg rc2 noinlinecalls
+
 -- Constant-constructor argument specialization
 -- (`Compiler.RC2.SpecClosure.applySpecConstCon`, see
 -- `doc/constant-constructor-specialization.md`): a callee whose
