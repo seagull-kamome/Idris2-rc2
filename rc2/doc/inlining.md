@@ -139,8 +139,13 @@ Criterion A takes a body with no call at all. A function that only calls one or 
 splicing exposes to the caller: a `case` on a constructor the callee builds, an interface method
 whose dictionary the callee fixes, a closure it applies. `callBodySize` accepts a body made of the
 call-free nodes and `NmApp (NmRef g) args` with arguments of the same kind, at most
-`inlineCallsThreshold` (6) nodes, not in a call cycle (a self-call included). A lambda, `delay`,
-`force` and a foreign call keep a body out, as does a bare reference to a function. The definitions
+`inlineCallsThreshold` (6) nodes, not in a call cycle (a self-call included). A lambda, `delay`
+and a foreign call keep a body out, as does a bare reference to a function. A `force` of a
+parameter is one node (2026-11-14): `fromMaybe` and every function with a `Lazy` parameter is
+that shape, and once it is spliced where the caller built the `delay`, `Compiler.RC2.LazyFold`
+takes the pair away. `prelude` build: lazy cells 2.65 M to 2.33 M, instructions 29.04 G to 28.50 G
+(-1.8%, more than the lazy cells account for: a `force` of a parameter is the shape of every function
+over a `Lazy` argument, and splicing them exposes more than the `delay`). The definitions
 are rewritten callees first as before, so the calls inside the spliced body are already the
 rewritten ones; `--directive noinlinecalls` turns the criterion off.
 
@@ -162,7 +167,8 @@ Building `libs/prelude` and `libs/base` with the `rc2`-built compiler, three run
 to 5.28 s (-1.7%), `base` 68.5 s to 67.4 s (-1.5%), more than the instructions, in the three runs alike.
 
 `Test176InlineCalls`: `viaTwice` (calls a recursive function) is spliced at its two call sites;
-`bigCalls`, over the bound, stays a call; the output is the same with `noinlinecalls`.
+`bigCalls`, over the bound, stays a call; `pick` (forces its `Lazy` default) is spliced and two
+of its callers' `delay`s go; the output is the same with `noinlinecalls`.
 
 ## The `allLiteralArgs` guard
 

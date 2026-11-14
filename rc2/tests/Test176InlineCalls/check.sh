@@ -38,6 +38,15 @@ if [ "$c" -ge 2 ]; then
 else
     fail "calls of bigCalls: $c (want at least 2)"
 fi
+p="$(calls "$on" pick)"
+q="$(calls "$off.rcexpr" pick)"
+d="$(grep -c '^ *delay ' "$on" || true)"
+e="$(grep -c '^ *delay ' "$off.rcexpr" || true)"
+if [ "$p" = "0" ] && [ "$q" -ge 1 ] && [ "$d" -lt "$e" ]; then
+    pass "pick (forces its Lazy default) -- $p calls, $q with noinlinecalls; delays $d against $e"
+else
+    fail "pick: calls $p (want 0), $q with noinlinecalls (want >= 1); delays $d against $e (want fewer)"
+fi
 if "$off" | cmp -s - "$here/$name.expected"; then
     pass "noinlinecalls -- same output"
 else

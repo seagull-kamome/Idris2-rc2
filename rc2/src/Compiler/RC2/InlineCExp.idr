@@ -102,6 +102,9 @@ callBodySize (NmLet _ _ v b) = (\x, y => 1 + x + y) <$> callBodySize v <*> callB
 callBodySize (NmCon _ _ _ _ args) = (\xs => 1 + sum xs) <$> traverse callBodySize args
 callBodySize (NmOp _ _ args) = (\xs => 1 + sum xs) <$> traverse callBodySize (toList args)
 callBodySize (NmApp _ (NmRef _ _) args) = (\xs => 1 + sum xs) <$> traverse callBodySize args
+-- a `force` of a parameter: splicing it where the caller built the `delay` lets
+-- `Compiler.RC2.LazyFold` take the pair away (`fromMaybe` and its `Lazy` default)
+callBodySize (NmForce _ _ (NmLocal _ _)) = Just 1
 callBodySize (NmConCase _ sc alts def) = do
     s <- callBodySize sc
     as <- traverse (\(MkNConAlt _ _ _ _ b) => callBodySize b) alts
