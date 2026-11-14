@@ -15,8 +15,11 @@ import Core.Context
 
 import Data.List
 import Data.Maybe
+import Data.Nat
+import Decidable.Equality
 import Data.SortedMap
 import Data.SortedSet
+import Data.Vect
 
 %default covering
 
@@ -110,6 +113,126 @@ permRewriteD ps (MkRCFun args r w body) = MkRCFun args r w (permRewrite ps body)
 permRewriteD ps (MkRCError body) = MkRCError (permRewrite ps body)
 permRewriteD _ d = d
 
+||| One argument of a forwarding call: a parameter of the forwarder, by position, or a constant.
+data Slot = Param Nat | Fixed RCLocal
+
+isFixed : Slot -> Bool
+isFixed (Fixed _) = True
+isFixed _ = False
+
+isConstant : RCLocal -> Bool
+isConstant (RCLoc _) = False
+isConstant _ = True
+
+||| The slots of a forwarding call of `f` (parameters `params`): every argument is a parameter
+||| of `f` or a constant, and every parameter is passed once.
+slotsOf : List RCLocal -> List RCLocal -> Maybe (List Slot)
+slotsOf params xs = traverse slotOf xs >>= check
+  where
+    slotOf : RCLocal -> Maybe Slot
+    slotOf x = case indexIn x params of
+                    Just j => Just (Param j)
+                    Nothing => if isConstant x then Just (Fixed x) else Nothing
+
+    paramOf : Slot -> Maybe Nat
+    paramOf (Param j) = Just j
+    paramOf (Fixed _) = Nothing
+
+    check : List Slot -> Maybe (List Slot)
+    check ss = if sort (mapMaybe paramOf ss) == upTo (length params) then Just ss else Nothing
+
+||| The arguments of the call a forwarder makes, with the parameters taken from `xs`.
+fillSlots : List Slot -> List RCLocal -> Maybe (List RCLocal)
+fillSlots ss xs = traverse (\s => case s of
+                                      Param j => getAt j xs
+                                      Fixed c => Just c) ss
+
+||| `f -> (g, slots)` for each boxed, non-worker `f` whose body is one `RAppName` of a boxed `g`, with
+||| every parameter of `f` passed once and the other arguments constants, at least one (the cases
+||| above take the others).
+constForwarders : SortedMap Name Nat -> List (Name, RCDef) -> SortedMap Name (Name, List Slot)
+constForwarders arities defs = SortedMap.fromList (mapMaybe target defs)
+  where
+    target : (Name, RCDef) -> Maybe (Name, (Name, List Slot))
+    target (f, MkRCFun args@(_ :: _) RBoxed False (RAppName _ Nothing g xs)) =
+        case slotsOf (map (RCLoc . fst) args) xs of
+             Just ss => if g /= f && all (isBoxed . snd) args && lookup g arities == Just (length xs) && any isFixed ss
+                           then Just (f, (g, ss))
+                           else Nothing
+             Nothing => Nothing
+    target _ = Nothing
+
+sameRep : Rep -> Rep -> Bool
+sameRep RBoxed RBoxed = True
+sameRep (RNative a) (RNative b) = a == b
+sameRep (RInlineNative a) (RInlineNative b) = a == b
+sameRep (RRet n l) (RRet m k) = case decEq n m of
+                                     Yes Refl => l == k
+                                     No _ => False
+sameRep _ _ = False
+
+record RepFwd where
+  constructor MkRepFwd
+  target : Name
+  argReps : List Rep
+  retRep : Rep
+  slots : List Slot
+
+||| `f -> ..` for each function `f` (a worker too) whose body is one `RAppNameRep` of another function, with
+||| no `postDrop`, the result in the same representation as `f`'s own, every parameter passed once
+||| in its own representation, and the other arguments constants.
+repForwarders : List (Name, RCDef) -> SortedMap Name RepFwd
+repForwarders defs = SortedMap.fromList (mapMaybe target defs)
+  where
+    okAt : List (Int, Rep) -> (Slot, Rep) -> Bool
+    okAt args (Param j, r) = maybe False (\pr => sameRep (snd pr) r) (getAt j args)
+    okAt _ (Fixed _, _) = True
+
+    paramRepsOk : List (Int, Rep) -> List Slot -> List Rep -> Bool
+    paramRepsOk args ss reps = all (okAt args) (zip ss reps)
+
+    target : (Name, RCDef) -> Maybe (Name, RepFwd)
+    target (f, MkRCFun args@(_ :: _) ret _ (RAppNameRep _ g reps rr [] xs)) =
+        case slotsOf (map (RCLoc . fst) args) xs of
+             Just ss => if g /= f && sameRep ret rr && paramRepsOk args ss reps
+                           then Just (f, MkRepFwd g reps rr ss)
+                           else Nothing
+             Nothing => Nothing
+    target _ = Nothing
+
+||| Every call of a function that only forwards, with constants added, made a call of its target
+||| (`constForwarders` for `RAppName`, `repForwarders` for `RAppNameRep`). A closure keeps the
+||| function: what a later `apply` supplies would not land where the target takes it.
+constRewrite : SortedMap Name (Name, List Slot) -> SortedMap Name RepFwd -> RCExp -> RCExp
+constRewrite cs rs e =
+    case mapChildren (constRewrite cs rs) e of
+         e'@(RAppName fc Nothing f xs) =>
+             case lookup f cs of
+                  Just (g, ss) => maybe e' (RAppName fc Nothing g) (fillSlots ss xs)
+                  Nothing => e'
+         e'@(RAppNameRep fc f ar rr pd xs) =>
+             case lookup f rs of
+                  Just fw => if sameRep rr fw.retRep
+                                then fromMaybe e' (fillSlots fw.slots xs >>= repCall fc fw.target fw.argReps rr pd)
+                                else e'
+                  Nothing => e'
+         e' => e'
+
+constRewriteD : SortedMap Name (Name, List Slot) -> SortedMap Name RepFwd -> RCDef -> RCDef
+constRewriteD cs rs (MkRCFun args r w body) = MkRCFun args r w (constRewrite cs rs body)
+constRewriteD cs rs (MkRCError body) = MkRCError (constRewrite cs rs body)
+constRewriteD _ _ d = d
+
+||| `constRewrite` a few times over, so that a forwarder of a forwarder is followed.
+constRounds : Nat -> SortedMap Name Nat -> List (Name, RCDef) -> List (Name, RCDef)
+constRounds Z _ defs = defs
+constRounds (S k) ars defs =
+    let cs = constForwarders ars defs
+        rs = repForwarders defs
+    in if null cs && null rs
+          then defs
+          else constRounds k ars (map (\(n, d) => (n, constRewriteD cs rs d)) defs)
+
 ||| Follows `f -> g -> h` to the end, for at most `fuel` steps; a cycle stays
 ||| where it is.
 resolve : (fuel : Nat) -> SortedMap Name Name -> Name -> Name
@@ -141,7 +264,8 @@ applyFwdAlias : List (Name, RCDef) -> List (Name, RCDef)
 applyFwdAlias defs0 =
     let ars = arities defs0
         ps = permuters ars defs0
-        defs = if null ps then defs0 else map (\(n, d) => (n, permRewriteD ps d)) defs0
+        defsP = if null ps then defs0 else map (\(n, d) => (n, permRewriteD ps d)) defs0
+        defs = constRounds 4 ars defsP
         fwd = forwarders ars defs
     in if null fwd
           then defs
