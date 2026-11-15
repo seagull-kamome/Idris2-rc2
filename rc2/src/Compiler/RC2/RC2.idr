@@ -775,7 +775,10 @@ compileExprWhole c s _ outputDir tm outfile =
      -- rc2/doc/list-divert.md: upstream's tail-recursive list functions, replaced by naive ones
      -- that TRMC makes one loop. Opt-in (`listdivert`), whole program only.
      let (mainLz, namedLz) = if optInOn ListDivert directiveList || optInOn ListFuse directiveList then applyListDivert (optInOn ListFuse directiveList) mainLz0 namedLz0 else (mainLz0, namedLz0)
-     (mainInl, namedInl) <- inlineNamed disabledStages (Just (SortedSet.fromList exportNames)) mainLz namedLz
+     (mainInl0, namedInl0) <- inlineNamed disabledStages (Just (SortedSet.fromList exportNames)) mainLz namedLz
+     -- Again after inlining, with `listfuse`: it passes a list to a loop through a `let`, which only
+     -- inlining makes (`length (filter p xs)`).
+     let (mainInl, namedInl) = if optInOn ListFuse directiveList then applyListDivert True mainInl0 namedInl0 else (mainInl0, namedInl0)
      (mainIn, namedIn) <- if stageOff NoDeadArgs disabledStages
                              then pure (mainInl, namedInl)
                              else logTime 2 "rc2: Dead arguments" $

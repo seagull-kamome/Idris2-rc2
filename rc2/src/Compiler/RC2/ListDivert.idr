@@ -74,8 +74,20 @@ decodeFused (MN s 0) =
        else Nothing
 decodeFused _ = Nothing
 
+||| A consumer of a list that a chain can feed without the list being built.
+data Consumer = CFoldl | CFoldr | CLength
+
+consumerTag : Consumer -> String
+consumerTag CFoldl = "foldl"
+consumerTag CFoldr = "foldr"
+consumerTag CLength = "length"
+
+||| The loop of a consumer over the chain of these stages, `rc2_foldl_mf`.
+consumerName : Consumer -> List Kind -> Name
+consumerName c ks = MN ("rc2_" ++ consumerTag c ++ "_" ++ pack (map kindCode ks)) 0
+
 ||| A definition the program needs.
-data Wanted = WDiv Diverted | WFuse (List Kind) Bool
+data Wanted = WDiv Diverted | WFuse (List Kind) Bool | WConsume Consumer (List Kind)
 
 ||| The definitions the rewritten calls name, by name.
 Used : Type
@@ -188,6 +200,74 @@ fuseChain fc rfc c =
                in Just (NmApp fc (NmRef rfc name) (map snd c.stages ++ [c.list] ++ maybe [] pure c.end),
                         SortedMap.singleton (show name) (WFuse ks withTail))
 
+||| `foldl`, `foldr` or `length` of the list a chain makes, as a call of the loop that does both.
+consume : FC -> FC -> Name -> List NamedCExp -> Maybe (NamedCExp, Used)
+consume fc rfc f args = case args of
+    [g, z, xs] =>
+        if isFun "Prelude.Types.foldl" f then go CFoldl [g, z] xs
+        else if isFun "Prelude.Types.foldr" f then go CFoldr [g, z] xs
+        else Nothing
+    [n, xs] => if isFun "Prelude.Types.List.lengthPlus" f then go CLength [n] xs else Nothing
+    _ => Nothing
+  where
+    go : Consumer -> List NamedCExp -> NamedCExp -> Maybe (NamedCExp, Used)
+    go c own xs = case parseChain xs of
+        Just ch =>
+            let ks = map fst ch.stages
+            in if isJust ch.end || null ks || length ks > maxStages
+                  then Nothing
+                  else Just (NmApp fc (NmRef rfc (consumerName c ks)) (map snd ch.stages ++ own ++ [ch.list]),
+                             SortedMap.singleton (show (consumerName c ks)) (WConsume c ks))
+        Nothing => Nothing
+
+||| The direct subexpressions of `e`.
+subs : NamedCExp -> List NamedCExp
+subs (NmLet _ _ v b) = [v, b]
+subs (NmApp _ f as) = f :: as
+subs (NmLam _ _ b) = [b]
+subs (NmCon _ _ _ _ as) = as
+subs (NmOp _ _ as) = toList as
+subs (NmExtPrim _ _ as) = as
+subs (NmForce _ _ t) = [t]
+subs (NmDelay _ _ t) = [t]
+subs (NmConCase _ sc alts def) = sc :: map (\(MkNConAlt _ _ _ _ b) => b) alts ++ maybe [] pure def
+subs (NmConstCase _ sc alts def) = sc :: map (\(MkNConstAlt _ b) => b) alts ++ maybe [] pure def
+subs _ = []
+
+||| Whether the local `x` is read anywhere in `e`.
+mentions : Name -> NamedCExp -> Bool
+mentions x (NmLocal _ y) = x == y
+mentions x e = any (mentions x) (subs e)
+
+||| What the call `f args` (the arguments already rewritten) becomes: a diverted upstream call, a
+||| fused loop for a chain of rc2's own, or a consumer's loop; `Nothing` when it stays as it is.
+tryCall : (fuse : Bool) -> FC -> FC -> Name -> List NamedCExp -> Maybe (NamedCExp, Used)
+tryCall fuse fc rfc f args =
+    case divert fc f args of
+         Just (d, dargs) =>
+             let call' = NmApp fc (NmRef rfc (divertedName d)) dargs
+                 s' = SortedMap.singleton (divertedKey d) (WDiv d)
+             in case the (Maybe (NamedCExp, Used)) (if fuse then parseChain call' >>= fuseChain fc rfc else Nothing) of
+                     Just (fused, u) => Just (fused, unionUsed s' u)
+                     Nothing => Just (call', s')
+         Nothing =>
+             if not fuse then Nothing
+             else case the (Maybe (NamedCExp, Used)) (parseChain (NmApp fc (NmRef rfc f) args) >>= fuseChain fc rfc) of
+                       Just r => Just r
+                       Nothing => consume fc rfc f args
+
+||| `let x = e in call [.., x]` where nothing else reads `x`: the call with `e` for its last
+||| argument (the list), when that is a call to rewrite.
+letCall : (fuse : Bool) -> Name -> NamedCExp -> NamedCExp -> Maybe (NamedCExp, Used)
+letCall fuse x v (NmApp fc (NmRef rfc f) args) =
+    if not fuse then Nothing else
+    case reverse args of
+         (NmLocal _ y :: backFront) =>
+             let front = reverse backFront
+             in if x == y && not (any (mentions x) front) then tryCall fuse fc rfc f (front ++ [v]) else Nothing
+         _ => Nothing
+letCall _ _ _ _ = Nothing
+
 ||| `e` with every upstream call made a call of the diverted function, and the set
 ||| of those used.
 divertCalls : (fuse : Bool) -> NamedCExp -> (NamedCExp, Used)
@@ -200,17 +280,17 @@ divertCalls fuse = go
     go : NamedCExp -> (NamedCExp, Used)
     go (NmApp fc (NmRef rfc f) args) =
         let (args', s) = goList args
-        in case divert fc f args' of
-                Just (d, dargs) =>
-                    let call' = NmApp fc (NmRef rfc (divertedName d)) dargs
-                        s' = unionUsed s (SortedMap.singleton (divertedKey d) (WDiv d))
-                    in case the (Maybe (NamedCExp, Used)) (if fuse then parseChain call' >>= fuseChain fc rfc else Nothing) of
-                            Just (fused, u) => (fused, unionUsed s' u)
-                            Nothing => (call', s')
+        in case tryCall fuse fc rfc f args' of
+                Just (e', u) => (e', unionUsed s u)
                 Nothing => (NmApp fc (NmRef rfc f) args', s)
     go (NmApp fc g args) = let (g', s1) = go g; (args', s2) = goList args in (NmApp fc g' args', unionUsed s1 s2)
     go (NmLam fc x b) = let (b', s) = go b in (NmLam fc x b', s)
-    go (NmLet fc x v b) = let (v', s1) = go v; (b', s2) = go b in (NmLet fc x v' b', unionUsed s1 s2)
+    go (NmLet fc x v b) =
+        let (v', s1) = go v
+            (b', s2) = go b
+        in case letCall fuse x v' b' of
+                Just (fused, u) => (fused, unionUsed (unionUsed s1 s2) u)
+                Nothing => (NmLet fc x v' b', unionUsed s1 s2)
     go (NmCon fc n ci t args) = let (args', s) = goList args in (NmCon fc n ci t args', s)
     go (NmOp fc op args) =
         let (args', s) = goList (toList args)
@@ -296,29 +376,21 @@ indices ks = go 0 ks
     go _ [] = []
     go i (_ :: rest) = i :: go (S i) rest
 
-||| The loop of a fused chain: the stage functions, the list, and for `xs ++ ys` that list too.
-||| One element goes through the stages in turn; a stage that drops it, or the list ending,
-||| leaves the rest to the same call, so the recursive call is the last field of the `::`
-||| that `Compiler.RC2.Trmc` needs.
-fusedDefinition : List Kind -> Bool -> NamedDef
-fusedDefinition ks withTail =
-    MkNmFun (map (local . stageName) (zip' ks) ++ [local "xs"] ++ (if withTail then [local "ys"] else [])) $
-        listCase (var "xs") (if withTail then var "ys" else nil) (build 0 ks (var "x"))
+stageName : Nat -> String
+stageName i = "f" ++ show i
+
+||| The loop over a chain: `name`, with the stage functions, `extra` parameters, and the list
+||| `xs`. One element goes through the stages in turn; a stage that drops it, or the list
+||| ending, leaves the rest to `skip` (the call for the rest of the list), and one that
+||| emits it makes `emit v`. For a `++` the recursive call is the last field of the `::` that
+||| `Compiler.RC2.Trmc` needs.
+loopDefinition : List Kind -> (extra : List String) -> (onNil : NamedCExp) -> (emit : NamedCExp -> NamedCExp) -> (skip : NamedCExp) -> NamedDef
+loopDefinition ks extra onNil emit skip =
+    MkNmFun (map (local . stageName) (indices ks) ++ map local extra ++ [local "xs"]) $
+        listCase (var "xs") onNil (build 0 ks (var "x"))
   where
-    zip' : List Kind -> List Nat
-    zip' ks = indices ks
-
-    stageName : Nat -> String
-    stageName i = "f" ++ show i
-
-    name : Name
-    name = fusedName ks withTail
-
-    recur : NamedCExp
-    recur = call name (map (var . stageName) (zip' ks) ++ [var "rest"] ++ (if withTail then [var "ys"] else []))
-
     build : Nat -> List Kind -> NamedCExp -> NamedCExp
-    build _ [] v = cons v recur
+    build _ [] v = emit v
     build i (KMap :: more) v =
         NmLet emptyFC (local ("v" ++ show i)) (NmApp emptyFC (var (stageName i)) [v])
               (build (S i) more (var ("v" ++ show i)))
@@ -326,21 +398,51 @@ fusedDefinition ks withTail =
         NmConstCase emptyFC (NmApp emptyFC (var (stageName i)) [v])
             -- a Bool is a `B8` constant (upstream's `Compiler.Opts.Constructor.enumTag`)
             [ MkNConstAlt (B8 1) (build (S i) more v)
-            , MkNConstAlt (B8 0) recur ]
+            , MkNConstAlt (B8 0) skip ]
             Nothing
     build i (KMapMaybe :: more) v =
         NmConCase emptyFC (NmApp emptyFC (var (stageName i)) [v])
             [ MkNConAlt (builtin "JUST") JUST (Just 1) [local ("w" ++ show i)] (build (S i) more (var ("w" ++ show i)))
-            , MkNConAlt (builtin "NOTHING") NOTHING (Just 0) [] recur ]
+            , MkNConAlt (builtin "NOTHING") NOTHING (Just 0) [] skip ]
             Nothing
+
+||| The loop of a fused chain: the stage functions, the list, and for `xs ++ ys` that list too.
+fusedDefinition : List Kind -> Bool -> NamedDef
+fusedDefinition ks withTail =
+    let name = fusedName ks withTail
+        fs = map (var . stageName) (indices ks)
+        end = if withTail then [var "ys"] else []
+        recur = call name (fs ++ [var "rest"] ++ end)
+    in case loopDefinition ks [] (if withTail then var "ys" else nil) (\v => cons v recur) recur of
+            MkNmFun args body => MkNmFun (if withTail then args ++ [local "ys"] else args) body
+            other => other
+
+||| The loop of a consumer over a chain.
+consumerDefinition : Consumer -> List Kind -> NamedDef
+consumerDefinition c ks =
+    let name = consumerName c ks
+        fs = map (var . stageName) (indices ks)
+        recur = \own => call name (fs ++ own ++ [var "rest"])
+    in case c of
+            CFoldl => loopDefinition ks ["g", "acc"] (var "acc")
+                          (\v => recur [var "g", NmApp emptyFC (NmApp emptyFC (var "g") [var "acc"]) [v]])
+                          (recur [var "g", var "acc"])
+            CFoldr => loopDefinition ks ["g", "z"] (var "z")
+                          (\v => NmApp emptyFC (NmApp emptyFC (var "g") [v]) [recur [var "g", var "z"]])
+                          (recur [var "g", var "z"])
+            CLength => loopDefinition ks ["n"] (var "n")
+                          (\v => recur [NmOp emptyFC (Add IntegerType) [var "n", NmPrimVal emptyFC (BI 1)]])
+                          (recur [var "n"])
 
 wantedName : Wanted -> Name
 wantedName (WDiv d) = divertedName d
 wantedName (WFuse ks t) = fusedName ks t
+wantedName (WConsume c ks) = consumerName c ks
 
 wantedDefinition : Wanted -> NamedDef
 wantedDefinition (WDiv d) = definition d
 wantedDefinition (WFuse ks t) = fusedDefinition ks t
+wantedDefinition (WConsume c ks) = consumerDefinition c ks
 
 ||| Every program definition rewritten, and the diverted functions that are called
 ||| added (each calls itself, so its own body needs no rewriting).
@@ -351,7 +453,9 @@ applyListDivert fuse main defs =
                            Just m => let (m', s) = divertCalls fuse m in (Just m', s)
                            Nothing => (Nothing, noUsed)
         (defs', used) = foldr (\(n, fc, d), (acc, s) => let (d', s') = rewriteDef d in ((n, fc, d') :: acc, unionUsed s s')) (the (List (Name, FC, NamedDef)) [], s0) defs
-        added = [ (wantedName w, emptyFC, wantedDefinition w) | (_, w) <- SortedMap.toList used ]
+        have = SortedSet.fromList (map (\(n, _, _) => n) defs)
+        -- a second run (after inlining) finds the definitions of the first
+        added = [ (wantedName w, emptyFC, wantedDefinition w) | (_, w) <- SortedMap.toList used, not (contains (wantedName w) have) ]
     in (main', defs' ++ added)
   where
     rewriteDef : NamedDef -> (NamedDef, Used)

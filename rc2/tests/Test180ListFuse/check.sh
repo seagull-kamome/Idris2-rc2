@@ -3,7 +3,7 @@
 # comment); by hand: ./TestN/check.sh build TestN
 # --directive listfuse (rc2/doc/list-divert.md, "Fusion") makes one loop of a chain of
 # map/filter/mapMaybe and of such a call followed by `++`: the named IR has fused loops
-# of each shape, and the output is the same as the default build's.
+# of each shape, a foldl, foldr and length over a chain is one loop too, and the output is the same as the default build's.
 set -u
 TMP="$1"
 name="$2"
@@ -30,6 +30,12 @@ if grep -q 'rc2_fuse_[a-z]*_t' "$on.named"; then
     pass "listfuse: a loop that ends in the second list of a ++"
 else
     fail "listfuse: no fused loop with an end list in $on.named"
+fi
+consumers="$(grep -o 'rc2_\(foldl\|foldr\|length\)_[a-z]*' "$on.named" | sort -u | wc -l)"
+if [ "$consumers" -ge 3 ]; then
+    pass "listfuse: $consumers loops of a fold or length over a chain"
+else
+    fail "listfuse: $consumers fold/length loops (want >= 3) in $on.named"
 fi
 if "$on" | cmp -s - "$here/$name.expected"; then
     pass "listfuse -- same output"

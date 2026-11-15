@@ -79,6 +79,16 @@ it into one loop that allocates only the result.
 - **Where.** Bottom-up in the call rewriting that makes the diverted calls, so an inner chain is
   fused before the one that reads it, and an inner chain that has an end list is not extended
   (`map f (xs ++ ys)` is not `map f xs ++ map f ys`).
+- **Consumers.** `foldl`, `foldr` and `length` (`lengthPlus`) of a chain are one loop too
+  (`rc2_foldl_mf`, `rc2_foldr_m`, `rc2_length_f`): the stages, the consumer's own parameters
+  (`g` and the accumulator, `z`, or the count) and the list. `foldl` and `length` are tail
+  calls, so the loop never builds the list at all; `foldr` keeps the call it had, which makes
+  the result. `sum` and the like are `foldl` once `Foldable` is specialised.
+- **Twice.** Inlining makes the shapes `length (filter p xs)` and `sum (map f xs)` have: a
+  function's list argument becomes a `let` the body reads once (`let l = chain in
+  lengthPlus [0, l]`). So the pass runs a second time after `InlineCExp`, and treats a `let`
+  that only its body's last argument reads as the call's argument; the second run adds no
+  definition the first made.
 - **Intermediate lists are never shared.** A chain is only a call nested directly in the
   argument of the next, so the intermediate list has no other reader.
 
@@ -98,16 +108,17 @@ loops (`traverse_`, `forM_`, `mapM_`) are other functions and are not touched; a
 
 Survey of the compiler's own NamedCExp (static, 3,350 diverted calls): about 70 chains of
 two, 126 `++` whose first argument is `map`, `filter` or `mapMaybe`, and 63 folds
-(`foldMap`, `foldr`, `foldl`) that read one directly. The folds are not fused yet.
+(`foldMap`, `foldr`, `foldl`) that read one directly. `foldMap` is not fused.
 
 | | `listdivert` | `listfuse` |
 |---|---|---|
-| `BenchListFuse` (chains of 3 and `++`, 500k, 40 times) | 2.86 s | 2.28 s (-20%) |
+| `BenchListFuse` (four chains of 500k, two of them consumed by `sum` and `length`, 40 times) | 6.54 s | 5.44 s (-17%) |
 
 The compiler's own `prelude` build (short lists; self-built with the directive, instructions
 and executable size): off 27.964 G, 15.68 MB; `listdivert` 27.984 G, 16.56 MB; `listfuse`
-27.979 G, 16.55 MB. Fusion neither helps nor costs there, and the executable is a little
-smaller than with `listdivert` alone (one loop for a chain instead of one per stage).
+27.990 G, 16.56 MB with the consumers (27.979 G, 16.55 MB before them). Fusion neither helps
+nor costs there.
 
-`Test180ListFuse`: nine fused shapes, with and without an end list, over a list, `[]` and a
-list a filter empties; the output is the same as without the directive.
+`Test180ListFuse`: nine fused shapes, with and without an end list, and a `foldl`, `foldr` and
+`length` over a chain, over a list, `[]` and a list a filter empties; the output is the same as
+without the directive.

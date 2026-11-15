@@ -39,6 +39,23 @@ nested xs = map (* 3) (mEnd xs [10, 20])
 twice : List Int -> (List Int, List Int)
 twice xs = let ys = map (+ 1) xs in (map (* 2) ys, filter (> 3) ys)
 
+-- a fold or `length` of a chain: the list is not built
+sm : List Int -> Int
+sm xs = sum (map (* 2) xs)
+
+ln : List Int -> Nat
+ln xs = length (filter (> 3) xs)
+
+-- order matters: building a list with the folds' own order
+fl : List Int -> List Int
+fl xs = foldl (\acc, x => x :: acc) [] (filter (> 2) (map (+ 1) xs))
+
+fr : List Int -> List Int
+fr xs = foldr (\x, acc => x :: acc) [] (map (+ 1) (filter (> 2) xs))
+
+jl : List Int -> Nat
+jl xs = length (mapMaybe (\x => if x > 4 then Just x else Nothing) (map (+ 1) xs))
+
 main : IO ()
 main = do
   let xs : List Int = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
@@ -57,3 +74,8 @@ main = do
     printLn (cEnd l nilInts)
     printLn (nested l)
     printLn (twice l)
+    printLn (sm l)
+    printLn (ln l)
+    printLn (fl l)
+    printLn (fr l)
+    printLn (jl l)
