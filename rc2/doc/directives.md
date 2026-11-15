@@ -105,6 +105,11 @@ Directives that look like they belong on this list but don't:
   because a program of short lists gains nothing and its code grows (the compiler's
   own executable by 5.5%), while list-heavy programs gain about a quarter of their
   time. Whole-program compiles only. `verify.sh --directive listdivert` exercises it.
+- **`listfuse` is an opt-in stage** that also turns `listdivert` on. It makes one loop of a
+  chain of `map`/`filter`/`mapMaybe` calls, and of such a call followed by `++`, so no list is
+  built between them. The order in which the stage functions run changes (an
+  `unsafePerformIO` or `crash` in one is treated as pure). See `doc/list-divert.md`,
+  "Fusion".
 - **`latepushcon` is the other opt-in stage.** It turns *on*
   `Compiler.RC2.PushCon`'s post-RC push (`applyPushConRC`), right after
   the later `LateInline` run: the same case-into-tails push, with each

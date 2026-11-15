@@ -62,3 +62,52 @@ two checks that count IR nodes against a variant their `check.sh` builds without
 global directive (`Test112Numeric`'s comparison-merge counts, `Test13NativeArgChain`'s
 `noboolfield` counts) report a difference there, as any global directive that changes the
 list code would make them.
+
+## Fusion (`--directive listfuse`)
+
+With `listfuse` (which also turns `listdivert` on) the same pass makes one loop of a chain of
+the diverted calls. A call `rc2_map f (rc2_filter p xs)` made a list that `map` read next; now
+one function, `rc2_fuse_fm`, takes `f`, `p` and `xs` and does both per element, and TRMC turns
+it into one loop that allocates only the result.
+
+- **What is fused.** A chain of `map`, `filter` and `mapMaybe` calls, up to six, each the
+  last argument (the list) of the next; and `xs ++ ys` whose `xs` is such a chain, where the
+  loop ends in `ys` instead of `[]` (`rc2_fuse_mf_t`). A chain of one with no `++` is left as
+  it is. The name spells the stages, first applied first (`m` map, `f` filter, `j` mapMaybe),
+  and `_t` an end list. The definition is made once per shape and per program; a stage
+  function stays a parameter, so `SpecClosure` still specialises it for a constant closure.
+- **Where.** Bottom-up in the call rewriting that makes the diverted calls, so an inner chain is
+  fused before the one that reads it, and an inner chain that has an end list is not extended
+  (`map f (xs ++ ys)` is not `map f xs ++ map f ys`).
+- **Intermediate lists are never shared.** A chain is only a call nested directly in the
+  argument of the next, so the intermediate list has no other reader.
+
+### Design decision: the order of effects is not kept
+
+Fusing changes the order in which the stage functions run: `map f (map g xs)` ran `g` on
+every element and then `f` on every element, and the loop runs `g` and `f` on one element
+and then on the next. For pure functions that is unobservable. A stage function that calls
+`unsafePerformIO`, or `crash`, is taken to be pure by whoever wrote it, and its effects may
+come in a different order or, for a filter that drops an element a later stage would have
+crashed on, not at all. The pass does not look for them: such a function is written knowing
+it may be treated as pure, as it is by every other pass, and the whole stage is opt-in. IO
+loops (`traverse_`, `forM_`, `mapM_`) are other functions and are not touched; a list of
+`IO` actions is only built by `map`, and running them is later.
+
+### Measured
+
+Survey of the compiler's own NamedCExp (static, 3,350 diverted calls): about 70 chains of
+two, 126 `++` whose first argument is `map`, `filter` or `mapMaybe`, and 63 folds
+(`foldMap`, `foldr`, `foldl`) that read one directly. The folds are not fused yet.
+
+| | `listdivert` | `listfuse` |
+|---|---|---|
+| `BenchListFuse` (chains of 3 and `++`, 500k, 40 times) | 2.86 s | 2.28 s (-20%) |
+
+The compiler's own `prelude` build (short lists; self-built with the directive, instructions
+and executable size): off 27.964 G, 15.68 MB; `listdivert` 27.984 G, 16.56 MB; `listfuse`
+27.979 G, 16.55 MB. Fusion neither helps nor costs there, and the executable is a little
+smaller than with `listdivert` alone (one loop for a chain instead of one per stage).
+
+`Test180ListFuse`: nine fused shapes, with and without an end list, over a list, `[]` and a
+list a filter empties; the output is the same as without the directive.
