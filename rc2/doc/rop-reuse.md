@@ -480,7 +480,7 @@ concurrency-related code (see `doc/concurrency.md`).
   of the former single `IDRIS2RC2_INTTYPES`), `IDRIS2RC2_DEFOP_REUSE`,
   `IDRIS2RC2_DOUBLE_BINOP`, and the hand-written `Int64`/`Double`
   `negate`.
-- `rc2/support/rc2/idris2rc2_strings.c` -- the six string primitives above.
+- `rc2/support/rc2/idris2rc2_strings.c` -- the six string primitives of "String operations" below.
 - `rc2/src/Compiler/RC2/Emit/Util.idr` -- `isReuseConsumingOp`, including
   (extension) the `Int64Type`/`Bits64Type`/`DoubleType` cases and the
   matching `IntType` cases added by the double-drop bug fix.

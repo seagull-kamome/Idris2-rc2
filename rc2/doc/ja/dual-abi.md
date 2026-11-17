@@ -30,7 +30,7 @@ fib n = if n < 2 then n else fib (n - 1) + fib (n - 2)
 
 当初の計画(`TODO.md`にある、この作業より前の「Dual calling convention」の項目)では、「エスケープ解析と、不動点によるシグネチャ推論パス」が必要だと想定していた。つまり、手続き間の厳密性解析やunboxing解析で使う古典的な仕組みである。実際には、**どちらの**適格性判定も、関数をまたぐ反復なしに、1関数ずつ局所的に答えられる。
 
-- **パラメータの適格性**は、その関数自身の本体がパラメータをどう読むかだけで決まる。問うのは、一貫してネイティブコンテキストの`ROp`/`RCmpCase`のオペランドとして使われているかどうかである。これは`Compiler.RC2.Loop`の`nativeArgType`が問う内容と同じで、対象がループの持ち回りパラメータだけでなく、トップレベルの全パラメータに広がるだけである。他の関数の情報は一切関係しない。
+- **パラメータの適格性**は、その関数自身の本体がパラメータをどう読むかだけで決まる。問うのは、一貫してネイティブコンテキストの`ROp`/`RCmpCase`のオペランドとして使われているかどうかである。これは`Compiler.RC2.NativeUse`の`nativeArgType`が問う内容と同じで、対象がループの持ち回りパラメータだけでなく、トップレベルの全パラメータに広がるだけである。他の関数の情報は一切関係しない。
 - **末尾位置の戻り値の適格性**は、演算子自身の型タグ(`Types.opResultRep`)から決まる。この型タグは、オペランドがどこから来たかに依存しない。`fib(n-1) + fib(n-2)`は、`fib`がネイティブ値を返すと分かっているかどうかにかかわらず、すでにネイティブRepの`Add`である。既存のネイティブ型推論が、呼び出し境界の問題とは無関係にそう判断しているからである。
 
 局所的に判定できない場面が1つだけある。それ自身の算術を持たない、純粋な末尾呼び出しの委譲である(`g x = h x`。`g`の戻り値の適格性は`h`に依存する)。これはv1の意図的な制限であり、不動点を追いかけず、非適格のままにしている。既存のネイティブRepタグは、オペランドの出自にかかわらず`ROp`/`RCmpCase`を通じて伝播する。このことから、このケースは実際にはあまり多くないと見ている。プロファイリングで多いと分かった場合は、見直す。
@@ -51,7 +51,7 @@ MkRCFun : (args : List (Int, Rep)) -> (retRep : Rep) -> RCExp -> RCDef
 RAppNameRep : FC -> Name -> (argReps : List Rep) -> (retRep : Rep) -> List RCLocal -> RCExp
 ```
 
-`name`のworkerを直接・飽和で呼び出す式である。`argReps`と`retRep`は、この呼び出し1つ1つが各引数と結果をどう表現するかを示す。`RNative ty`なら生のネイティブ値を読み書きし、`RBoxed`なら通常の`RAppName`と同じ扱いになる。クロージャを構築する位置(`RUnderApp`、あるいは`tryBuildClosureInto`が本来クロージャに遅延させる末尾位置)には置けない。クロージャの引数スロットに入れられるのは`IDRIS2RC2_Value *`だけであり、ネイティブな引数を必要とする呼び出しは、その形では表現できないからである。この式を生成するのは`Compiler.RC2.DualABI`だけで、このモジュールは`Compiler.RC2.Loop`の後に動く(後述の「パイプライン上の位置」を参照)。それより前のパスは、この式を生成せず、入力として見ることも想定していない。前のパスで`RCExp`を網羅的にマッチしている箇所(`RC.idr`の`annotate`、`Compiler.RC2.Loop`の`renameRCExp`)には、防御的にこの式をそのまま通す節を追加した。既存の`RLoop`/`RLoopContinue`の節と同じ考え方である。
+`name`のworkerを直接・飽和で呼び出す式である。`argReps`と`retRep`は、この呼び出し1つ1つが各引数と結果をどう表現するかを示す。`RNative ty`なら生のネイティブ値を読み書きし、`RBoxed`なら通常の`RAppName`と同じ扱いになる。クロージャを構築する位置(`RUnderApp`、あるいは`tryBuildClosureInto`が本来クロージャに遅延させる末尾位置)には置けない。クロージャの引数スロットに入れられるのは`IDRIS2RC2_Value *`だけであり、ネイティブな引数を必要とする呼び出しは、その形では表現できないからである。この式を生成するのは`Compiler.RC2.DualABI`だけで、このモジュールは`Compiler.RC2.Loop`の後に動く(後述の「パイプライン上の位置」を参照)。それより前のパスは、この式を生成せず、入力として見ることも想定していない。前のパスで`RCExp`を網羅的にマッチしている箇所(`RC.idr`の`annotate`、`Compiler.RC2.Rewrite`の`renameRCExp`)には、防御的にこの式をそのまま通す節を追加した。既存の`RLoop`/`RLoopContinue`の節と同じ考え方である。
 
 ## パイプライン上の位置
 
@@ -77,7 +77,7 @@ Lifted (Compiler.LambdaLift)
 
 ### `paramEligibility : List Int -> RCExp -> List (Int, Maybe PrimType)`
 
-本体が`Compiler.RC2.Loop`によってすでに`RLoop`で包まれている場合は、そのループの`loopParams`から位置対応で答えをそのまま読み取る。`RLoop`の`initial`は、各ループパラメータの初期値を、構造上つねに同じ位置のトップレベル引数から読む(`Compiler.RC2.Loop.applyLoop`の`initial = map RCLoc argIds`)。したがって、`loopParams`の各項目は`argIds`と位置が揃っており、ここでは追加の確認が要らない。そうでない場合は、`Compiler.RC2.Loop`の`nativeArgType`を使う(再利用のために`export`した)。ループの持ち回りパラメータだけでなく、トップレベルの全パラメータに対して問う。
+本体が`Compiler.RC2.Loop`によってすでに`RLoop`で包まれている場合は、そのループの`loopParams`から位置対応で答えをそのまま読み取る。`RLoop`の`initial`は、各ループパラメータの初期値を、構造上つねに同じ位置のトップレベル引数から読む(`Compiler.RC2.Loop.applyLoop`の`initial = map RCLoc argIds`)。したがって、`loopParams`の各項目は`argIds`と位置が揃っており、ここでは追加の確認が要らない。そうでない場合は、`Compiler.RC2.NativeUse`の`nativeArgType`を使う(再利用のために`export`した)。ループの持ち回りパラメータだけでなく、トップレベルの全パラメータに対して問う。
 
 ### `returnEligibility` / `tailValueReps`
 
@@ -104,7 +104,7 @@ Lifted (Compiler.LambdaLift)
 
 1. 新しいworker名を作る。`freshName`/`freshId`/`FreshId`を使い、`Ref`でカウンタを持ち回る。これは`MutualLoop.idr`がすでに使っている方式と同じである。名前は、`idris2rc2_worker_`、元の関数のマングル済みC名、重複を避けるカウンタを、この順につなげたものになる。マングル済みC名は`Compiler.RC2.Emit.Util`の`cName`で得る(再利用のために`export`した)。wrapperがそのまま使うC名と、まったく同じマングリングである。たとえば`Main.fib`のworkerは`idris2rc2_worker_Main_fib_0`である。ランタイムが所有するCシンボルには`idris2rc2_`接頭辞を付けるというプロジェクトの規約に沿っており、生成物であることが分かる。どの関数のworkerかも名前から分かる。以前の、グローバルカウンタだけの不透明な`rc2_dualABI_N`とは違う。
 2. `workerArgs`を作る。適格な位置のパラメータは`RNative ty`に昇格し、それ以外は`RBoxed`のままにする。**元のパラメータのidをそのまま使うので、名前の付け替えは一切要らない。**これは`Compiler.RC2.Loop`のshadow idの方式より、はっきり単純である。あちらで新しいidが必要だったのは、同じ関数のなかで、すでにあるCパラメータに新しい表現を後付けする必要があったからである。すでに`IDRIS2RC2_Value *`として宣言した名前で`int64_t var_p`をもう一度宣言すると、Cの再宣言エラーになる。workerは**まったく新しい**C関数なので、そのidで衝突する既存の宣言がない。元のidを、新しいネイティブ型でworkerのシグネチャにそのまま宣言し直せる。
-3. `workerBody`を作る。元の本体をそのまま使い、昇格したパラメータの所有権管理のうち、不要になったものを`Compiler.RC2.Loop`の`stripOwnership`(`export`した)で取り除く。手順2では名前を付け替えていないので、付け替えたshadowの集合ではなく、元のパラメータidに対して直接呼ぶ。`stripOwnership`が安全である理由は、「除去対象のidを値として読む箇所は、この時点でどれも一貫してネイティブになっている」というものである。この理由は、`Compiler.RC2.Loop`で使う場合とまったく同じ形でここにも成り立つ。`stripOwnership`のドキュメントコメントは、2つの呼び出し元の両方を説明するよう更新した。
+3. `workerBody`を作る。元の本体をそのまま使い、昇格したパラメータの所有権管理のうち、不要になったものを`Compiler.RC2.Rewrite`の`stripOwnership`(`export`した)で取り除く。手順2では名前を付け替えていないので、付け替えたshadowの集合ではなく、元のパラメータidに対して直接呼ぶ。`stripOwnership`が安全である理由は、「除去対象のidを値として読む箇所は、この時点でどれも一貫してネイティブになっている」というものである。この理由は、`Compiler.RC2.Loop`で使う場合とまったく同じ形でここにも成り立つ。`stripOwnership`のドキュメントコメントは、2つの呼び出し元の両方を説明するよう更新した。
 4. `workerDef`を作る。`MkRCFun workerArgs retRep workerBody`であり、**`retRep`は元の関数のものをそのまま渡す**(現時点では常に`RBoxed`)。`returnEligibility`が何を見つけたかにかかわらず、ここでは昇格しない。これはStage 3aが意図的に限った範囲である。理由は後述の「ステータス」を参照。
 5. `wrapperBody`を作る。workerへの`RAppNameRep`呼び出しを1つだけ置く。引数は元のパラメータ1つにつき1つで、その位置でworkerが決めた`Rep`に従って表現する。
 6. `wrapperDef`を作る。`MkRCFun args retRep wrapperBody`であり、シグネチャとidは元の**まま**である。このため、プログラム中の既存の呼び出し元は、一切変更せずに動き続ける。
@@ -243,7 +243,7 @@ v3 + v5
 
 ### ネイティブへの昇格: `nativePromotionFor`
 
-`Compiler.RC2.Loop`の`nativeArgTypes`を直接再利用する(`nativeArgType`と並べて`export`した)。問う内容は、関数のトップレベルのパラメータについてすでに問うていることと同じだが、対象が、`RLet`に束縛されたworker呼び出しの結果になる。このletのスコープの残りが、その値を、workerの`retRep`の型で、一貫してネイティブコンテキストのオペランドとして読んでいるか、という問いである。読んでいれば、`stripOwnership`を呼ぶ(これで3回目の再利用になる)。ここでも名前の付け替えは不要である。新しい`RLet`の束縛であり、すでに宣言済みのC変数に後付けするわけではないからである。`stripOwnership`は、`annotate`が、通常のBoxedローカルだと仮定して付けた、もう不要なBoxedの寿命管理を取り除く。同じローカルを、ほかの場所でBoxedコンテキストで使う場合がある(たとえばコンストラクタのフィールドへの格納)。その場合も、昇格の有無にかかわらず動き続ける。`rcVarToBoxedC`が、ネイティブ値を必要に応じて再box化するからである。再box化では、この呼び出しが以前生成していたものを共有せず、新しく確保する。スカラ値には観測できる同一性がないので、Idrisのプログラムからは区別できない。
+`Compiler.RC2.NativeUse`の`nativeArgTypes`を直接再利用する(`nativeArgType`と並べて`export`した)。問う内容は、関数のトップレベルのパラメータについてすでに問うていることと同じだが、対象が、`RLet`に束縛されたworker呼び出しの結果になる。このletのスコープの残りが、その値を、workerの`retRep`の型で、一貫してネイティブコンテキストのオペランドとして読んでいるか、という問いである。読んでいれば、`stripOwnership`を呼ぶ(これで3回目の再利用になる)。ここでも名前の付け替えは不要である。新しい`RLet`の束縛であり、すでに宣言済みのC変数に後付けするわけではないからである。`stripOwnership`は、`annotate`が、通常のBoxedローカルだと仮定して付けた、もう不要なBoxedの寿命管理を取り除く。同じローカルを、ほかの場所でBoxedコンテキストで使う場合がある(たとえばコンストラクタのフィールドへの格納)。その場合も、昇格の有無にかかわらず動き続ける。`rcVarToBoxedC`が、ネイティブ値を必要に応じて再box化するからである。再box化では、この呼び出しが以前生成していたものを共有せず、新しく確保する。スカラ値には観測できる同一性がないので、Idrisのプログラムからは区別できない。
 
 `fib`のworkerの、変更前と変更後を示す。
 
@@ -279,17 +279,17 @@ int64_t var_2 = idris2rc2_worker_Main_addAbsCallArg_1(var_3, var_1);
 
 `var_3`は、2つの呼び出しのあいだで`IDRIS2RC2_Value *`を経由する往復をしなくなった。`valgrind`でリークがないことを確認した(`verify.sh`の`LEAK_SENSITIVE_TESTS`に登録済み)。`rc2/tests/verify.sh`全体でも確認し、90 passed、0 known、0 failedだった。
 
-### 昇格を`case`のスクルーティニへ拡張する
+### 昇格を`case`のスクルーティニーへ拡張する
 
-実際のコードで最も影響が大きかった読み取り元が、これである。`Compiler.RC2.Loop`の`nativeArgTypes`は、これまで`RConstCase`の*alt本体*だけを見ており、スクルーティニの位置は見ていなかった。そのため、ネイティブな結果が`case`のスクルーティニとしてのみ読まれるworker呼び出しは、上記のどの情報源にも当てはまらず、`RBoxed`のままだった。
+実際のコードで最も影響が大きかった読み取り元が、これである。`Compiler.RC2.NativeUse`の`nativeArgTypes`は、これまで`RConstCase`の*alt本体*だけを見ており、スクルーティニーの位置は見ていなかった。そのため、ネイティブな結果が`case`のスクルーティニーとしてのみ読まれるworker呼び出しは、上記のどの情報源にも当てはまらず、`RBoxed`のままだった。
 
-出力側に不足はなかった。`Compiler.RC2.Emit`の`emitConstCaseInto`は、`Compiler.RC2.Loop`のネイティブshadow昇格が必要としたときから、スクルーティニをその`Rep`に従って(整数のswitchの経路でも、`Db`の等価比較の経路でも)ネイティブかBoxedで出力してきた。欠けていたのは、適格性の判定だけだった。
+出力側に不足はなかった。`Compiler.RC2.Emit`の`emitConstCaseInto`は、`Compiler.RC2.Loop`のネイティブshadow昇格が必要としたときから、スクルーティニーをその`Rep`に従って(整数のswitchの経路でも、`Db`の等価比較の経路でも)ネイティブかBoxedで出力してきた。欠けていたのは、適格性の判定だけだった。
 
-スクルーティニの寄与は、`nativeArgTypes`/`nativeArgTypesFor`自体に入れた。そのため、この2つの利用側3つが、同時にこの恩恵を受ける。利用側とは、`Compiler.RC2.Loop`のパラメータshadow昇格、このStageの`nativePromotionFor`、`Compiler.RC2.LateInline`の`nativeEligible`である。`applyLoop`のドキュメントコメントには、すでに「カウントダウンの`0`チェック」を対象にするべきだと書いてあった。`LateInline`の`hasNonNativeUse`は、同じ変更のなかで、スクルーティニの出現を不適格の根拠として扱うのをやめる必要があった。この関数と`nativeArgTypes`は、同じ`constAltsNativeType`を共有する。2つの判定が一致しないと、一方がネイティブと呼ぶ値を、もう一方が拒否してしまうからである。
+スクルーティニーの寄与は、`nativeArgTypes`/`nativeArgTypesFor`自体に入れた。そのため、この2つの利用側3つが、同時にこの恩恵を受ける。利用側とは、`Compiler.RC2.Loop`のパラメータshadow昇格、このStageの`nativePromotionFor`、`Compiler.RC2.LateInline`の`loopParamNativeType`である。`applyLoop`のドキュメントコメントには、すでに「カウントダウンの`0`チェック」を対象にするべきだと書いてあった。`LateInline`の`hasNonNativeUse`は、同じ変更のなかで、スクルーティニーの出現を不適格の根拠として扱うのをやめる必要があった。この関数と`nativeArgTypes`は、同じ`constAltsNativeType`を共有する。2つの判定が一致しないと、一方がネイティブと呼ぶ値を、もう一方が拒否してしまうからである。
 
-`constAltsNativeType`は、altが一致させる定数から、`Types.litRep`を使って型を決める。`Types.litRep`は、`BI`と`Str`に対してはすでに`Nothing`を返す。そのため、GMPの`Integer`や`String`のスクルーティニは、Boxedの読み取りのままになる。この2つは、`emitConstCaseInto`がネイティブでの出力を持たない形である。altの型が食い違う場合は、推測せずに完全に拒否する。`nativePromotionFor`の単一性チェックも、ほかの情報源との食い違いを拒否する。
+`constAltsNativeType`は、altが一致させる定数から、`Types.litRep`を使って型を決める。`Types.litRep`は、`BI`と`Str`に対してはすでに`Nothing`を返す。そのため、GMPの`Integer`や`String`のスクルーティニーは、Boxedの読み取りのままになる。この2つは、`emitConstCaseInto`がネイティブでの出力を持たない形である。altの型が食い違う場合は、推測せずに完全に拒否する。`nativePromotionFor`の単一性チェックも、ほかの情報源との食い違いを拒否する。
 
-`RLoop`の`initial=`リストにも、同時に、同じ理由で同じ修正を入れた。`Emit`の`declareLoopParam`は、各項目を`rcVarToNativeC`に通して出力する。このとき使うのは、*そのスロットの*`Rep`である。したがって、すでに`RNative`のスロットを渡すことは、ネイティブの読み取りに当たる。これは、`nativeArgTypes`がこれまで読み飛ばしていた「メタデータ」ではない。1つ前の反復における`RLoopContinue`と同じ事情である。`LateInline`の`hasNonNativeUse`も同様に、`initial`の出現を不適格の根拠とするのをやめた。共有する`Loop.nativeSlotTy`に対して判定する。
+`RLoop`の`initial=`リストにも、同時に、同じ理由で同じ修正を入れた。`Emit`の`declareLoopParam`は、各項目を`rcVarToNativeC`に通して出力する。このとき使うのは、*そのスロットの*`Rep`である。したがって、すでに`RNative`のスロットを渡すことは、ネイティブの読み取りに当たる。これは、`nativeArgTypes`がこれまで読み飛ばしていた「メタデータ」ではない。1つ前の反復における`RLoopContinue`と同じ事情である。`LateInline`の`hasNonNativeUse`も同様に、`initial`の出現を不適格の根拠とするのをやめた。共有する`NativeUse.nativeSlotTy`に対して判定する。
 
 idris2-lsp全体のビルド(24,343個の定義)で、`--directive dumprcexpr`の`callRep`行を使って測定した。
 
@@ -316,6 +316,8 @@ IDRIS2RC2_Value * var_556 = NULL;
 int64_t tmp_22 = var_555;
 if (tmp_22 == UINT8_C(1)) { ... } else { ... }
 ```
+
+(これはStage 4の時点で書いたものである。現在の`Emit`は、すでに変数であるネイティブのスクルーティニーを`tmp_22`にコピーせず、`if`で`var_555`を比較する。)
 
 `rc2/tests/Test13NativeArgChain.idr`の`classify`/`describe`が、`Int`と`Bool`の両方の形をカバーする。`*Neg`という2つ目の呼び出し元も用意してある。これは、`Compiler.RC2.LateInline`の単一呼び出し元インライン化が、Stage 4が呼び出しを見る前にcalleeを展開して消してしまうのを防ぐためである。`verify.sh`は、実行のたびに、どちらのworkerの結果もどの呼び出し箇所でもbox化されていないことを再確認する。出力の差分では、これはまったく検出できないからである。
 
@@ -413,7 +415,7 @@ Stage 3cのworker*名*が存在する理由は、Stage 4が`RAppNameRep`へ書�
 
 `ffiWorkerTable`の1回の走査は、同じデータから作った*2つの*写像を返すようになった。1つ目は、*元の*`%foreign`の名前をキーとし、従来のままのものである。Stage 4の入力になる。2つ目は、*workerとして合成された名前*をキーとし、`inlineFFIWorkers`の入力になる。Stage 4が作った`RAppNameRep`を、Stage 4がそのノードに付けたworker名で見分ける必要があるからである(元の関数の名前は、そのノードのどこにも現れなくなっている)。この写像は、`MkRCForeign`の`ccs`/`fargs`/`ret`のフィールドを、そのまま持つ。これらは、`RAppFFIInline`が呼び出しを直接出力するのに必要なものすべてである。
 
-`inlineFFIWorkers`(ノードごとの走査を実際に行うのは`inlineFFIWorkersExp`)は、全プログラム対象の単独のパスとして、Stage 4の`applyCallSiteRewrite`の後に動く。`applyCallSiteRewriteBody`に組み込まず別のパスにしたのは、`Compiler.RC2.InlineCExp`を`Compiler.RC2.RC`に組み込まず別のパスにしたのと同じ理由である。Stage 4の`RAppName`/`RLet`の書き換えロジックは、それだけですでに込み入っており、FFI固有のマーシャリングの関心事まで加える余裕がない。このパスは、純粋に構造的な、木全体の書き換えである。Rep推論も所有権も末尾位置のロジックも自前で持たない(`Loop.idr`の`renameRCExp`や`ConstFold.idr`の木の走査関数とよく似ている)。2つ目の写像に項目があるworkerを指すすべての`RAppNameRep`が、`RAppFFIInline`になる。このとき`postDrop`と`args`は、完全にそのまま引き継ぐ。これはつねに安全である。`argReps = map repOf fargs`は、2つのノードの形のあいだで不変なので、Stage 4が所有権や昇格について決めたことは、木にどちらの形が残っても正しいままだからである。`Compiler.RC2.RC2`のパイプラインは、これを`applyCallSiteRewrite`の直後に、`pure (inlineFFIWorkers ffiInlineMap rewritten)`として接続している。
+`inlineFFIWorkers`(ノードごとの走査を実際に行うのは`inlineFFIWorkersExp`)は、全プログラム対象の単独のパスとして、Stage 4の`applyCallSiteRewrite`の後に動く。`applyCallSiteRewriteBody`に組み込まず別のパスにしたのは、`Compiler.RC2.InlineCExp`を`Compiler.RC2.RC`に組み込まず別のパスにしたのと同じ理由である。Stage 4の`RAppName`/`RLet`の書き換えロジックは、それだけですでに込み入っており、FFI固有のマーシャリングの関心事まで加える余裕がない。このパスは、純粋に構造的な、木全体の書き換えである。Rep推論も所有権も末尾位置のロジックも自前で持たない(`Rewrite.idr`の`renameRCExp`や`ConstFold.idr`の木の走査関数とよく似ている)。2つ目の写像に項目があるworkerを指すすべての`RAppNameRep`が、`RAppFFIInline`になる。このとき`postDrop`と`args`は、完全にそのまま引き継ぐ。これはつねに安全である。`argReps = map repOf fargs`は、2つのノードの形のあいだで不変なので、Stage 4が所有権や昇格について決めたことは、木にどちらの形が残っても正しいままだからである。`Compiler.RC2.RC2`のパイプラインは、これを`applyCallSiteRewrite`の直後に、`pure (inlineFFIWorkers ffiInlineMap rewritten)`として接続している。
 
 `Emit.idr`は、`RAppFFIInline`を2通りに出力する。`RAppNameRep`が、つねにBoxedで出力する場合とネイティブコンテキストの場合に分かれるのと対応している。
 
@@ -466,7 +468,7 @@ Stage 3b(ネイティブな戻り値)では、新しいバグは見つからな�
 3. **`RAppNameRep`が、ネイティブで読んだBoxed由来の引数を、すべてリークしていた。** Stage 4(呼び出し箇所の書き換え)の設計中に見つかった。Boxedの値をネイティブで読む呼び出し箇所を*さらに増やす*前に、すでにStage 3aのwrapperが、昇格した全パラメータについてまさにそれを行っていたので、信用するだけでなく、実際に調べ直した。`rcVarToNativeC`は、`RAppNameRep`が`RNative`/`RInlineNative`のRepの位置の引数を出力するときに使う、unbox化のアクセサである。これ自身はdupもdropもしない(ドキュメントコメントを参照)。値を読むだけで、元のBoxedの参照は生きたまま残る。`ROp`/`RCmpCase`は、これを、`annotate`が決める`postDrop`フィールドによって、すでに正しく処理している。ところが`RAppNameRep`には、そのようなフィールドがなかった。しかも、`ROp`とは違い、`Compiler.RC2.DualABI`のworker/wrapperの合成は、そもそも`annotate`の所有権解析を通らない。`annotate`が定義全体をすでに処理し終えたずっとあとで、`RAppNameRep`のノードを直接作るからである。そのため、このdropが必要だと判断する処理がどこにもなかった。既存の検証一式では、`Main.fib`のwrapperでこれが表面化しなかった。`fib 30`の間にネイティブへ昇格する値が、すべて小整数キャッシュの範囲(`[0,100)`)に収まっていたからである。この範囲は、不死の、`refCount == IDRIS2RC2_REFCOUNT_MAX`の共有シングルトンに支えられており、その`idris2rc2_drop`は無条件に何もしない。そのため、dropが*欠けている*ことが、正しいdropと区別できなかった。これは、32ビット以下のポインタタグ付けで、このプロジェクトが以前にも一度痛い目を見た、「何もしない処理に隠される」形とまったく同じである。`valgrind --leak-check=full`で、人工的な最悪のケースを使って確認した(`tests/Test174OwnershipLeaks/DualABILeak.idr`。dual-ABIの適格な関数で、昇格するパラメータを、意図的にキャッシュの範囲の外へ追いやってある)。2,000,000回の呼び出しに対し、`31,999,984 bytes in 1,999,999 blocks definitely lost`であり、ほぼ*呼び出し1回につき*確保1回分がリークしていた。修正は、`RAppNameRep`に`postDrop : List RCLocal`のフィールドを持たせることで、`ROp`のものとまったく同じ形にした。`Compiler.RC2.DualABI`の`synthesizeWorker`は、これを追加の作業なしで埋められる。wrapperが昇格するパラメータのidそのものであり、別の目的で`eligible`としてすでに計算してあるからである。`Compiler.RC2.Emit`には、専用の`emitAppNameRepInto`を追加した。`RAppNameRep`は、`emitRC`の「つねにBoxedの文字列を出力し、保留中のdropのリストを持つ余地がない」という振り分けから、`emitInto`のノードごとの振り分けへ移した(`RCmpCase`/`RConCase`などと並ぶ)。この関数は、呼び出しの値が自身の文に埋め込まれた後で、`postDrop`を実行する。`SinkReturn`が対象の場合は、`emitNativeReturn`の「先に一時変数へ実体化する」手法を再利用する(`return`の後には、dropを置く文の位置がないからである)。`SinkVar`が対象の場合は、素直に「確定してからdropする」。こちらには、つねに文の位置がある。再検証では、同じ人工ケースで`valgrind`が`definitely lost: 0 bytes in 0 blocks`と報告した(`total heap usage: 14,000,124 allocs, 14,000,024 frees`。100ブロックの差は、不死の小整数キャッシュであり、リークではない)。refc-suite全体(19/19)と、`tests/Test*.idr`/`Bench*.idr`のマトリクス全体を、本物の`idris2 --cg refc`とバイト単位で再度diffしたが、影響はなかった。
 
 4. **最初のStage 4の試みは、`fib`の再帰呼び出しを、実際には書き換えていなかった(エラーも出なかった)。**最初に動いたビルドは、コンパイルでき、正しく動いた(`fib 30`は`832040`のままだった)。このため、見逃しやすかった。生成されたCを直接読む(このプロジェクトの標準の規律である)ことで初めて、`idris2rc2_worker_Main_fib_0`の本体が、自分自身ではなく`Main_fib`(wrapper)を呼んでいることが分かった。根本原因は、`applyCallSiteRewriteBody`の最初の版が、`RLet`の`value`として*直接*置かれた呼び出しだけを認識していたことである。それ以外の経路で到達した裸の`RAppName`は、「関数全体の末尾位置のはずなので、そのままにする」と扱っていた。この前提は、手で試したすべての形では成り立っていたが、`fib(n - 1)`では成り立たなかった。Phase 1のANF正規化は、呼び出しの*引数*の式を、外側の`RLet`の値の**内側**に、さらに別の`RLet`として入れ子にする(`let v3 = (let v4 = n - 1 in fib v4) in ...`)。そのため、呼び出しそのものは、`RLet`の`value`にならず、走査の「末尾位置のはず」というフォールバックに飲み込まれていた。修正は、明示的な`inTail : Bool`を、走査全体に引き回すことである(`Compiler.RC2.Emit.Util`の`TailPositionStatus`に対応する)。これが`True`になるのは、定義のトップレベルの入口だけである。末尾かどうかを変えない構文には、そのまま渡していく。`RLet`の`value`に入るときは、*つねに*`False`にする。こうすると、裸の`RAppName`をそのままにするのは、`inTail = True`で到達した場合、つまり本当に関数全体の末尾位置の場合だけになる。それ以外の場所では、何らかの値の計算の連鎖の最終的な末尾であり、つねに書き換えて安全である。修正後の設計は、前掲の`applyCallSiteRewriteBody`のドキュメントコメントを参照。
-5. **`nativeArgType`の、「裸の末尾は常にBoxed」という確立した前提は、Stage 4が動く時点では古くなっている。**上のバグ#4を直した後でも、`fib`のworkerは、2つの再帰呼び出しの結果をbox化していた(`idris2rc2_mkInt64(idris2rc2_worker_Main_fib_0(...))`)。その直後に`+`のために、またunbox化していた。昇格そのものが発火していなかった。`Compiler.RC2.Loop`の`nativeArgTypes`(昇格の判断に直接再利用している。前掲の「Stage 4」を参照)は、候補の変数を読む、裸の(さらなる`RLet`に束縛されていない)`ROp`/`RCmpCase`を、意図的に数えない。*そのパス自身の*呼び出し元(`Compiler.RC2.Loop.applyLoop`)にとっては、これは正しい。`applyLoop`は、どの関数の戻り値の適格性が決まるよりも、つねに厳密に前に動く。そのため、`applyLoop`が問う時点では、裸の末尾は本当に、まだ必ずBoxedである。ところが、`v3 + v5`は、`fib`のworkerの裸の末尾そのものである。Stage 4がパイプライン上で動く時点では、その末尾はすでにネイティブで出力されると分かっている(`Compiler.RC2.Emit`の`emitNativeReturn`、Stage 3b)。workerの`retRep`が、すでにネイティブだからである。`nativeArgType`を変更せずに再利用すると、このStage全体が存在する理由である、最も重要なケースを、気づかないうちに取りこぼしていた。`nativeArgTypes`/`nativeArgType`自体には手を触れずに直した(どちらも、ほかの場所ですでに十分に検証されている。そこで必要だった変更は、集合を返す`nativeArgTypes`を、すでに`export`済みの`nativeArgType`と並べて`export`することだけだった)。Stage 4専用の別関数`bareTailNativeReads`を追加し、この1つの追加の形を調べる。その結果を、最終的な「ちょうど1つの一貫した型」の判定の前に、`nativeArgTypes`の結果との和集合にする。生成されたCを直接読んで確認した。`fib`のworkerは、`int64_t var_3 = idris2rc2_worker_Main_fib_0(var_4); ...; return (var_3 + var_5);`と読めるようになった。2つの再帰呼び出しのどちらにも、box化も、unbox化も、dup/dropもない。
+5. **`nativeArgType`の、「裸の末尾は常にBoxed」という確立した前提は、Stage 4が動く時点では古くなっている。**上のバグ#4を直した後でも、`fib`のworkerは、2つの再帰呼び出しの結果をbox化していた(`idris2rc2_mkInt64(idris2rc2_worker_Main_fib_0(...))`)。その直後に`+`のために、またunbox化していた。昇格そのものが発火していなかった。`Compiler.RC2.NativeUse`の`nativeArgTypes`(昇格の判断に直接再利用している。前掲の「Stage 4」を参照)は、候補の変数を読む、裸の(さらなる`RLet`に束縛されていない)`ROp`/`RCmpCase`を、意図的に数えない。*そのパス自身の*呼び出し元(`Compiler.RC2.Loop.applyLoop`)にとっては、これは正しい。`applyLoop`は、どの関数の戻り値の適格性が決まるよりも、つねに厳密に前に動く。そのため、`applyLoop`が問う時点では、裸の末尾は本当に、まだ必ずBoxedである。ところが、`v3 + v5`は、`fib`のworkerの裸の末尾そのものである。Stage 4がパイプライン上で動く時点では、その末尾はすでにネイティブで出力されると分かっている(`Compiler.RC2.Emit`の`emitNativeReturn`、Stage 3b)。workerの`retRep`が、すでにネイティブだからである。`nativeArgType`を変更せずに再利用すると、このStage全体が存在する理由である、最も重要なケースを、気づかないうちに取りこぼしていた。`nativeArgTypes`/`nativeArgType`自体には手を触れずに直した(どちらも、ほかの場所ですでに十分に検証されている。そこで必要だった変更は、集合を返す`nativeArgTypes`を、すでに`export`済みの`nativeArgType`と並べて`export`することだけだった)。Stage 4専用の別関数`bareTailNativeReads`を追加し、この1つの追加の形を調べる。その結果を、最終的な「ちょうど1つの一貫した型」の判定の前に、`nativeArgTypes`の結果との和集合にする。生成されたCを直接読んで確認した。`fib`のworkerは、`int64_t var_3 = idris2rc2_worker_Main_fib_0(var_4); ...; return (var_3 + var_5);`と読めるようになった。2つの再帰呼び出しのどちらにも、box化も、unbox化も、dup/dropもない。
 6. **トップレベルのパラメータが`MaxExtractFunArgs`(8)個を超える、dual-ABIの適格な関数が、コンパイラをクラッシュさせた。**見つけたのは、外部の実在するパッケージ([`idris2-missing-containers`](https://github.com/seagull-kamome/idris2-missing-containers)。再測定は`BENCHMARKS.md`を参照)に対してであり、このプロジェクト自身のテストスイートではない(これほど引数の多い関数が、スイートにはない)。`idris2 --cg refc -p missing-containers -p contrib Main.idr`が、`INTERNAL ERROR: [rc2] RAppNameRep: more than 8 args not yet supported`で即座に失敗した。根本原因は次のとおりである。`RAppNameRep`の出力(`emitAppNameRepInto`と`emitNativeValue`の該当する節。前掲の「Stage 3a」「Stage 4」を参照)には、引数が`MaxExtractFunArgs`個を超える場合の、`var_arglist[]`形式のBoxed配列から取り出すフォールバックがなかった。つねにBoxedな多引数の通常関数については、`createCFunctions`の経路がそのフォールバックをすでに持っている。このパッケージには、ラムダリフトされた内部ヘルパーのうち、9〜23個のパラメータ(外側のスコープから捕捉した自由変数)を持つものがあった。そのうち少なくとも2つは、ネイティブで適格なパラメータを実際に含んでいた。そのため、これだけ引数の多い関数にもworkerが合成され、wrapperからworkerへの呼び出しとして`RAppNameRep`も合成された。この問題はStage 3aから存在しており、Stage 4が持ち込んだものではない。コンパイラをStage 3a/3bまで、さらにこのブランチ全体の出発点となったdual-ABI以前のコミットまで、順にbisectした。どれでも同じクラッシュが再現した。プロジェクト自身のスイートには、この形を動かすテストがまったくなく、このパッケージで実際に試して初めて表に出たためである。修正は、取り出しのフォールバックを作る(実際の作業が要る。しかも、これほど引数の多い関数は、今後も少ないと見込まれる)のではなく、保守的に行った。`applyDualABI`の`synthesizeIfEligible`が、パラメータが`MaxExtractFunArgs`個を超える関数を、dual-ABIの適格から完全に、無条件に除外する。`paramEligibility`/`returnEligibility`が何を判定するかには関係しない。`isMutualLoopMerged`がすでに使っている、一括除外と同じ形である。`MaxExtractFunArgs`自体(`Compiler.RC2.Emit.Util`)は、この再利用のために`export`した。2つの上限が、うっかり食い違うことがないようにするためである。再検証では、refc-suite全体(19/19)と、`tests/Test*.idr`/`Bench*.idr`のマトリクス全体を、本物の`idris2 --cg refc`とバイト単位で再度diffした(これらにはこれほど引数の多い関数がないので、この除外の影響を実際に受けるものはない)。`valgrind`も、リークなしのままだった。**これとは別に**(dual-ABIのバグではなく、環境の問題でもない。ただし、最初はそう見えた)、`idris2-missing-containers`パッケージの`benchmarkHashMap`が、実行時にクラッシュするように見えた(`Unhandled input for Main.case block`)。`idris2-rc2`でも、変更していない上流の`idris2 --cg refc`でも同じ症状が出た。このブランチの元になったすべてのコミットまで、bisectでさかのぼっても、毎回同じ失敗が再現した。しかし本当の原因は、あとでワークスペースを一から再ビルドしたときに分かった。コンパイルしたベンチマークのバイナリを、誤った作業ディレクトリから実行していただけである。`Main.idr`の`benchmarkHashMap`は、パッケージルートからの相対パスで`test/words`と`test/input_large`を開く。`openFile`の失敗に対する`Left`の分岐は書かれていない。そのため、作業ディレクトリが誤っていると、バックエンドやコミットにかかわらず、毎回この「unhandled input」のクラッシュとして現れる。パッケージルートから実行すれば、3つのバックエンド(`idris2-rc2`、本物の`idris2 --cg refc`、Chez上の本物の`idris2`)すべてが正しく完了する(`BENCHMARKS.md`の再測定を参照)。
 7. **続報: 上記の`MaxExtractFunArgs`個を超える引数の除外は、過度に保守的だった。一括除外のままにせず、きちんと直した。**そもそもなぜ除外が必要だったのかを見直した。項目6が先送りにした、`var_arglist[]`形式の取り出しのフォールバックは、`support/rc2/runtime.c`のクロージャディスパッチの関数ポインタ型(`IDRIS2RC2_FUN0`〜`FUN20`/`FUNSTAR`。すべて`IDRIS2RC2_Value*`のみ)に合わせるためだけに存在する。この規約が意味を持つのは、*`Closure`経由でディスパッチされる*可能性のある関数だけである。dual-ABIの**worker**は、そうならない。workerに到達できるのは、静的に名前の決まった、完全に飽和した直接の`RAppNameRep`呼び出し(自身のwrapperの本体から、またはStage 4の非末尾の呼び出し箇所の書き換えから)だけであり、`Closure`には格納されない。クロージャのディスパッチと互換性を保つ必要があるのは、**wrapper**(元の関数の名前で、つねにBoxed)のほうであり、項目6のクラッシュの原因は、そもそもwrapperではなかった。したがって、本当の修正は、項目6が先送りにした「実際の作業」であるフォールバックを作ることではない。workerにそのフォールバックを必要としない扱いを与えることである。`MkRCFun`に`isWorker`フィールドを追加した(`True`になるのは`synthesizeWorker`が作るworkerだけで、wrapperを含むほかのすべては`False`)。`Compiler.RC2.Emit`の`createCFunctions`は、`var_arglist[]`形式の宣言に切り替えるのを、worker以外が`MaxExtractFunArgs`個を超えるパラメータを持つ場合だけにした。workerは、パラメータの幅にかかわらず、位置ごとに個別の型を持つパラメータ(適格な位置はネイティブ)を保つ。`applyDualABI`の`synthesizeIfEligible`は、引数の多い関数をもう除外しない(残るのは`isMutualLoopMerged`だけである)。`rc2/tests/Test118FFI/WideDualABIWorker.idr`で検証した(パラメータ10個。ネイティブで適格な`Int`が9個と、`Boxed`の`String`が1個で、元の`idris2-missing-containers`の形に合わせてある)。生成されたCは、`idris2rc2_worker_Main_wideAdd_0`を、10個の個別のパラメータ(`int64_t`が9個、`IDRIS2RC2_Value *`が1個)で宣言する。呼び出しは直接で、`var_arglist[]`もbox化もトランポリンも関与しない。refc-suite全体、スモークテストのマトリクス、`valgrind`(`0 bytes definitely lost`)は、すべて引き続き通る。Stage 3c自身の、別立てのFFI workerの除外(`ffiWorkerTable`の`length fargs > MaxExtractFunArgs`)には手を付けなかった。理由は`TODO.md`の注記を参照。
 8. **`MaxExtractFunArgs`自体を8から20に引き上げ、`support/rc2/runtime.c`もそれに合わせて拡張した。**項目7のworkerの除外免除と、Stage 3cの`ffiWorkerTable`の除外は、どちらも新しい閾値へ自動的に移る。同じ記号定数を使っているので、どちらの箇所にもコードの変更は要らない。ランタイム側は、実際に変更が必要だった。`idris2rc2_dispatchClosure`のswitchは、`case 0`〜`case 8`しか持たず、それより広いアリティは`default`/`IDRIS2RC2_FUNSTAR`に落ちていた。そのため、アリティ9〜20の本物の`Closure`は、型の付いた関数ポインタではなく、型のない`var_arglist[]`の経路を、気づかないうちに通ってしまう。これに該当するのは、ネイティブで適格なパラメータを持つ引数の多い関数の*wrapper*が、直接呼ばれずに部分適用される場合である(workerそのものは、項目7のとおり、この形でディスパッチされない)。`IDRIS2RC2_FUN9`〜`IDRIS2RC2_FUN20`のtypedef(既存の`FUN0`〜`FUN8`と同じ手書きの書式)と、`dispatchClosure`の`case 9`〜`case 20`を追加した。`runtime.c`には、`MaxExtractFunArgs`の所在として`Compiler/RC2/RC2.idr`を指す、古くなったコメントがあった。実際の所在である`Compiler/RC2/Emit/Util.idr`に直した。`rc2/tests/Test118FFI/WideDualABIWorker.idr`の`add20`(以前は別ファイルの`Test34WideClosureDispatch.idr`だったが、統合した)で検証した。20パラメータの関数に、本物の部分適用の連鎖(直接の飽和呼び出しではない)で到達する。これにより、本物の`Closure`と`dispatchClosure`を経由させ、新しい`case 9`〜`case 20`の経路を動かす。同じファイルの`wideAdd`/`prim__wide`は、worker側の幅の免除を動かす。`verify.sh`の`LEAK_SENSITIVE_TESTS`に登録し、`valgrind`で`0 bytes definitely lost`を確認した。refc-suite全体(19/19)とスモークテストのマトリクスは引き続き通り、`bench.sh`でも性能の後退はない。
@@ -535,7 +537,7 @@ Cのスカラ値を返すworkerは、遅延した末尾呼び出しであるク�
 
 ### 数値
 
-idris2-lspで、同じコンパイラのビルドを使い、`--directive noboolret`を既定と比べて測定した(表はTODO.mdのBoolの節を参照)。
+idris2-lspで、同じコンパイラのビルドを使い、`--directive noboolret`を既定と比べて測定した(表は`TODO.md`のBoolの節にあった。gitの履歴を参照)。
 
 | idris2-lsp、最終`dumprcexpr` | `noboolret` | 既定 |
 |---|---|---|
@@ -546,15 +548,15 @@ idris2-lspで、同じコンパイラのビルドを使い、`--directive nobool
 | `callRep`の呼び出し箇所 | 13,798 | 14,827 |
 | `drop`の行 | 81,195 | 80,495 |
 | `dup`の行 | 81,222 | 81,222 |
-| `0`/`1`のスクルーティニの`drop`で始まる`case`のアーム | 3,381 | 2,633 |
+| `0`/`1`のスクルーティニーの`drop`で始まる`case`のアーム | 3,381 | 2,633 |
 | DualABIステージの時間 | 1.96 s | 2.19 s |
 | コンパイル全体(FFIエラーまで) | 56.6 s | 57.0 s |
 
 `rcexpr-lint`は、新しいダンプに異常を報告しなかった。ネイティブを返す末尾の`callRep`のために、Leak/Borrowで必要になった変更はなかった。
 
-型付き定数のcaseスクルーティニ(`--directive noboolcase`)も、このステージに関わる。`applyCallSiteRewrite`は、それらのローカルを`postDrop`から外す(`doc/native-type-inference.md`の「Typed-constant case scrutinees」)。
+型付き定数のcaseスクルーティニー(`--directive noboolcase`)も、このステージに関わる。`applyCallSiteRewrite`は、それらのローカルを`postDrop`から外す(`doc/native-type-inference.md`の「Typed-constant case scrutinees」)。
 
-このプランが扱わないものがある。`MutualLoop`がマージしなかった相互再帰(末尾呼び出しの循環)は、Boxedの戻り値のままである。crashを末尾に持つ関数、Boxedのローカルを末尾に持つ関数、クロージャ呼び出しを末尾に持つ関数は、プランに入らない。パラメータとコンストラクタのフィールドは、第3段階の対象である。Boolを返す委譲の連鎖を持つマイクロベンチマークでは、実行時間に測定できる差は出なかった(どちらの場合も`Bool`は即値である)。得られる効果は、unbox化、`drop`、およびアームの先頭にあるスクルーティニの`drop`がなくなることである。
+このプランが扱わないものがある。`MutualLoop`がマージしなかった相互再帰(末尾呼び出しの循環)は、Boxedの戻り値のままである。crashを末尾に持つ関数、Boxedのローカルを末尾に持つ関数、クロージャ呼び出しを末尾に持つ関数は、プランに入らない。パラメータとコンストラクタのフィールドは、第3段階の対象である。Boolを返す委譲の連鎖を持つマイクロベンチマークでは、実行時間に測定できる差は出なかった(どちらの場合も`Bool`は即値である)。得られる効果は、unbox化、`drop`、およびアームの先頭にあるスクルーティニーの`drop`がなくなることである。
 
 テストは`Test13NativeArgChain`である(`eqBTree`、`brCountLt`、`brDelegA`、`brSel`/`brSel2`、`brMixed`、`brChain`、`brDeepNot`、`filter`/`map`経由のクロージャ)。`check.sh`は、`ret= Native Bits8`のworker、委譲の末尾の直接の`callRep`、再帰する`&&`の条件の直接の`callRep`を検証する。さらに、`--directive noboolret`で再コンパイルし、呼び出しが末尾にある関数がBits8のworkerを失うことも検証する。
 
@@ -581,7 +583,8 @@ Stage 3c+5(FFI呼び出し箇所のインライン化)について。`rc2/tests/
     `applyCallSiteRewrite`は、Stage 3cの、元の名前をキーとするテーブルを明示的な引数として受け取り、`MkRCFun`から作る`workerTable`に`mergeWith const`で併合する。それ以外は変わらない。Stage 4自身は、Stage 5の存在を知らない。
   - `inlineFFIWorkersExp`/`inlineFFIWorkers`(Stage 5)。`RAppNameRep`を`RAppFFIInline`へ書き換える、木全体の書き換えで、`applyCallSiteRewrite`の後に動き、Stage 3cの、workerの名前をキーとするテーブルを使う。
 - `rc2/src/Compiler/RC2/RCExp.idr`: `MkRCFun`の新しい形、`RAppNameRep`(参照リークの修正のために追加した`postDrop`フィールドを、`ROp`のものと同じ形で持つようになった)、`RAppFFIInline`(Stage 5)。`RAppFFIInline`は、`%foreign`宣言の`ccs`/`fargs`/`ret`のフィールドをそのまま持つ。`RAppNameRep`の`argReps`/`retRep`とは違い、意図的に事前計算していない。置き換え元の`RAppNameRep`から、そのまま引き継ぐ`postDrop`フィールドも持つ。
-- `rc2/src/Compiler/RC2/Loop.idr`: `nativeArgType`/`nativeArgTypes`/`stripOwnership`を、`Compiler.RC2.DualABI`が再利用できるように`export`した。`renameRCExp`には、防御的な`RAppNameRep`の通過の節を追加した(`postDrop`の名前の付け替えも行う)。
+- `rc2/src/Compiler/RC2/NativeUse.idr`: `nativeArgType`/`nativeArgTypes`を、`Compiler.RC2.DualABI`が再利用できるように`export`した。
+- `rc2/src/Compiler/RC2/Rewrite.idr`: 同じ再利用のために`stripOwnership`を`export`した。`renameRCExp`には、防御的な`RAppNameRep`の通過の節を追加した(`postDrop`の名前の付け替えも行う)。
 - `rc2/src/Compiler/RC2/RC.idr`: `normalizeDef`/`annotateDef`を、`MkRCFun`の新しい形に合わせて更新した。`annotate`には、防御的な`RAppNameRep`の通過の節を追加した。
 - `rc2/src/Compiler/RC2/MutualLoop.idr`: `MkRCFun`の新しい形に合わせて更新した(マージ関数と各メンバーのwrapperは、このパスの設計どおり、どちらも無条件につねに`RBoxed`)。
 - `rc2/src/Compiler/RC2/Emit.idr`: 次を含む。

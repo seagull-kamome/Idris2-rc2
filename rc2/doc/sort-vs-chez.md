@@ -1,11 +1,12 @@
 # `sort` against Chez: stacked causes (measured 2026-09-26)
 
-Moved from `TODO.md`, which keeps the causes still open.
+Moved from `TODO.md`, which keeps what is still open: the breakdown at the end.
 
 `Data.List.sort` of 1M pseudo-random `Int`s took 4.18s on rc2 and
 1.23s on Chez. Cause 1 is fixed (`Compiler.RC2.DeadArgs`,
 `rc2/doc/dead-args.md`), which brings `sort` to 3.21s, and the smaller
-constructor cells of `rc2/doc/constructor-layout.md` to 3.12s. The rest remain.
+constructor cells of `rc2/doc/constructor-layout.md` to 3.12s. The other
+causes were fixed later (the list below).
 Each cause was isolated by an experiment on copies of `Data.List`'s own
 code:
 
@@ -29,8 +30,9 @@ code:
    specialisation").
 3. **Fixed: atomic reference counts.** Plain until the program goes
    multi-threaded: `sort` 3.17s to 2.45s (`rc2/doc/hybrid-refcount.md`).
-4. **glibc malloc** (-33% with mimalloc). See "a small-object
-   allocator in the runtime" below.
+4. **Fixed: glibc malloc** (-33% with mimalloc). rc2's own cell pool
+   replaces it for small cells (`rc2/doc/small-object-allocator.md`,
+   "Results").
 5. **Fixed: boxed `Int`.** An `Int` within 62 bits is now immediate
    (`rc2/doc/immediate-ints.md`).
 

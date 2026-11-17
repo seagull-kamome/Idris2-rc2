@@ -25,8 +25,11 @@ pre-existing bug this extension surfaced.
 RCConstPartial : Name -> (missing : Nat) -> (caps : List RCLocal) -> RCLocal
 ```
 
-Unlike `RCConstCon`, this is a true leaf: a zero-filled closure has no
-captured arguments at all, so there's nothing nested to recurse into.
+In the form this document is about, `caps` is empty (`RCConstPartial n
+missing []`). Unlike `RCConstCon`, that is a true leaf: a zero-filled
+closure has no captured arguments at all, so there's nothing nested to
+recurse into. (A closure whose captures are constants, `caps` not empty,
+is the last section.)
 `IsConstPartialLocal` is its own narrow witness type (mirroring
 `IsConstLocal`'s reasoning for `RCConstCon`), and `IsAnyConstLocal`
 gains a fifth constructor, `ItIsConstPartial2`, so a dictionary field
@@ -246,7 +249,7 @@ cost -- the one allocation-per-call this document is about. Dispatch
 ### Saturated application of a folded closure is now a direct call
 
 The half of that gap that turns out not to be hard at all:
-`RCConstPartial` is a true leaf with **no captured values**, so its
+`RCConstPartial n missing []` is a true leaf with **no captured values**, so its
 `missing` is the callee's whole remaining arity, and an application
 supplying exactly that many arguments leaves nothing deferred. It is
 a plain direct call. `foldConst`'s own `RApp` case rewrites it:
@@ -269,8 +272,10 @@ Measured over a whole idris2-lsp build: of 16,400 `apply` nodes, 4,842
 targeted a constant closure and 3,881 of those saturated it. `apply`
 16,400 -> 12,519, `call` 49,530 -> 53,409. An under-application
 (`length args < missing`, the remaining 961) still needs a real
-closure and is unchanged; over-application can't occur, since
-`RC.idr`'s own `collectAppChain` never merges past a saturation point.
+closure and is unchanged. An over-application does not come from
+`RC.idr`'s own `collectAppChain`, which never merges past a saturation
+point, but specialisation can make one: see "Over-application of a folded
+closure" below.
 
 ### Still open
 
@@ -553,12 +558,13 @@ with `--directive noapplyfold`, and the output is the same.
 ## Closures over constants (`RCConstPartial`)
 
 A `partial f missing caps` whose captured values are all constants (literals,
-`RCEmptyCon`, `RCConstCon`, `RCConstPartial`, or another `RCConstPartial`) is itself a
+`RCEmptyCon`, `RCConstCon`, or another `RCConstPartial`, with captures or without) is itself a
 constant: `ConstFold` makes it `RCConstPartial f missing caps`, and `Emit.Util`
 (`boxedConstPartialExpr`) stages one immortal `IDRIS2RC2_ConstClosureArgs<n>` (the layout of
 `IDRIS2RC2_Closure`; `arity = filled + missing`, `filled = length caps`, the captures in
 `args`), once per distinct value. The IR dump shows `#f/missing~closure(caps)`. A
-zero-capture closure stays an `RCConstPartial`.
+zero-capture closure is the same constructor with no captures (`caps = []`), the form of the
+sections above.
 
 Emission already made such a closure a static (`staticClosure`, `static-closures.md`) when it
 met an `RUnderApp` over constants, so the gain here is not in the allocation but in the IR:
@@ -566,7 +572,7 @@ the closure is a constant value for the passes before `Emit`. A dictionary that 
 constructor of closures over constants folds to an `RCConstCon`, a `case` on it and the
 `apply` of a field are resolved, and the closures are compared and deduplicated as values.
 
-- An `apply` of one is resolved as for an `RCConstPartial`, with the captures first:
+- An `apply` of one is resolved as for the zero-capture form, with the captures first:
   `length ys == missing` gives the call `f (caps ++ ys)`, fewer arguments a `partial` that
   captured `caps ++ ys` (a constant again, when the next round of the fold sees it).
   An application with more arguments than the closure misses is split into the saturating

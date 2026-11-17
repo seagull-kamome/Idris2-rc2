@@ -17,7 +17,8 @@ all PASS).
 
 ## What is replaced, and why
 
-rc2 rewrites some upstream `%foreign` functions **while it generates the C**:
+rc2 rewrites some upstream `%foreign` declarations **when it turns the program into
+`RCDef`s** (`normalizeTop`, before any C is generated):
 instead of the C function the declaration names, the program calls a function of
 rc2's own that takes the `String` value itself. This is done for two reasons, and
 for these functions only (`diverted` in `Compiler/RC2/ForeignDivert.idr` is the

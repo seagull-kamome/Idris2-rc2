@@ -112,8 +112,8 @@ check on the named case trees (it also looks at scrutinees), and it applies to
 the last parameter of the case tree's function, which is only sometimes the
 world; where it is not, a prefix that hands that parameter to a call or copies
 it keeps the function from being raised, which costs an optimization but not
-correctness (`TestTask`: 22 raised functions before, 21 after; `Test92`,
-`Test93`: unchanged). Not looked at, as above: a world captured by a lambda in
+correctness (`TestTask`: 22 functions raised by the case-tree run before
+`actsIn`, 21 with it; `Test92`, `Test93`: unchanged). Not looked at, as above: a world captured by a lambda in
 the prefix, and the arguments of a tail call. `Test171ArityRaiseCases/ArityRaiseCancelWorld`
 is the regression test.
 
@@ -122,7 +122,8 @@ is the regression test.
 and through a local action. Without the guard all three leave the result
 at 0. `libs/control-async/tests/TestTask` hits the same thing through the library.
 
-Raised functions / raised call sites, before the guard and with it (`TestWidget`
+Raised functions / raised call sites of the RCExp run, before its guard
+(`worldInPrefix`) and with it, the case-tree run's `actsIn` not yet there (`TestWidget`
 and `TestProgram` of termui, `TestWebAPIPure`, `Test92ArityRaise`,
 `Test93ApplyFold`, `TestTask`): 8/12 and 8/12, 21/38 and 16/29, 2/10 and 2/10,
 3/8 and 3/8, 3/5 and 3/5, 11/16 and 6/15. The functions lost are the `Async`

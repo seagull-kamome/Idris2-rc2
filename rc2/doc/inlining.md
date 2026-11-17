@@ -566,9 +566,10 @@ something, pushes into a definition or changes one by a fold, up to `maxEarlyInl
 A round counts as one that changed something only when a call was spliced
 (`SpliceCount`), not when a definition merely calls a callee that is
 conditionally eligible: the second reading never converged, and the early
-inline ran the full 8 rounds eight times over (`idris2-lsp`: 222 s). A caller
-of a tiny callee that is neither at most `tinyAlwaysSize` nodes nor builds a
-closure (`hasClosure`) is not walked at all.
+inline ran the full 8 rounds eight times over (`idris2-lsp`: 222 s). For a tiny
+callee of more than `tinyAlwaysSize` nodes, a caller is not walked at all unless
+the caller itself builds a closure (`hasClosure` of the caller's body,
+`splicesInto`).
 
 ### Rounds are incremental
 

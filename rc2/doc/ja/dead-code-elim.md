@@ -38,7 +38,7 @@ Compiler.RC2.InlineCExp
 
 ### ウォーカー: `usedFunctionNamesD`
 
-到達可能性の解析でたどる必要のある`Name`は、`RCExp`が直接呼び出しうる名前(`RAppName`、`RAppNameRep`)と、クロージャを作るためにファーストクラスの値として参照する名前(`RUnderApp`、および`ConstFold`が畳み込んだ`RCConstClosure`)である。`usedFunctionNamesD`は、これら4種類の`Name`に対するコールバックを、`Compiler.RC2.RCExp`の`foldRCNamesD`に渡しただけのものである。`foldRCNamesD`は、すべての`RCExp` / `RCLocal`のコンストラクタを網羅する、catch-allのないfoldで、`RCExp`側に1回だけ書かれている。`Compiler.RC2.Emit.ExternRefs`にある2つの前方宣言用のウォークも、これを共有している(同じ再帰に対して、異なる問いを立てている)。新しいコンストラクタを追加したときに更新が必要なのは`foldRCNamesR`の1か所だけで、ウォーカーごとに直す必要はない。また、`_ = empty`のように取りこぼしを黙って許す既定の節もない。そのため、`RLoop`の本体や`DualABI`が書き換えた呼び出し箇所の中にある参照が、気づかないうちに落とされることはない。この2か所は、このパスが最も注意して調べたい場所である。`RCExp.idr`にある従来の`freeLocalsR` / `countUsesR` / `usedConstructorsR`は、別々のままである。これらは、それぞれ別のもの(自由な`RCLocal`、使用回数、*コンストラクタ*名)を蓄積し、catch-allの節も持つ。そのため、ここには初めから適していなかった。
+到達可能性の解析でたどる必要のある`Name`は、`RCExp`が直接呼び出しうる名前(`RAppName`、`RAppNameRep`)と、クロージャを作るためにファーストクラスの値として参照する名前(`RUnderApp`、および`ConstFold`が畳み込んだ`RCConstPartial`)である。`usedFunctionNamesD`は、これら4種類の`Name`に対するコールバックを、`Compiler.RC2.RCExp`の`foldRCNamesD`に渡しただけのものである。`foldRCNamesD`は、すべての`RCExp` / `RCLocal`のコンストラクタを網羅する、catch-allのないfoldで、`RCExp`側に1回だけ書かれている。`Compiler.RC2.Emit.ExternRefs`にある2つの前方宣言用のウォークも、これを共有している(同じ再帰に対して、異なる問いを立てている)。新しいコンストラクタを追加したときに更新が必要なのは`foldRCNamesR`の1か所だけで、ウォーカーごとに直す必要はない。また、`_ = empty`のように取りこぼしを黙って許す既定の節もない。そのため、`RLoop`の本体や`DualABI`が書き換えた呼び出し箇所の中にある参照が、気づかないうちに落とされることはない。この2か所は、このパスが最も注意して調べたい場所である。`RCExp.idr`にある従来の`freeLocalsR` / `countUsesR` / `usedConstructorsR`は、別々のままである。これらは、それぞれ別のもの(自由な`RCLocal`、使用回数、*コンストラクタ*名)を蓄積し、catch-allの節も持つ。そのため、ここには初めから適していなかった。
 
 `Name`を持つコンストラクタのうち、2つは意図的に除外している。
 
@@ -64,7 +64,11 @@ Compiler.RC2.InlineCExp
 
 次のことを直接確かめた。このパスに、`ccs`(宣言自身の`%foreign`呼び出し規約を表す生の文字列)がまだ残っている`RAppFFIInline`の展開に現れるかどうかを追跡させ、名前による参照がなくても`ccs`が必要な`MkRCForeign`のエントリは残す、という版を作ってみた。しかし、実際には何も削除しなかった。これを発動させるために作ったテストはすべて`Inline` / `DualABI`を通り、上記の2つの仕組みによってエントリが残されたからである。テストされず、実際には到達しない複雑さを出荷するのではなく、この版は取り除いた。
 
-**ただし、これで話が尽きるわけではない。** `Compiler.RC2.ConstFold`の`RConstCase`による「定数に対するcaseの畳み込み」(`foldConst`の`findConstAlt`)は、`Inline` / `DualABI`とはまったく無関係の*3つ目の*仕組みであり、部分木をまるごと捨てる。caseのスクルティニーが既知の定数に解決されると、ノード全体がマッチした枝の本体だけに置き換えられ、ほかのすべての枝は、中にある`%foreign`呼び出しも含めて、そのまま捨てられる。コードジェネレータ識別の分岐(`prim__codegen`を`Compiler.RC2.ConstFold`の`constExtPrimValue`が文字列リテラルに畳み込んだもの)や、真偽値の`RConstCase`に渡される畳み込み済みの比較は、まさにこの形にコンパイルされる。このようにして除去された分岐の中にしか呼び出し箇所がない宣言は、実際にすべての呼び出し元を失い、`MkRCForeign`も例外ではない。前述の、取り除いた`ccs`の追跡の仕組みであれば、この1つのケースは正しく捕捉できたはずだった。上のテストが通した2つの仕組みを経由しないだけである。これ以上は追求しないことにした。静的に除去される分岐の中にある、呼び出し箇所が1つだけの`%foreign`宣言という、まれな場合に限られ、取り除いた追跡の仕組みを復活させる価値はまだないと判断した。復活させる場合に必要な作業は、`TODO.md`の該当項目を参照。
+**ただし、これで話が尽きるわけではない。** `Compiler.RC2.ConstFold`の`RConstCase`による「定数に対するcaseの畳み込み」(`foldConst`の`findConstAlt`)は、`Inline` / `DualABI`とはまったく無関係の*3つ目の*仕組みであり、部分木をまるごと捨てる。caseのスクルーティニーが既知の定数に解決されると、ノード全体がマッチした枝の本体だけに置き換えられ、ほかのすべての枝は、中にある`%foreign`呼び出しも含めて、そのまま捨てられる。コードジェネレータ識別の分岐(`prim__codegen`を`Compiler.RC2.ConstFold`の`constExtPrimValue`が文字列リテラルに畳み込んだもの)や、真偽値の`RConstCase`に渡される畳み込み済みの比較は、まさにこの形にコンパイルされる。このようにして除去された分岐の中にしか呼び出し箇所がない宣言は、実際にすべての呼び出し元を失い、`MkRCForeign`も例外ではない。前述の、取り除いた`ccs`の追跡の仕組みであれば、この1つのケースは正しく捕捉できたはずだった。上のテストが通した2つの仕組みを経由しないだけである。これ以上は追求しないことにした。静的に除去される分岐の中にある、呼び出し箇所が1つだけの`%foreign`宣言という、まれな場合に限られ、取り除いた追跡の仕組みを復活させる価値はまだないと判断した。復活させる場合に必要な作業は、`TODO.md`の該当項目を参照。
+
+### 書き出さないが、削除もしない(`Emit`)
+
+上の「生じえない」という議論は、もう古い。呼び出しがすべて`RAppFFIInline`になった`%foreign`宣言には呼び出し元が残らず、これは実際に起こる。`System.Posix.Signal`の`prim__SIGCONT`がその例である(その呼び出しは`%inline`された定数で、`(SIGCONT)`として埋め込まれる)。`%inline`のwrapperを通してしか使われない`%foreign`も同様である。defはリストに残す。`collectDeclarations`が、インライン化された各呼び出しの`#include`と`-l`をそこから取り出すからである(見つかったバグの1)。構造体のテーブルも同様である。その代わりに`generateCSourceFile`は、どのdefもその名前を指さず(`usedFunctionNamesD`、このパスの到達可能性の判定)、どの`%export`も指さない場合、そのプロトタイプとCのwrapperを書き出さない。これはプログラム全体のコンパイルのときに限る。単独でコンパイルされるモジュール(`dropUnimplementableForeign`)は他のモジュールから呼ばれるので、wrapperをすべて残す。`tests/Test179PassThrough`は、wrapperが消え、ヘッダが引き続きインクルードされることを検証する。
 
 ## 見つかって修正したバグ
 

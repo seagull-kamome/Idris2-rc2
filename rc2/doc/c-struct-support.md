@@ -699,7 +699,7 @@ and fixed:
 Every other site audited (`Reuse.idr`'s `tryClaim`/`tryConsume`/
 `resolveReuse`, `ConAltNative.idr`'s `peelWrappers`/
 `applyConAltNativeExp`, `MutualLoop.idr`'s `tailCallTargets`/
-`buildGroup` -- which delegates renaming entirely to `Loop.idr`'s own
+`buildGroup` -- which delegates renaming entirely to `Rewrite.idr`'s own
 `renameRCExp`, already fixed alongside the initial implementation --
 and `DualABI.idr`'s `tailValueReps`/`applyCallSiteRewriteBody`)
 confirmed its own wildcard fallthrough is already correct for both new

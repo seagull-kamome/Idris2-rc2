@@ -31,49 +31,65 @@ A/Bの回帰切り分けのための機能である。たとえば「この差�
 | ディレクティブ | 無効にするもの |
 |---|---|
 | `noinline` | `Compiler.RC2.InlineCExp`のプログラム全体のインライン化(ラムダリフティングの前に走る)。2つの基準が両方とも無効になる。1つは、呼び出しを含まない小さな呼び出し先を、すべての呼び出し箇所でインライン化するもの。もう1つは、ループを含まない呼び出し先を、唯一の呼び出し箇所でインライン化するもの。その後のcase-of-caseの畳み込みも無効になる(`doc/inlining.md`)。 |
-| `noconstfold` | `Compiler.RC2.ConstFold`のプログラム全体の不動点畳み込み。算術、比較、コンストラクタ、クロージャ、CAFの畳み込みと、定数`ExtPrim`の畳み込み(`prim__codegen`)が含まれる。定数`ExtPrim`の畳み込みは、`Compiler.RC2.ConstExtPrim`パスを統合して以降、このディレクティブでも無効になる。 |
+| `noinlinecalls` | `Compiler.RC2.InlineCExp`の基準A'だけを無効にする。名前付き関数の飽和した呼び出しを*含む*小さな本体(6ノード以下で、ラムダ、delay、force、foreign呼び出しを含まず、どの呼び出しの循環にも属さないもの)を、すべての呼び出し箇所に展開する基準である(`doc/inlining.md`の "Criterion A'")。 |
+| `nonatmagic` | `Compiler.RC2.NatMagic`。定数時間の本体に置き換えず、上流の再帰的な`Data.Nat.isLTE`と`lte`をそのまま使う(`doc/nat-magic.md`)。 |
+| `noconstfold` | `Compiler.RC2.ConstFold`のプログラム全体の不動点畳み込み。算術、比較、コンストラクタ、クロージャ、CAFの畳み込みと、定数`ExtPrim`の畳み込み(`prim__codegen`、および`target-os=dynamic`でなければ`prim__os`。第9節)が含まれる。定数`ExtPrim`の畳み込みは、`Compiler.RC2.ConstExtPrim`パスを統合して以降、このディレクティブでも無効になる。 |
 | `noknowncon` | `Compiler.RC2.ConstFold`の既知コンストラクタの畳み込みだけを無効にする。これは、同じ関数内で構築された、エスケープしないコンストラクタに対する`case`を解決し、構築そのものを消すものである(`doc/constructor-escape-analysis.md`の "Rewrite A")。そのクロージャ版(エスケープしない部分適用に対する、飽和した`apply`を、直接呼び出しに変える)も無効になる。`ConstFold`のそれ以外の部分は、引き続き走る。`noconstfold`が暗黙に含む。`Compiler.RC2.PushCon`(変更した定義)と`Compiler.RC2.SpecClosure`(そのクローン)が行う再畳み込みは、この畳み込みを保つ。完了のためにそれを前提としているからである。 |
-| `nopushcon` | `Compiler.RC2.PushCon`。これは、`case`を、スクルティニーとなる値の各末尾へ押し込み、コンストラクタを構築する各末尾がそれ自身のaltだけに出会って畳み込まれるようにする(`doc/constructor-escape-analysis.md`の "Rewrite B")。押し込みはConstFoldが仕上げることを前提にしているので、`noconstfold`が暗黙に含む。 |
+| `nopushcon` | `Compiler.RC2.PushCon`。これは、`case`を、スクルーティニーとなる値の各末尾へ押し込み、コンストラクタを構築する各末尾がそれ自身のaltだけに出会って畳み込まれるようにする(`doc/constructor-escape-analysis.md`の "Rewrite B")。押し込みはConstFoldが仕上げることを前提にしているので、`noconstfold`が暗黙に含む。 |
 | `nospecclosure` | `Compiler.RC2.SpecClosure`の、投機的な、採算が見込める場合に限って行うクロージャ引数の特殊化。呼び出し箇所で観測した、クロージャのターゲットごとに関数を複製し、`apply`を直接の`call`に解決する(`doc/speculative-closure-specialization.md`)。 |
 | `nospecconstcon` | `Compiler.RC2.SpecClosure`の、定数コンストラクタ引数の特殊化。呼び出し箇所で観測した、定数辞書ごとに呼び出し先を複製し、分解する`case`を畳み込んで消し、各メソッドの`apply`を直接の`call`に解決する(`doc/constant-constructor-specialization.md`)。同じモジュールにあるが、`nospecclosure`とは別のスイッチである。特殊化の対象とする引数の形が異なるからである。 |
 | `noconaltnative` | `Compiler.RC2.ConAltNative`のネイティブシャドウによるフィールドキャッシュ(`doc/con-alt-native.md`)。 |
 | `nomutualloop` | `Compiler.RC2.MutualLoop`の相互末尾再帰のマージ。 |
 | `noloop` | `Compiler.RC2.Loop`の、自己末尾呼び出しから`goto`への変換と、ネイティブシャドウ/ループ不変式の昇格(`doc/loop-conversion.md`)。 |
 | `noearlyinline` | `Compiler.RC2.LateInline`の、呼び出し元が1つだけの関数のスプライシングのうち、早期に走る実行。SpecConstConの直後、RCアノテーションの前に走り、その後、結果に対してConstFold/PushConで畳み込み直す(`doc/constructor-escape-analysis.md`の "The shapes `LateInline` creates")。CAFは決してスプライスしない。`nolateinline`と`noconstfold`が暗黙に含む。 |
+| `notinyinline` | 早期インライン化のうち、ごく小さな呼び出し先の基準だけを無効にする(`doc/inlining.md`の "Criterion C: tiny callees")。2個以下の`RCExp`ノードからなる呼び出し先も、呼び出し元が構築したクロージャを引数に取る8個以下のノードからなる呼び出し先も、すべての呼び出し箇所に展開されなくなる。早期インライン化は、従来どおり1ラウンドだけ走る。`noearlyinline`、`nolateinline`、`noconstfold`が暗黙に含む。 |
+| `nopushapply` | `Compiler.RC2.PushApply`。適用対象が分岐する値であり、その末尾のどれかがクロージャを構築するか遅延値をforceする場合に、`apply`をその各末尾へ移す。こうすると、それぞれが構築されずにその場で適用される(`doc/inlining.md`の "Pushing an apply into the tails")。早期インライン化の一部なので、`noearlyinline`、`nolateinline`、`noconstfold`が暗黙に含む。 |
 | `nolateinline` | `Compiler.RC2.LateInline`の、プログラム全体で呼び出し元が1つだけの関数のインライン化。Loop/MutualLoopの変換の後に走る(`doc/inlining.md`の "Criterion B, revisited")。 |
 | `nosink` | `Compiler.RC2.Sink`の枝ローカルなsinking(`doc/branch-sinking.md`)。 |
 | `nocmpmerge` | `Compiler.RC2.CmpMerge`。同じオペランドに対する2つの入れ子の比較(`<`/`==`、`>`/`==`)で`then`分岐が等しいものを、1つの`<=`/`>=`ノードにまとめる。分岐が等しい比較は取り除く(`doc/native-type-inference.md`の "Merging nested comparisons")。 |
 | `nodualabi` | `Compiler.RC2.DualABI`のワーカー/ラッパの合成と、呼び出し箇所の書き換えの*両方*をまとめて無効にする。書き換えは、合成の段階が作るワーカーの表を必要とするので、両者を分けても意味がない(`doc/dual-abi.md`)。 |
 | `noboolret` | `Compiler.RC2.DualABI`のBool返却(`boolReturnPlan`、`applyBoolReturnTails`)。すべての末尾が`B8`リテラル、ネイティブの`Bits8`の値、またはそのような関数の呼び出しである関数は、ネイティブの`Bits8`を返す(`doc/dual-abi.md`の "Bool return")。 |
-| `noboolcase` | 型付き定数のcaseスクルティニーの規則(`Types.typedConstScrutinees`)。altがすべて`B8`/`Char`/`Int8`...の定数である`RConstCase`が調べるローカルには、`dup`/`drop`を付けない(`doc/native-type-inference.md`の "Typed-constant case scrutinees")。また、DualABIの呼び出し箇所の書き換えは、そのようなローカルを`postDrop`から取り除かなくなる。 |
+| `noboolcase` | 型付き定数のcaseスクルーティニーの規則(`Types.typedConstScrutinees`)。altがすべて`B8`/`Char`/`Int8`...の定数である`RConstCase`が調べるローカルには、`dup`/`drop`を付けない(`doc/native-type-inference.md`の "Typed-constant case scrutinees")。また、DualABIの呼び出し箇所の書き換えは、そのようなローカルを`postDrop`から取り除かなくなる。 |
 | `noboolfield` | 型付き定数の規則のフィールド側。`Reuse.resolveReuse`と`ConAltNative.shadowOneField`は、型付き定数の`case`が調べるコンストラクタのフィールドに、参照カウント操作(drop前の`dup`、`dupOnShared`/`dropOnUnique`のエントリ、導出し直した`drop`)を残さなくなる(`doc/native-type-inference.md`の "Always-unboxed constructor fields")。`noboolcase`でも無効になる。 |
 | `noapplyfold` | `LateInline`の直後に走る`Compiler.RC2.ArityRaise.applyFoldApplied`。構築と同時に適用されるクロージャ(それ以外ではdropされるだけのもの)を、呼び出しに変える(`doc/world-arity-raising.md`の "Post-RC fold")。 |
 | `nodeadargs` | `Compiler.RC2.DeadArgs`。唯一の使用が別の死んだパラメータへ渡すことだけであるパラメータと、すべての呼び出しでのその引数を取り除く(`doc/dead-args.md`)。インクリメンタルコンパイルでは常に無効である。 |
 | `noarityraise` | `Compiler.RC2.ArityRaise`。もう1つの引数(world)を待つクロージャを返す関数に、その引数を取るバージョンを作り、クロージャをすぐに適用する呼び出しが、そのバージョンを呼ぶようにする(`doc/world-arity-raising.md`)。 |
-| `notrmc` | `Compiler.RC2.Trmc`。再帰呼び出しがコンストラクタの下にある関数(`x :: f xs`)に、前のセルの穴を埋めてループする、アキュムレータ付きの双子の関数を作る(`doc/trmc.md`)。 |
-| `noctx` | `Compiler.RC2.ClosureCtx`。自己呼び出しのたびに`c . (y ::)`で拡張され、最後に一度だけ適用されるパラメータを、開いた穴を持つセルの連鎖に変える(`doc/closure-accumulator.md`)。 |
-| `nostructreturn` | `Compiler.RC2.DualABI`の構造体返却(`applyStructReturn`)。すべての末尾が最大4フィールドのコンストラクタで、呼び出し元のどれかが恩恵を受ける関数に、`IDRIS2RC2_Ret1`〜`IDRIS2RC2_Ret4`の構造体を返すワーカーを作る。結果をすぐにswitchする呼び出しは、そのワーカーに到達する(`doc/struct-return.md`)。`nodualabi`が暗黙に含む。 |
+| `notrmc` | `Compiler.RC2.Trmc`。再帰呼び出しがコンストラクタの下にある関数(`x :: f xs`)に、前のセルのホールを埋めてループする、アキュムレータ付きの双子の関数を作る(`doc/trmc.md`)。 |
+| `noctx` | `Compiler.RC2.ClosureCtx`。自己呼び出しのたびに`c . (y ::)`で拡張され、最後に一度だけ適用されるパラメータを、開いたホールを持つセルの連鎖に変える(`doc/closure-accumulator.md`)。 |
+| `nonullparams` | `Compiler.RC2.NullParams`。すべての呼び出し元がworldまたは消去された値を渡すパラメータ、あるいは`%foreign`のworldの引数位置に届くパラメータには、ワーカー側の`dup`/`drop`を付けず、不透明な`NULL`ポインタとして渡す(`doc/null-params.md`)。`nodualabi`が暗黙に含む。 |
+| `nostructreturn` | `Compiler.RC2.DualABI`の構造体返却(`applyStructReturn`)。すべての末尾が最大8フィールドのコンストラクタで、呼び出し元のどれかが恩恵を受ける関数に、`IDRIS2RC2_Ret1`〜`IDRIS2RC2_Ret8`の構造体を返すワーカーを作る。結果をすぐにswitchする呼び出しは、そのワーカーに到達する(`doc/struct-return.md`)。`nodualabi`が暗黙に含む。 |
 | `nomutualstruct` | `MutualLoop`でマージされた関数に対する、`Compiler.RC2.DualABI`の構造体返却。無効にすると、従来どおり`structReturnPlan`から除外される(`doc/struct-return.md`の "Eligibility")。`nostructreturn`と`nodualabi`が暗黙に含む。 |
 | `nodeadcode` | `Compiler.RC2.DeadCode`による、呼び出し元が1つも残っていない定義の削除(`doc/dead-code-elim.md`)。 |
 | `nopushdown` | `Compiler.RC2.PushDown`。`case`の直前に並ぶ`dup`/`drop`ノードの連なりを各分岐へ移し、`dup`が、その分岐自身の同じローカルの`drop`と出会うようにする(`doc/pushdown.md`)。 |
 | `nodupmerge` | `Compiler.RC2.DupMerge`による、複数の個別の`RDup`ノードを、`extra`の大きい1つの`RDup`にまとめる処理と、`cancelDupDrop`のピープホール最適化。後者は、ある`RDup`のローカル変数を、参照カウントだけの同じ連なりの中の`RDrop`、またはその`dup`の直後にある読み取り専用ノードの`postDrop`が再び解放する場合に、両者を打ち消す。エイリアスの`let x = w; drop [x]`は`drop [w]`になる。 |
+| `noleaftail` | `Compiler.RC2.LeafTail`の直接の末尾呼び出し。既知の関数への末尾呼び出しは、すべて元どおりトランポリン用のクロージャを経由する。`leaf-tail-calls.md`を参照する。 |
+| `nofwdalias` | `Compiler.RC2.FwdAlias`。自分のパラメータを順にそのまま渡して別の関数を呼ぶだけの関数が残り、それを名指すクロージャもすべて残る。`fwd-alias.md`を参照する。 |
+| `noconstalias` | `Compiler.RC2.DeadVars`による、`let x = <constant>`と`x`の`dup`/`drop`の除去(代わりにその定数を直接読む)。`dead-vars.md`の "Constant aliases" を参照する。 |
 | `noreusenested` | `Compiler.RC2.Reuse`による、`let`の*値*(`case`/`let`の木)の中での同名コンストラクタの探索。本体が何も確保を主張していない場合に働く。無効にすると、再利用のパスは従来どおりに動く(`doc/reuse-analysis.md`の "Nested let values")。 |
 | `noreuserecheck` | `Compiler.RC2.Reuse.recheckReuse`。`DualABI`の後に走るパスで、死んだオファー(内側のオファーがそのコンストラクタを確保したため、先頭で解放されたもの)に、`DualABI`の構造体返却が内側の確保を取り除いた場合、確保の権利を与え直す。無効にすると、再利用の結果は`Reuse`が残したままになる(`doc/reuse-analysis.md`の "Re-checking dead offers after DualABI")。 |
 
 この一覧に入りそうで、入らないディレクティブがある。
 
-- **`noreuse`は廃止されており、単に記載が漏れているわけではない。** かつては`Compiler.RC2.Reuse`を無効にするものだった。しかし無効にすると、ほとんどのスモークテストで確実にヒープが壊れ、根本原因は診断されないままだった。現在`applyReuse`は常に無条件で走る。今日`--directive noreuse`を渡しても、ほかの認識されないディレクティブ文字列と同じく、害のないno-opになる。2026-09-25に、有力な根本原因が見つかった。`Reuse`の`resolveReuse`は、`annotate`が`Reuse`に任せているフィールドの`dup`(`dupOnSurvive`)も挿入する。そのため`Reuse`がないと、スクルティニーをdropしたあとで読まれるフィールドは、自分自身の参照を持たない。これは、`refc-suite/clock`で、同じ関数の`RMemoize`ケースが欠けていたために生じた解放後使用と同じ現象である(`doc/caf-memoization.md`)。
-- **`latepushcon`は、唯一のオプトインの段階である。** `Compiler.RC2.PushCon`のRC後の押し込み(`applyPushConRC`)を、あとの`LateInline`の実行の直後に*有効にする*。同じ、caseを末尾へ押し込む処理だが、既知の各末尾を、明示的な所有権の移転によって、そのaltに対して畳み込む(`doc/constructor-escape-analysis.md`の "What is left after Early inline, and the RC-aware fold")。デフォルトで無効なのは、idris2-lspでは243個の末尾を畳み込むものの、静的なコンストラクタの数が変わらないからである。実際のワークロードで測定できるように残してある。デフォルトのスイートはこれを実行しないので、この部分に手を入れたあとは`verify.sh --directive latepushcon`を実行すること。無効化のディレクティブと同じリストで渡される(`RC2.idr`の`optInStageNames`)。
+- **`noreuse`は廃止されており、単に記載が漏れているわけではない。** かつては`Compiler.RC2.Reuse`を無効にするものだった。しかし無効にすると、ほとんどのスモークテストで確実にヒープが壊れ、根本原因は診断されないままだった。現在`applyReuse`は常に無条件で走る。今日`--directive noreuse`を渡しても、ほかの認識されないディレクティブ文字列と同じく、害のないno-opになる。2026-09-25に、有力な根本原因が見つかった。`Reuse`の`resolveReuse`は、`annotate`が`Reuse`に任せているフィールドの`dup`(`dupOnSurvive`)も挿入する。そのため`Reuse`がないと、スクルーティニーをdropしたあとで読まれるフィールドは、自分自身の参照を持たない。これは、`refc-suite/clock`で、同じ関数の`RMemoize`ケースが欠けていたために生じた解放後使用と同じ現象である(`doc/caf-memoization.md`)。
+- **`listdivert`はオプトインの段階である。** `Compiler.RC2.ListDivert`を*有効にする*。上流の2パスの末尾再帰による`++`/`map`/`filter`/`mapMaybe`を、TRMCが1つのループにする素朴な定義に置き換える(`doc/list-divert.md`)。デフォルトで無効なのは、短いリストしか扱わないプログラムでは得るものがなく、コードが大きくなる(コンパイラ自身の実行ファイルで5.5%)からである。一方、リストを多用するプログラムでは、実行時間の約4分の1が減る。プログラム全体のコンパイルでのみ使える。`verify.sh --directive listdivert`でこれを試せる。
+- **`listfuse`はオプトインの段階であり、** `listdivert`も有効にする。`map`/`filter`/`mapMaybe`の呼び出しの連鎖と、そのような呼び出しに`++`が続く形を1つのループにし、そのあいだにリストを作らない。各段階の関数が走る順序は変わる(その中の`unsafePerformIO`や`crash`は純粋なものとして扱われる)。`doc/list-divert.md`の "Fusion" を参照する。
+- **`deadfields`はオプトインの段階である。** `Compiler.RC2.DeadFields`を有効にする。結果をすぐに分解し、一部のフィールドを読まない呼び出しは、それらのフィールドを作らない関数のコピーを呼ぶようになる。上流の`isLTE`のような、`Dec`を返す再帰はループになる。デフォルトで無効なのは、コンパイラとlambda-rogueでは測定できる差が出なかったからである(`doc/dead-fields.md`)。
+- **`latepushcon`も、もう1つのオプトインの段階である。** `Compiler.RC2.PushCon`のRC後の押し込み(`applyPushConRC`)を、あとの`LateInline`の実行の直後に*有効にする*。同じ、caseを末尾へ押し込む処理だが、既知の各末尾を、明示的な所有権の移転によって、そのaltに対して畳み込む(`doc/constructor-escape-analysis.md`の "What is left after Early inline, and the RC-aware fold")。デフォルトで無効なのは、idris2-lspでは243個の末尾を畳み込むものの、静的なコンストラクタの数が変わらないからである。実際のワークロードで測定できるように残してある。デフォルトのスイートはこれを実行しないので、この部分に手を入れたあとは`verify.sh --directive latepushcon`を実行すること。無効化のディレクティブと同じリストで渡される(`Stage.idr`の`OptIn`)。
 - **`nomain`は、現在も使える本物のディレクティブだが、パイプライン段階の無効化ではない。** `compileExpr`で、独立した素の`Bool`として直接読まれ、`toRCDefs`/`disabled`を通らない。制御するのは、`Compiler.RC2.Emit`の`footer`がCの`main()`を出力するかどうかだけである。このディレクティブが想定する、端から端までのシナリオ(`%export`したプログラムを、独自の`main`を提供する手書きのCドライバにリンクする)は、後述の第5節と`doc/export-support.md`の "Linking as a library" を参照する。生成される`main()`は、ランタイムのライフサイクルフックを呼ぶ場所でもある。したがって、`nomain`のドライバは、`idris2rc2_rtInit()` / `idris2rc2_rtFinish()`を自分で呼ばなければならない(`doc/runtime-lifecycle.md`を参照)。
 - **`multithreaded`** は、生成される`main()`が、`idris2rc2_rtInit()`の直後に参照カウントをアトミック操作へ切り替えるようにする。ランタイムから見えない場所でスレッドが始まるプログラム向けである(`doc/hybrid-refcount.md`)。`nomain`のドライバは、代わりに`idris2rc2_enableMultiThreading()`を自分で呼ぶ。
 
 ## 3. デバッグダンプのディレクティブ
 
-4つとも`directiveList`を共有する。検査は、`toRCDefs`がすでに結果を生成した*あと*に行われる(第2節の段階の無効化は、`toRCDefs`自身が走る*前*に参照する必要があり、この点が異なる)。
+いずれも`directiveList`を共有する。検査は、`toRCDefs`がすでに結果を生成した*あと*に行われる(第2節の段階の無効化は、`toRCDefs`自身が走る*前*に参照する必要があり、この点が異なる)。
 
 - **`dumprcexpr`**: 無効にされなかったすべてのパイプライン段階を経た最終的な`RCExp`を、`.c`の出力の隣の`.rcexpr`ファイルにダンプする。形式のリファレンスと読み方は`doc/reading-the-ir.md`を参照する。
+- **`dumpnamed`**: `lowerProgram`がこれからラムダリフティングする名前付きのcase tree(`NamedDef`。上流の`--dumpcases`の形式)を、インライン化、デッド引数の除去、アリティの引き上げの後の状態で、`.named`ファイルにダンプする(プログラム全体のコンパイルでのみ)。`noinline`と組み合わせると、インライン化の前の状態を見られる。
 - **`dumpdualabi`**: `Compiler.RC2.DualABI`のStage 2の適格性解析を、`.dualabi`ファイルにダンプする。仕組みは`dumprcexpr`と同じである。`doc/dual-abi.md`を参照する。1行目には、値で返す資格のある関数の数が出力され、そのような関数の行は、末尾が` ret1`で終わる(`doc/struct-return.md`)。
+- **`staticlib`**、**`sharedlib`**: `%export`した関数を、実行ファイルの代わりに`lib<name>.a` / `lib<name>.so`にビルドし、その隣に`<name>.h`(プロトタイプ)と`<name>.link`(リンクフラグ)を書き出す。`nomain`を暗黙に含み、互いに排他である。プログラム全体のコンパイルでのみ使える。`doc/library-output.md`を参照する。
+- **`sharedruntime`**: 実行ファイルのリンク、または静的ライブラリの`.link`の出力を、ランタイムのアーカイブではなく`shared/libidris2rc2.so`に対して行う。rc2でビルドした共有ライブラリをプログラムが使うための方法である。`doc/library-output.md`を参照する。
+- **`dumppending`**: `Compiler.RC2.Pending`の`.pending`ファイルを書き出す(プログラム全体のコンパイルでのみ)。非末尾の呼び出し箇所の数と、そのうちトランポリンが不要なものの数を出力し、続いて、保留中のクロージャを決して返さない関数のC名を列挙する。`doc/trampoline-elision.md`を参照する。
 - **`dumpcc`**: これから実行するCのコンパイル/リンクコマンドを、そのまま標準出力に出力する。
+- **`keepforeign`**: すべての`%foreign`宣言のCラッパを書き出す。どの呼び出しからももう名指されていないもの(呼び出しがすべてインライン化されたもの)も含む。これがないと、プログラム全体のビルドではそのようなラッパを書き出さない。ヘッダとライブラリは残す(`doc/dead-code-elim.md`の "Not written, but not pruned")。ラッパの形を読むテストのためのものである。
 - **`dumplifts`**: リフトされた定義を、その元となったトップレベル定義、ラムダだったか`Delay`(`LazyReason`つき)だったか、自身のパラメータ数とともに列挙する`.lifts`ファイルを書き出す。`doc/lambda-lifting.md`を参照する。
 
 ## 4. コード注入のディレクティブ
@@ -139,11 +155,37 @@ Dirent = Struct "struct dirent" [("d_ino", Bits64), ("d_name", String)]
 
 ## 8. 時間計測の診断(`timing`)
 
-ほとんどのパスは、すでに自分の実時間を無条件に出力している。`logTime`/`logTimeOver`を、0でない閾値で呼ぶ方式であり、出力するかどうかは、上流の通常の`log`/ログレベルの仕組みで決まる。ここで述べるディレクティブは関係しない。たとえば`Compiler.RC2.RC2.toRCDefs`が、各段階の前後で呼ぶ`logTime 2 "rc2: ..."`を参照する。`Compiler.RC2.SpecClosure`自身の、パス全体レベルの4行(収集とグループ化、機会/キー/定義の件数、`rebuildCafTable`、`redirectAll`)だけが例外である。この4行は、もともと`O(distinct keys x program size)`の遅さを診断する際に、永続的に無条件で出力されるように残してあった(`log`/ログレベルも、ディレクティブも迂回する)。この遅さを直した経緯は`doc/speculative-closure-specialization.md`に書いてある。その調査はとうに終わっているので、今は`--directive timing`を指定したときだけ出力される(`applySpecClosure`の`maybeLogTimeOver`)。本書のほかのオプトインの診断と同じ扱いである。
+ほとんどのパスは、すでに自分の実時間を無条件に出力している。`logTime`/`logTimeOver`を、0でない閾値で呼ぶ方式であり、出力するかどうかは、上流の通常の`log`/ログレベルの仕組みで決まる。ここで述べるディレクティブは関係しない。たとえば`Compiler.RC2.RC2.toRCDefs`が、各段階の前後で呼ぶ`logTime 2 "rc2: ..."`を参照する。`Compiler.RC2.SpecClosure`自身の、パス全体レベルの各ステップの行(収集とグループ化、`rebuildCafTable`、`buildAll`、`redirectAll`)だけが例外である。これらの行は、もともと`O(distinct keys x program size)`の遅さを診断する際に、永続的に無条件で出力されるように残してあった(`log`/ログレベルも、ディレクティブも迂回する)。この遅さを直した経緯は`doc/speculative-closure-specialization.md`に書いてある。その調査はとうに終わっているので、今は`--directive timing`を指定したときだけ出力される(`applySpecClosure`の`maybeLogTimeOver`)。本書のほかのオプトインの診断と同じ扱いである。
 
 ```sh
 idris2-rc2 --cg rc2 --directive timing Program.idr -o program
 ```
+
+同じディレクティブは、特殊化のラウンドごとに、各半分(`SpecRound N: closure half` / `const-con half`)の時間と、その各ステップの時間も出力する。ステップは、キーの収集、クローンの構築と畳み込み(`buildAll`、`buildConstAll`)、プログラム全体のリダイレクトである。半分の時間のうち、これらのステップに含まれないのは、受理、テーブルの更新、件数の集計である。各ラウンドは、`SpecRound N`の要約行も1行出力する。内容は、各半分が残したクローンの数、定義の数(とそのうち新しいものの数)、ノードの総数である。
+
+## 9. ターゲットOS(`target-os=<name>`)
+
+`System.Info.os`は`prim__os`である。rc2はデフォルトで、これをコンパイル時に、コンパイラが動いているOSの名前へ畳み込む。生成されるCの先頭には、CコンパイラのターゲットがそのOSであるかを確かめる検査が入る。
+
+```c
+#ifndef IDRIS2RC2_OS_IS_LINUX
+#error "rc2: prim__os was folded to \"Linux\" (target-os), ..."
+#endif
+```
+
+したがって、ディレクティブを付け忘れたクロスビルドは、誤った名前のまま動くのではなく、Cコンパイラの段階で止まる。
+
+| 値 | 意味 |
+|---|---|
+| なし、または`host` | コンパイラのOS。Chezバックエンドは、macOS以外のUnixをすべて`unix`としか言わないので、rc2は`uname -s`に問い合わせる。それが失敗した場合は動的なままにする。 |
+| `windows`、`macOS`、`Linux`、`FreeBSD`、`OpenBSD`、`NetBSD`、`Unix`、`Other` | クロスビルド用の、そのOS。大文字と小文字を区別しない。`darwin`、`mingw32`、`cygwin32`も受け付ける。 |
+| `dynamic` | 畳み込まない。`prim__os`は`idris2rc2_osString`を読み、その値はCコンパイラが決める(`support/rc2/idris2rc2_ioprims.h`)。検査は出力しない。 |
+
+畳み込んだ値は、そのOSでランタイム自身が返す文字列なので、2つのモードの結果は一致する。これは、コンパイラ自身のChezバックエンドが返す文字列(`unix`、`darwin`)とは異なる。それらの文字列と比較するプログラムは、rc2ではもともと誤っている。
+
+1つのビルドの中で異なる値を指定すること(`%cg`プラグマと`--directive`を併用した場合も含む)と、未知の名前はエラーになる。`noconstfold`は、畳み込みと検査の両方を無効にする。`Test148TargetOs`が各ケースを検査する。
+
+畳み込んだ`os`はCAFの中の文字列リテラルであり、`ConstFold`は文字列リテラルを伝播しない(`let`で束縛された`Str`は、所有権を追跡し続けるために`RCLoc`を保つ)。そのため`isWindows`や`case os of`は、依然として実行時に1回だけ判定される。`TODO.md`を参照する。
 
 ## ファイル
 

@@ -163,7 +163,7 @@ RStructGet : FC -> (structVar : RCLocal) -> StructField -> (postDrop : List RCLo
 RStructSet : FC -> (structVar : RCLocal) -> StructField -> (value : RCLocal) -> (postDrop : List RCLocal) -> RCExp
 ```
 
-`StructField`は、構造体の宣言済みのフィールドリスト、フィールドの名前と`CFType`、そのフィールドがリストに含まれることの、消去される証明である。`RStructSet`はUnitに評価される。`postDrop`は`ROp`の`postDrop`フィールドと同じ役割だが、意味はより狭い。このノードが最後の使用になるオペランド (`structVar`、`RStructSet`では`value`も) を並べたもので、読み書きのあとにdropされる。Phase 1の直後は`[]`である。どちらのノードも、`dup`は一切挿入しない。`RCExp`を走査するすべてのパスに、2つのノードのケースがある (`RCExp.idr`の`freeLocalsR`/`countUsesR`/`mentionedLocalsAcc`、`Loop.idr`の`stripOwnership`、`Sink.idr`の`genuinelyUsedR`、`ConAltNative.idr`、`ConstFold.idr`、`DualABI.idr`、`LateInline.idr`など)。`structVar`と`value`は、常にそれらのローカルの使用として数えられる。`DualABI`は、どちらのノードの結果もネイティブな値としては扱わない (結果は常に、`packCFType`が出力するBoxedな値である)。
+`StructField`は、構造体の宣言済みのフィールドリスト、フィールドの名前と`CFType`、そのフィールドがリストに含まれることの、消去される証明である。`RStructSet`はUnitに評価される。`postDrop`は`ROp`の`postDrop`フィールドと同じ役割だが、意味はより狭い。このノードが最後の使用になるオペランド (`structVar`、`RStructSet`では`value`も) を並べたもので、読み書きのあとにdropされる。Phase 1の直後は`[]`である。どちらのノードも、`dup`は一切挿入しない。`RCExp`を走査するすべてのパスに、2つのノードのケースがある (`RCExp.idr`の`freeLocalsR`/`countUsesR`/`mentionedLocalsAcc`、`Rewrite.idr`の`stripOwnership`、`Sink.idr`の`genuinelyUsedR`、`ConAltNative.idr`、`ConstFold.idr`、`DualABI.idr`、`LateInline.idr`など)。`structVar`と`value`は、常にそれらのローカルの使用として数えられる。`DualABI`は、どちらのノードの結果もネイティブな値としては扱わない (結果は常に、`packCFType`が出力するBoxedな値である)。
 
 ### Phase 1 (`normalize`): `prim__getField`/`prim__setField`を新しいノードに変換する
 
@@ -182,7 +182,7 @@ annotate natives owned (RStructSet fc structVar sf value _) =
     pure $ RStructSet fc structVar sf value (dropIfLastUse natives owned [structVar, value])
 ```
 
-`dropIfLastUse natives owned vars`は、`vars`のうち、今回の使用が最後の使用になるものを返す。条件は、まだ`owned`にあり、ネイティブのローカルではなく、不死のオペランド (`RCNull`/`RCConst`/`RCEmptyCon`/`RCConstCon`/`RCConstClosure`) でもないことである。`vars`を左から右へ走査し、見つけるたびに`owned`から取り除く。したがって、1つのノードに同じローカルが2回現れる場合 (たとえば、`structVar`と`value`が同じローカルのとき) は、1回だけdropされる。`dup`は決して挿入しない。まだ生きているオペランドには、何もする必要がないためである。`RForce` (`RC.idr`) も、自身のオペランドに同じ関数を使う。
+`dropIfLastUse natives owned vars`は、`vars`のうち、今回の使用が最後の使用になるものを返す。条件は、まだ`owned`にあり、ネイティブのローカルではなく、不死のオペランド (`RCNull`/`RCConst`/`RCEmptyCon`/`RCConstCon`/`RCConstPartial`) でもないことである。`vars`を左から右へ走査し、見つけるたびに`owned`から取り除く。したがって、1つのノードに同じローカルが2回現れる場合 (たとえば、`structVar`と`value`が同じローカルのとき) は、1回だけdropされる。`dup`は決して挿入しない。まだ生きているオペランドには、何もする必要がないためである。`RForce` (`RC.idr`) も、自身のオペランドに同じ関数を使う。
 
 ### Part A: `CFStruct`は`CFPtr`と同じに扱う
 
@@ -238,6 +238,10 @@ rc2は完全に独立したパッケージであり、`idris2-src`を編集す�
 - **既存のrc2のコードがすでにカバーしており、まったく不要なもの**: Chezの`cftySpec` (`CFType`ごとのSchemeの型文字列の生成) に対応するものを、rc2で新しく書く必要はない。ほかのすべての`CFType`について、`cTypeOfCFType`/`extractValue`/`packCFType`が同じ役割をすでに果たしている。`CFStruct`は、Part A/Cで行うとおり、既存のケースごとの関数に追加するだけでよく、ゼロから再実装するものではない。
 - **移植できず、新規に書く必要があるもの**: `chezExtPrim`の`GetField`/`SetField`のケースは、Scheme (`ftype-ref`/`ftype-set!`) を出力し、Chez Scheme自身のマクロ展開時の型解決に頼っている。rc2はCを直接出力し、名前は`normalize`の中で、Part Bの`StructTable`に対して自前で解決する。問題は同じだが、解決方法は構造的に無関係である。Part D (および上の`RStructGet`/`RStructSet`のノードとPhase 1/Phase 2の仕組み) は、移植ではなく独自の設計である。専用ノードという段階に相当するものは、Chezにはまったくない。Schemeは動的型付けなので、`chezExtPrim`は`ExtPrim`から`GetField`/`SetField`を直接下げることができ、追跡すべき参照カウントもない。したがって、設計のこの部分には、移植元になる上流の対応物がそもそもない。
 
+## `RExtPrim`のネイティブなオペランド
+
+ネイティブに保持されたオペランド (`Double`や大きな`Int`のリテラル、ネイティブな`Double`のローカル) は、呼び出しのためにボックス化されるが、その箱は一度もdropされていなかった。そのため`writeIORef r 1.5`は、実行のたびに16バイトをリークしていた (`tests/Test174OwnershipLeaks/ExtPrimLiteral`)。現在の`Emit`は、`ROp`のケースと同じく、そのようなオペランドを`boxOpArgParts`でボックス化し、呼び出しのあとでその箱をdropする。これが正しいのは、ホワイトリストのプリミティブのうち値を保持するものは、どれも自分の参照を取るからである。`prim__newIORef`、`prim__writeIORef`、`prim__newArray`、`prim__arraySet`、`prim__onCollectAny` (`prim__onCollect`はこれを呼ぶ) は、値を`dup`する。ほかのもの (`prim__readIORef`、`prim__arrayGet`、`prim__os`、`prim__codegen`) は何も保持しない。
+
 ## rc2自身の設計に関する未解決の問い
 
 - ~~未確認: `getField`/`setField`を、どの`%foreign`シグネチャにも現れない構造体名に使うプログラムは、Chezを含むどのバックエンドでどうなるか~~ **確認済み: Chezでも、コンパイル時に失敗する。** 今回の調査の再現コードを`idris2 --cg chez`で直接実行したところ、`Exception: unrecognized ftype name my_struct ... / Error: INTERNAL ERROR: Chez exited with return code 255`となった。その名前に対する`(define-ftype my_struct ...)`が一度も出力されていない (つまり、`Struct "my_struct" ...`に言及する`%foreign`シグネチャが1つもない) と、Chez Scheme自身の`ftype-ref`のマクロ展開が失敗する。したがって、`getField`/`setField`で使うすべての構造体名が、プログラム中のどこかの`%foreign`シグネチャに最低1回は現れていなければならないという条件は、rc2が新しく課す制限ではない。上流の既存の取り決めであり、リファレンスバックエンドがすでに強制している。強制するタイミングが理想より遅く、Idris2のコンパイル時ではなくSchemeのマクロ展開時になっているだけである。rc2はこれに頼ってよく、「構造体名が宣言されていない」場合を、rc2自身のコンパイルエラー以外の何かとして扱う必要はない。
@@ -248,7 +252,7 @@ rc2は完全に独立したパッケージであり、`idris2-src`を編集す�
   そのため、`RStructGet`/`RStructSet`のフィールドの型の検索では、`CFUser`型のフィールドを対象外として扱ってよい。本物の所有権の設計が必要なケースとしてではなく、対象外として扱う。現在これを拒否するものはなく、`collectStructDefs` (Part B) はそのまま保持し、`cTypeOfCFType`は`void *`として出力する。`getField`/`setField`の読み書きは、常に本物のCの型の領域に対する`packCFType`/`extractValue`の変換であり、すでにBoxedな値を別名で読むことはない。したがって、読み出し側に`dup`は一切不要である。コンストラクタを分解したフィールドは、Boxedの記憶域への直接の別名なので事情が違うが、それは`Compiler.RC2.ConAltNative`の問題であり、ここの問題ではない。
 
   スカラのフィールドをネイティブ (アンボックス) のまま読み書きして、すぐにネイティブの文脈で使う値について`packCFType`/`extractValue`の往復を省くことは、将来の作業として引き続き妥当である。通常のコンストラクタから分解したフィールドに対して、`Compiler.RC2.ConAltNative`がすでに行っているのと同じ形である (`rc2/doc/con-alt-native.md`)。ただし、これは、動作する常にBoxedな版の上に載せる性能最適化であり、その版を作るための前提条件ではない。
-- ~~未列挙: `RStructGet`/`RStructSet`のケースを追加する必要があるすべての箇所~~ **完了。下の「実装状況」を参照。** `RCExp`に触れるすべてのパスを監査した。実際の欠落が2件見つかって修正した (`Loop.idr`の`stripOwnership`、`Sink.idr`の`genuinelyUsedR`)。残りは、それぞれのワイルドカードのフォールスルーで、すでに正しいことを確認した。
+- ~~未列挙: `RStructGet`/`RStructSet`のケースを追加する必要があるすべての箇所~~ **完了。下の「実装状況」を参照。** `RCExp`に触れるすべてのパスを監査した。実際の欠落が2件見つかって修正した (`Rewrite.idr`の`stripOwnership`、`Sink.idr`の`genuinelyUsedR`)。残りは、それぞれのワイルドカードのフォールスルーで、すでに正しいことを確認した。
 
 ## 実装状況
 
@@ -276,14 +280,14 @@ rc2は完全に独立したパッケージであり、`idris2-src`を編集す�
 
 **追加の監査。** 上のフィールド再利用のケースは、レビューの指摘ですでに見つけて修正してあった。その後、直接のレビューを受けて、`RCExp`に触れるほかのすべてのパスについて、そのワイルドカードのフォールスルーが2つの新しいノードを正しく扱えているかを調べた。実際の欠落が2件見つかって、修正した。
 
-- `Loop.idr`の`stripOwnership`は、`ids`を`ROp`/`RCmpCase`/`RLoopContinue`/`RLoop`の`postDrop`/`prologueDrop`フィールドから取り除く。これは、ローカルをネイティブのシャドウに昇格させるときに、`Compiler.RC2.ConAltNative`/`Compiler.RC2.DualABI`が使う関数である。ところが`RStructGet`/`RStructSet`も、同じ種類の`postDrop`フィールドを持つのに、ワイルドカードを素通りしていた。ここでネイティブに昇格したローカルが残ると、一度もボックス化されていない値に対するdropが出力されてしまう。
+- `Rewrite.idr`の`stripOwnership`は、`ids`を`ROp`/`RCmpCase`/`RLoopContinue`/`RLoop`の`postDrop`/`prologueDrop`フィールドから取り除く。これは、ローカルをネイティブのシャドウに昇格させるときに、`Compiler.RC2.ConAltNative`/`Compiler.RC2.DualABI`が使う関数である。ところが`RStructGet`/`RStructSet`も、同じ種類の`postDrop`フィールドを持つのに、ワイルドカードを素通りしていた。ここでネイティブに昇格したローカルが残ると、一度もボックス化されていない値に対するdropが出力されてしまう。
 - `Sink.idr`の`genuinelyUsedR`は、`RCExp.idr`の`freeLocalsR`とほぼ同じ自由変数解析だが、`structVar`/`value`を本物の使用として数えていなかった。これは、分岐のsinkingで、すでに見つかって修正された実際のミスコンパイルと同じ種類のバグである (`TestBuffer.idr`、`rc2/doc/branch-sinking.md`の「Not peeling through var's own death」を参照)。見逃していれば、`trySinkInto`の`RLet`のケースが、`getField`/`setField`の呼び出しが実際に読んでいる束縛を、その呼び出しの先へsinkしてしまうところだった。その場合、生成されるCに、定義より前の使用が現れる。
 
 監査したそのほかの箇所では、いずれもワイルドカードのフォールスルーが、2つの新しいノードにすでに正しいことを確認した。対象は次のとおりである。
 
 - `Reuse.idr`の`tryClaim`/`tryConsume`/`resolveReuse`
 - `ConAltNative.idr`の`peelWrappers`/`applyConAltNativeExp`
-- `MutualLoop.idr`の`tailCallTargets`/`buildGroup` (名前の付け替えを、完全に`Loop.idr`の`renameRCExp`に任せている。これは最初の実装と同時にすでに修正済みである)
+- `MutualLoop.idr`の`tailCallTargets`/`buildGroup` (名前の付け替えを、完全に`Rewrite.idr`の`renameRCExp`に任せている。これは最初の実装と同時にすでに修正済みである)
 - `DualABI.idr`の`tailValueReps`/`applyCallSiteRewriteBody`
 
 特定のノードの一覧を挙げていたコメントは、そのことが明示されるよう更新した。振る舞いの変更は不要だった。`refc-suite`の全体 (19/19) とスモークテスト (23/23) の回帰スイートは、途中の変更を通じて通り続けた。新しいノードも、`Emit.idr`の`where`節のリファクタリング (Part Aの`cTypeOfCFType`/`extractValue`/`packCFType`をトップレベルに引き上げたもの) も、何も後退させなかったことが確認できた。
@@ -301,6 +305,8 @@ rc2は完全に独立したパッケージであり、`idris2-src`を編集す�
 `void*`による回避ではなく、「正しい」やり方で一から作った例は`rc2/tests/Test120CStruct/`を参照。補助のヘッダが本物のtypedefを宣言している。`Test24CStructSupport`は、元のまま変更していない。その`void*`による回避は、今でも問題なく動き、間違いでもない。ただ、唯一の選択肢ではなくなっただけである。
 
 ## 調査したが見送ったもの: ネイティブ (アンボックス) な`Ptr`/`CFPtr`表現
+
+この調査は`native-pointer.md`の設計に置き換えられた。元の調査として残している。
 
 実装が入った後に、直接の質問を受けて調べた。`getField`の結果も`setField`の`value`オペランドも、`Rep`の`RNative`に昇格されることはない。`Compiler.RC2.Types`の`repOf`が`RNative`を提案するのは`ROp`/`RPrimVal`だけで、`RStructGet`には対応するケースがなく、`Nothing`へ素通りする。さらに、`structVar`自体 (構造体のポインタ。Part A以降は`CFPtr`と同じ形) も、常にBoxedになる。生のポインタを1つ運ぶだけのために、`IDRIS2RC2_Pointer`のヒープ確保が1回必要になる (`packCFType CFPtr = idris2rc2_mkPointer(...)`)。そこで、構造体のポインタに限らず、`Ptr`/`CFPtr`の値一般を、固定幅のスカラと同じようにrc2の既存のネイティブ表現の仕組みに載せられないかを調べた。
 

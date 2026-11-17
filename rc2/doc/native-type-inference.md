@@ -201,14 +201,14 @@ to update instead of two).
   using that expression -- see "the postDrop-ordering bug" below for
   why the caller, not this function, must be the one to emit them).
 - `InlineMap` / `tryInlineNativeOp` -- a further optimisation on top of
-  the basic Native/Boxed split: a native op with **zero** Boxed
-  operands, used **exactly once**, gets its expression spliced directly
-  into that one use site instead of ever being declared as a `var_N` at
-  all. Zero-Boxed-operands is what makes deferring the read always
-  safe (nothing an intervening dup/drop elsewhere could invalidate);
-  exactly-one-use is what keeps it free of recomputation. A bare
-  literal operand is the single most common member of this category
-  and is handled as a degenerate case of the same table.
+  the basic Native/Boxed split: a native op used **exactly once** gets
+  its expression spliced directly into that one use site instead of ever
+  being declared as a `var_N` at all. Exactly-one-use is what keeps it
+  free of recomputation. A Boxed operand the op reads does not stop it:
+  its drop travels with the expression and is emitted only after the
+  deferred read (next section). A bare literal operand is the single
+  most common member of this category and is handled as a degenerate
+  case of the same table.
 
 ### `InlineMap`: splicing a sole-use native local into its use site
 

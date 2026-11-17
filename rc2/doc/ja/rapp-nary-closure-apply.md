@@ -26,7 +26,7 @@ RApp : FC -> (lazy : Maybe LazyReason) -> RCLocal -> List1 RCLocal -> RCExp
 
 - `RCExp.idr`の`freeLocalsR`/`countUsesR`/`foldRCNamesL`
 - `ConstFold`、`Sink`、`ConAltNative`、`Pretty`、`LateInline`、`SpecClosure`
-- `RC2.rcSizeOf`、`Emit`、`Loop`
+- `Emit`、`Loop`
 - `RC.idr`のPhase 1/2
 
 新ノードを追加する場合は、これらのファイルの大半に新しい節を書く必要がある。しかも、所有権のロジックが`c`と`a`を2要素のリストとして扱っている箇所(`splitBorrows`/`wrapDups`、`countInvariantDups`/`wrapInvariantDups`、`countDupsNeeded`/`wrapNDups`)では、いずれにせよ拡張が要る。
@@ -230,8 +230,12 @@ chainArgs _ _ _ = Nothing
 
 - `rc2/src/Compiler/RC2/RCExp.idr`: `RApp`の宣言、`freeLocalsR`/`countUsesR`/`foldRCNamesL`。
 - `rc2/src/Compiler/RC2/RC.idr`: Phase 1 `normalize`の`LApp`節(`collectAppChain`、新規)、Phase 2 `annotate`の`RApp`節。
-- `rc2/src/Compiler/RC2/ConstFold.idr`、`Sink.idr`、`ConAltNative.idr`、`Pretty.idr`、`LateInline.idr`、`Loop.idr`、`RC2.idr`(`rcSizeOf`): オペランドのリストを機械的に広げただけで、ロジックの変更はない。
+- `rc2/src/Compiler/RC2/ConstFold.idr`、`Sink.idr`、`ConAltNative.idr`、`Pretty.idr`、`LateInline.idr`、`Loop.idr`: オペランドのリストを機械的に広げただけで、ロジックの変更はない。
 - `rc2/src/Compiler/RC2/SpecClosure.idr`: `chainArgs`の単純化(上記参照)。
 - `rc2/src/Compiler/RC2/Emit.idr`: `RApp`のコード生成。`length args`による`applyClosure`と`applyClosureN`の切り替え。
 - `rc2/support/rc2/runtime.c`/`runtime.h`: `idris2rc2_dispatchFn`(切り出し)、`idris2rc2_applyClosureN`(新規)。
 - `rc2/doc/speculative-closure-specialization.md`、`TODO.md`の「interface-dictionary method dispatch stays boxed」の項: この設計が応える調査。本書がこれらに取って代わるわけではない。そこに書かれている「既知の対象ごとにクロージャを複製する」案は、クロージャの正体が静的に分かり、*かつそれが保たれる*場合のための、別の未解決の課題として残る。
+
+## 一意なクロージャへの最後の引数 (2026-11-14)
+
+`idris2rc2_applyClosure`には、他の参照を持つクロージャが最後の引数を受け取る場合の高速経路があった(`dispatchWithExtra`。引数はdupして呼び出しに渡し、クロージャはdropする)。一方、一意なクロージャは、`idris2rc2_tailcallApplyClosure`(引数を書き込み、その場で伸ばす)を経て、トランポリンのループ(タグの検査、アリティの検査、ディスパッチ、シェルの解放)に送っていた。`prelude`のビルドでは、applyの4回に3回がこれにあたる(11.8 Mのうち8.8 M)。現在は、一意なクロージャの最後の引数をそのスロットに書き込み、シェル自身の引数配列から直ちに呼び出す。引数は呼び出しに渡ったので、解放するのはシェルだけである(トランポリンのループと同じく`idris2rc2_rc_release` + `cellFreeInline`)。結果はトランポリンに渡す。`prelude`のビルドは29.04 Gから28.69 G命令になった(-1.2%)。トランポリンのループ自体のコストは825 Mから327 Mに減った。

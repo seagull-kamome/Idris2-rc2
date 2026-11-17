@@ -62,7 +62,7 @@ def <Name>  (<kind> ...)
 
 読み進める本体があるのは`(fun ...)`/`(error)`だけである。この文書の以降の部分は、その本体の読み方を扱う。
 
-**名前。**ダンプに現れるすべての名前は、`dumpName`(`RCExp.idr`)を通る。対象は、`def`のヘッダ、`call`/`callRep`/`partial`/`con`/`retpack`/`memoize`/`delay`の対象、case alt自身のコンストラクタ名、`#Name@tag`/`#Name/n~closure`の定数値である。`dumpName`は、上流自身の`Show Name`(`idris2-src/src/Core/Name.idr`)に2つの調整を加えたものである。1つ目は、`DN`(表示名。たとえばインターフェース実装のメソッド)の扱いである。`DN`は、自身の短い表示文字列ではなく、それが*表している*名前を表示する。これは、実際のCシンボルのために`Compiler.RC2.Emit.Util`の`cName`が使う名前と同じである。たとえば`Prelude.Show.(show_Show_(List $a))`と表示される。すべての`Show`実装で共通の、素の`Prelude.Show.show`にはならない。2つ目は、`CaseBlock`/`WithBlock`の名前が、自身の添字を含むことである(`case block in f:3`。`f`の中のすべてのcaseブロックが、素の`case block in f`で重複することはない)。このように、すべての定義がダンプ中で異なる名前を持つ。そのため、`def <Name>`のヘッダや、それを指す`call`/`callRep`/`partial`の参照は、定義の数を数えたり、差分を取ったりするときのキーとして使える。
+**名前。**ダンプに現れるすべての名前は、`dumpName`(`RCExp.idr`)を通る。対象は、`def`のヘッダ、`call`/`callRep`/`partial`/`con`/`retpack`/`memoize`/`delay`の対象、case alt自身のコンストラクタ名、`#Name@tag`/`#Name/n~closure`の定数値(クロージャが定数をキャプチャした場合は`#Name/n~closure(caps)`)である。`dumpName`は、上流自身の`Show Name`(`idris2-src/src/Core/Name.idr`)に2つの調整を加えたものである。1つ目は、`DN`(表示名。たとえばインターフェース実装のメソッド)の扱いである。`DN`は、自身の短い表示文字列ではなく、それが*表している*名前を表示する。これは、実際のCシンボルのために`Compiler.RC2.Emit.Util`の`cName`が使う名前と同じである。たとえば`Prelude.Show.(show_Show_(List $a))`と表示される。すべての`Show`実装で共通の、素の`Prelude.Show.show`にはならない。2つ目は、`CaseBlock`/`WithBlock`の名前が、自身の添字を含むことである(`case block in f:3`。`f`の中のすべてのcaseブロックが、素の`case block in f`で重複することはない)。このように、すべての定義がダンプ中で異なる名前を持つ。そのため、`def <Name>`のヘッダや、それを指す`call`/`callRep`/`partial`の参照は、定義の数を数えたり、差分を取ったりするときのキーとして使える。
 
 ## 3. 値(`RCLocal`)
 
@@ -71,7 +71,9 @@ def <Name>  (<kind> ...)
 | 構文 | コンストラクタ | 意味 |
 |---|---|---|
 | `v0`、`v1`、`v42`、... | `RCLoc n` | 通常のローカル変数。関数のパラメータ、または`let`/パターンマッチ/ループパラメータで束縛されたもので、コンパイラが割り当てた整数で識別される。**IDは、パスをまたいで、また定義自身の引数と本体のあいだでも、安定していない。**ループのネイティブshadowは、元のパラメータ自身のIDとは別の*新しい* IDを受け取る(第8節を参照)。具体的な数字から読み取れるのは、「ここでは同じ番号は同じ値」ということだけである。 |
-| `[__]` | `RCNull` | Cのリテラルの`NULL`。出どころは3つある。1つ目は消去されたnullaryコンストラクタの値(`Nil`/`Nothing`/`Z`/`MkUnit`。ヒープ割り当てがまったく不要で、NULLか非NULLかでマッチする)。2つ目はIOプリミティブの呼び出しに通される`%World`トークン(`extprim ... [[__], ...]`)。3つ目は`Compiler.RC2.MutualLoop`が、アリティの小さいグループメンバーの未使用の末尾スロットを埋めるために入れるパディングである。 |
+| `[__]` | `RCNull` | Cのリテラルの`NULL`。出どころは2つある。1つ目はnullaryコンストラクタの値(`Nil`/`Nothing`/`Z`/`MkUnit`。ヒープ割り当てがまったく不要で、NULLか非NULLかでマッチする)。2つ目は`Compiler.RC2.MutualLoop`が、アリティの小さいグループメンバーの未使用の末尾スロットを埋めるために入れるパディングである。 |
+| `[erased]` | `RCErased` | プログラムが一度も見ない値(消去された引数やフィールド)。Cの`NULL`として出力する。パスが`[__]`と区別できるように、独自のコンストラクタになっている。 |
+| `[world]` | `RCWorld` | IOプリミティブの呼び出しに通される`%World`トークン。Cの`NULL`として出力する。 |
 | `#0`、`#"hello"`、`#'x'`、... | `RConst c` | ネイティブにできる、または安価なリテラルを、そのままインライン化したもの。`var_N`もlet束縛もdup/dropもない。どの定数が該当するかは、`doc/native-type-inference.md`の「`RCLocal.RCConst`」の節を参照する。 |
 | `#Main.NoShape@1`、`#Prelude.Show.Open@0`、... | `RCEmptyCon n ci tag` | 上の4つの`RCNull`以外の、引数なしの*タグ付き*データコンストラクタ(たとえば、複数コンストラクタのenumに対する`f Red`)。`Name@tag`の形で、タグ付きポインタの定数としてインライン化され、割り当てはない。 |
 
@@ -98,7 +100,7 @@ def <Name>  (<kind> ...)
 | `let v0 : Boxed =`<br>`  <value>`<br>`<body>` | `RLet` | `v0`を(表示された`Rep`で)`<value>`の結果に束縛し、`<body>`に続ける。最もよく現れるラッパーで、中間計算のほとんどすべてがこれを通る。 |
 | `con Name ConInfo tag=Just 1 [v0, v1]` | `RCon` | これらのフィールドを持つ`Name`の値を構築する。`ConInfo`は、ソースレベルでどの種類のコンストラクタかを示す、Idris2自身の短いタグである(リスト型なら`[cons]`/`[nil]`、通常のコンストラクタなら`[data]`、そのほか`[record]`、`Nat`型なら`[zero]`/`[succ]`、`[enum N]`、`[unit]`、`[just]`/`[nothing]`など)。タグなし、または単一形状の型では`tag=Nothing`になる。末尾に`reuse=v2`が付いていれば、この構築は`v2`自身のストレージをその場で再利用してよい。第9節の再利用の例を参照する。 |
 | `op PrimFn [v0, v1] postDrop=[v0]` | `ROp` | プリミティブ演算(`+Int`、`-Integer`、`cast-Integer-Int`、`==Char`など)。`postDrop=[...]`がある場合は、この演算がオペランドを読み終えたあとにdropが必要な*Boxed*オペランドをすべて列挙する。演算自身の読み取りを包む通常の`drop`を置ける文の位置がないので、代わりにこのフィールドが担う(`doc/native-type-inference.md`を参照)。この行が生のC式として出力されるか、Boxedなランタイム呼び出しとして出力されるかは、この行自身からは分からない。それは、*外側の* `let`自身の`Rep`で決まる。 |
-| `extprim Name [[__], v0, v1]` | `RExtPrim` | rc2自身のランタイムプリミティブのグルーコードへの呼び出し(`IORef`、配列、FFIヘルパーのラッパー、`%World`を通すIOプリミティブ)。最初の引数は、`%World`トークンの`[__]`であることが非常に多い。 |
+| `extprim Name [[world], v0, v1]` | `RExtPrim` | rc2自身のランタイムプリミティブのグルーコードへの呼び出し(`IORef`、配列、FFIヘルパーのラッパー、`%World`を通すIOプリミティブ)。最初の引数は、`%World`トークンの`[world]`であることが非常に多い。 |
 | `cmp PrimFn [v0, v1] postDrop=[...]`<br>`then`<br>`  <T>`<br>`else`<br>`  <F>` | `RCmpCase` | ネイティブな比較(`LT`/`GT`/`EQ`/`LTE`/`GTE`)を、2方向の分岐に*直接*融合したもの。Booleanの結果は、ネイティブな値としてさえ、値として具体化されない。生成されるのは、比較が、Idris2自身の`Bool`(`False=0`/`True=1`)の表現に対する2方向マッチの、唯一かつ直接のscrutineeである場合に限られる。第9節の具体例を参照する。 |
 | `case v0 of`<br>`  Name ConInfo tag=Just 1 args=[v1, v2] ->`<br>`    <body>`<br>`  _ ->`<br>`    <default>` | `RConCase` | scrutinee `v0`のコンストラクタタグで分岐する。`args=[...]`は、このaltが`v0`自身のストレージから*直接*分解して取り出すフィールドである(ポインタのエイリアスであり、独立して参照カウントされるわけではない。`v0`が死ぬ可能性があるとき、これらが先に`dup`される様子は第9節を参照する)。`_ ->`は任意のデフォルト分岐で、それがなくても網羅的な場合はまったく現れない。 |
 | `case v0 of`<br>`  0 ->`<br>`    <body>`<br>`  _ ->`<br>`    <default>` | `RConstCase` | scrutinee `v0`の*値*を、リテラル定数と照合して分岐する(整数のswitch、または`String`/`Double`の等価比較の連鎖)。コンストラクタタグでは分岐しない。 |
@@ -127,7 +129,7 @@ Altの構文は次のとおりである。`case`の中で使い、altごとに1�
 
 木の他の場所でのlocalの*使用*は、すべて注釈のない素の`vN`/`[__]`/`#c`である。参照カウントの増減は、暗黙には行われない。必ず直前の独立した行(`dup`/`drop`/`free`)に現れる。演算自身のオペランドに限っては、`postDrop=[...]`フィールドに現れる(演算は、オペランドを読んで結果を出す処理を一息で行うので、読み取りを包む`drop`を置ける文の位置がない)。
 
-`dup vN`の直後に、`vN`を自身の`postDrop`に挙げる`op`/`extprim`/`cmp`/呼び出しが続く形は、読むだけのノードでは「+1、読む、-1」にあたる。最終的なIRには、こうした組は残っていない。`Compiler.RC2.DupMerge`(`cancelRun`)が打ち消すからである。このパスは、先頭に並ぶ`dup`の列全体を、ノードの元の`postDrop`と突き合わせて判断し、ローカル変数ごとに`min (extra + 1, entries)`個を打ち消す。次の2種類のノードでは、`dup`が残る。1つは、Integer/Int64/Doubleの算術`op`(`Emit.Util.isReuseConsumingOp`)である。このランタイムプリミティブはオペランドを自分で消費し、`postDrop`フィールドを無視するので、`dup`は実際に引き渡される参照になる。もう1つは、`postDrop`にない別のオペランドを消費する呼び出しまたは`extprim`である。呼び出された側が、そのオペランドの親を解放する可能性がある。同じパスは、別名の`let x = w; drop [x]`(インライン化された`where`束縛関数の、変更されないパラメータを、あるarmが読まない場合に生じる)も、`w`がBoxedのローカル変数なら`drop [w]`に書き換える。
+`dup vN`の直後に、`vN`を自身の`postDrop`に挙げる`op`/`extprim`/`cmp`/呼び出しが続く形は、読むだけのノードでは「+1、読む、-1」にあたる。最終的なIRには、こうした組は残っていない。`Compiler.RC2.DupMerge`(`cancelRun`)が打ち消すからである。このパスは、先頭に並ぶ`dup`の列全体を、ノードの元の`postDrop`と突き合わせて判断し、ローカル変数ごとに`min (extra + 1, entries)`個を打ち消す。次の2種類のノードでは、`dup`が残る。1つは、Integer/Int64/Doubleの算術`op`または文字列の`op`(`Emit.Util.isReuseConsumingOp`)である。このランタイムプリミティブはオペランドを自分で消費し、`postDrop`フィールドを無視するので、`dup`は実際に引き渡される参照になる。もう1つは、`postDrop`にない別のオペランドを消費する呼び出しまたは`extprim`である。呼び出された側が、そのオペランドの親を解放する可能性がある。同じパスは、別名の`let x = w; drop [x]`(インライン化された`where`束縛関数の、変更されないパラメータを、あるarmが読まない場合に生じる)も、`w`がBoxedのローカル変数なら`drop [w]`に書き換える。
 
 `case`の直前に並ぶ`dup`/`drop`の列は、あるarmがその列で`dup`されたローカル変数の`drop`で始まるとき、`Compiler.RC2.PushDown`によってarmの中へ移される(`doc/pushdown.md`)。そのため、入れ子のパターンは`dup f; drop [parent]; case f of ... -> dup g; drop [f]`ではなく、`case f of ... -> dup g; drop [parent]`と読める。
 
@@ -234,7 +236,7 @@ case v1 of
         drop [v4]
         let v5 : Boxed =
           let v6 : Boxed =
-            apply v3 [__]
+            apply v3 [world]
           call Prelude.Types.takeUntil [v0, v6]
         con _builtin.CONS [cons] tag=Just 1 [v2, v5] reuse=v1
 ```

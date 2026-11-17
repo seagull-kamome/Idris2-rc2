@@ -286,11 +286,13 @@ hello 7
 
 ## `IO`/`PrimIO`の戻り値の特別扱いとWorld引数
 
-`IO`と`IORes`はどちらも本物の`data`型である (`libs/prelude/PrimIO.idr`)。したがって、`T1 -> T2 -> IO R`型のエクスポートを正規化した型は、`R`を包む通常の`NTCon`になる。`%foreign`が`PrimIO`/`CFIORes`の戻り値を剥がすのと同じ要領で、これを`Compiler.RC2.DualABI.peelIORes`で剥がす。
+`IO`と`IORes`はどちらも本物の`data`型である (`libs/prelude/PrimIO.idr`)。したがって、`T1 -> T2 -> IO R`型のエクスポートを正規化した型は、`R`を包む通常の`NTCon`になる。`%foreign`が`PrimIO`/`CFIORes`の戻り値を剥がすのと同じ要領で、これを`Compiler.RC2.Util.peelIORes`で剥がす。
 
 `IO ()`を返すエクスポートに対応する`CFUnit`は、特別なケースとして受け入れる。戻り値の側にはネイティブのマーシャリングが一切ない。ラッパーのCの戻り値の型は`void`で、トランポリンで得た結果は読まずに捨てる。`Compiler.RC2.Emit`が生成する`main()`も、プログラム全体の最終結果を同じように捨てている。
 
 実装中に実際に確かめたことがある。ソースを読んだだけの想定ではない。`main`のエントリポイント (`__mainExpression`、アリティ0) では、`%World`トークンがプログラム全体の最上位ですでに1回適用されている。これはラムダリフティングより前に行われる。これに対し、`IO`/`IORes`を返す*通常の*関数は、末尾の`%World`パラメータを、消去されない実際のパラメータ (数量は0ではなく1) としてコンパイル後 (`Lifted`) のアリティまで持ち続ける。そのため、スカラ引数の個数をコンパイル済み定義のアリティと素朴に比較すると、`IO`を返すエクスポートのすべてで、誤った不一致が報告されてしまう。`Compiler.RC2.RC2.validateExport`は、エクスポートの戻り値の型が`CFIORes _`のとき、この余分な1つ分を計算に入れる。`emitExportWrapper`は、呼び出すときにBoxedの`NULL`定数をこの引数として渡す。`Compiler.RC2.Emit.Util`の`packCFType`/`extractValue`も、`CFWorld`について、ほかのあらゆる場所で同じプレースホルダを使っている。
+
+Worldのスロットは呼び出し先の引数の個数に数えられる。そのため、宣言された引数が20個の`IO`エクスポートは、コンパイル後のアリティが21になる。`MaxExtractFunArgs`を超える関数は、引数を1つの配列`IDRIS2RC2_Value *var_arglist[N]`として受け取る(`Compiler.RC2.Emit.fnSignature`)。`emitExportWrapper`もその形で呼び出す。呼び出し先は配列を読むだけなので、配列は自分のスタック上に作る(`tests/Test138ExportWideIO`)。`validateExport`の、宣言された引数20個という上限は変わらない。
 
 ## メモリ: `Unit`以外の戻り値の後に必ず行う明示的なdrop
 

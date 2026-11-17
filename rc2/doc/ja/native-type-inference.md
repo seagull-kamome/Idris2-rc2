@@ -49,11 +49,20 @@ Idris2自身のコンパイル済みIR(`Lifted`)は、すべての値を一様�
 ## 出力(`Emit.idr`)
 
 - `nativeCType : PrimType -> String`: 生のCの型(`int64_t`、`uint8_t`、`double`、...)。
-- `nativeMk : PrimType -> String -> String` / `nativeUnbox : PrimType -> String -> String`: ネイティブなC式を新しい`IDRIS2RC2_Value*`にボックス化する関数と、ボックス化された値を生のC式へアンボックスする関数(`idris2rc2_mkInt64(...)` / `idris2rc2_to_i64(...)`など)。値が2つの世界を行き来する境目(関数境界、コンストラクタのフィールド、caseの判別対象)で使われる。
+- `nativeMk : PrimType -> String -> String` / `nativeUnbox : PrimType -> String -> String`: ネイティブなC式を新しい`IDRIS2RC2_Value*`にボックス化する関数と、ボックス化された値を生のC式へアンボックスする関数(`idris2rc2_mkInt64(...)` / `idris2rc2_to_i64(...)`など)。値が2つの世界を行き来する境目(関数境界、コンストラクタのフィールド、caseのスクルーティニー)で使われる。
 - `rcVarToNativeC`/`rcVarToBoxedC`: `RCLocal`を、それぞれネイティブなC式、ボックス化されたC式として読む。どちらも`Rep`を見て振る舞いを変える。すでにネイティブなローカル変数はそのまま読み、ボックス化されたものはその場で`nativeUnbox`する。`RCConst`や`InlineMap`に入っているローカル変数は、リテラルや式のテキストをインライン展開し、そのための`var_N`を宣言することはない。これらは自分ではdup/dropを行わない。*使用*のために必要だった参照カウントの調整は、木のもっと前の段階で、包む`RDup`/`RDrop`/`RFree`ノードとして明示済みである(例外は`ROp`の`postDrop`で、これは自分の注釈を持つ)。
 - `cOp`(結果がボックス化される演算。ボックス化版のランタイム関数を呼ぶ。たとえば`idris2rc2_add_Int64(x, y)`は新しい`IDRIS2RC2_Value*`を返す)と`nativeOpExpr`(結果がネイティブな演算。生のC式で、たとえば`(x + y)`は確保を一切伴わない): 同じ`PrimFn`の空間に対する2つの出力器であり、`Types.opResultRep`がこの演算の結果をここでネイティブと判定したかどうかで使い分ける。
 - `emitNativeValue`: `emitRC`に対応する、ネイティブ型版である。`ROp`/`RPrimVal`を包む`RLet`/`RDup`/`RDrop`/`RFree`の連鎖をたどり、生のC式の文字列を作る。あわせて、保留中のボックス化オペランドのdropも返す。これは、その式を実際に使ったあとで*呼び出し側*が出力しなければならない。この関数自身が出力してはいけない理由は、下の「postDropの順序の退行」を参照。
-- `InlineMap` / `tryInlineNativeOp`: ネイティブとボックス化という基本の区分の上に重ねた、さらなる最適化である。ボックス化オペランドを**1つも**持たず、**ちょうど1回**だけ使われるネイティブな演算は、`var_N`として宣言されることなく、式がその1つの使用箇所へ直接展開される。ボックス化オペランドがないことが、読み出しの先送りを常に安全にする(途中のどこかのdup/dropによって無効になるものがない)。使用がちょうど1回であることが、再計算を避ける。素のリテラルのオペランドはこの分類に最も多く当てはまり、同じ表の退化したケースとして扱われる。
+- `InlineMap` / `tryInlineNativeOp`: ネイティブとボックス化という基本の区分の上に重ねた、さらなる最適化である。**ちょうど1回**だけ使われるネイティブな演算は、`var_N`として宣言されることなく、式がその1つの使用箇所へ直接展開される。使用がちょうど1回であることが、再計算を避ける。演算が読むボックス化オペランドがあっても妨げにならない。そのdropは式とともに保留され、先送りした読み出しの後にだけ出力される(次の節)。素のリテラルのオペランドはこの分類に最も多く当てはまり、同じ表の退化したケースとして扱われる。
+
+### `InlineMap`: 使用が1回だけのネイティブなローカルを使用箇所へ展開する
+
+`Emit/Util.idr`の`InlineMap`は、Cの変数として宣言されないネイティブなローカルについて、すでに出力済みのC式をローカルのidごとに保持する。`rcVarToNativeC`/`rcVarToBoxedC`(これを読むのはこの2つだけである)が、そのテキストを代入する。登録されるのは次の2つの場合である。
+
+1. 素のリテラル。フェーズ1は、ANFの形にするためだけに、リテラルを含む自明でないすべてのオペランドを新しい`let`に束縛する。共有や評価順序の観点から変数を宣言する理由はない。
+2. フェーズ2(`annotate`)が`RInlineNative`と印を付けた、ちょうど1回だけ使われるネイティブな演算(複数回使われる値をインライン化すると、その計算が重複する)。フェーズ1の時点では使用回数が分からないので、これはフェーズ2が決める。演算がまだ読むBoxedのオペランド(`ROp.postDrop`)は、保留中のdropのリストとして式と一緒に運ばれる。読む側はそれを自分の呼び出し側に返し、呼び出し側は先送りした読み出しが起きた時点でそれを処理する。
+
+   `inlineableRep`(`annotate`の`RLet`のケースにあり、`valueRC`の`postDrop`と`bodyRC`が分かった後に動く)は、既存の`RNative ty`を`RInlineNative ty`に*狭める*ことしかしない。狭めるのは、`valueRC`が素の`ROp`で、変数が`bodyRC`の中にちょうど1回現れる場合である。値がリテラルの`let`、複数回使われる`let`、`RBoxed`の`let`は変わらずに通過する。`Types.repOf`がまだ決めていないネイティブの分類を、新たに作り出すことはない。`postDrop`が空でなくても妨げにはならない。dropより前に読むという標準の規則(`Compiler.RC2.Emit`の`emitRC`)は、演算のCの文をその場で出力した場合でも、1回だけの使用箇所まで先送りした場合でも成り立つ。
 
 ## Boolを生成する比較の結果は`alwaysUnboxed`相当である
 
@@ -63,6 +72,12 @@ Idris2自身のコンパイル済みIR(`Lifted`)は、すべての値を一様�
 
 `rcexpr-lint`のリーク検査にも、同じ規則がある(`Leak.idr`の`boundToComparison`)。`natives`を共有していないからである。
 
+## 文字列から取り出す`Char`と、小さな型へのキャスト (2026-11-14)
+
+生成側の同じ規則は、ボックス化された経路で実行されるが結果はやはり即値になるopにも適用する。`StrHead`、`StrIndex`(結果は`Char`)と、ネイティブ化の対象でない型から`alwaysUnboxed`な型への`Cast`(たとえば`Integer`から`Bits8`)がこれにあたる。計算はネイティブではないので、`opResultRep`はこれらに対して`Nothing`を返す。そのため、その`Boxed`なローカル変数は追跡されていた。`Levenshtein.compute`は、`strIndex`の`Char`を`postDrop`付きで`isAlpha`のworkerに渡し、その後で比較していた。`rcexpr-lint`はこれをuse after freeと判定した。`Types.immediateResultOp`がこれらのopを列挙し、`alwaysUnboxedBoxedLocalsR`の`immProducer`がそのローカル変数を`natives`に入れる。
+
+呼び出し側にも同じ知識が要る。DualABIの`postDropFor`は、workerがネイティブに読む`Boxed`な引数をdropする。`alwaysUnboxed`な型のパラメータでは、このdropは何もしない操作にしかなりえない(値はタグ付きポインタである)。そのため、引数自体の出自にかかわらずdropを省く。lintも生成側の規則と同じ規則を持つ(`Leak.idr`の`boundToImmediateOp`)。`Test177CharOpExempt`で検証する。
+
 `Test13NativeArgChain`の`check.sh`は、比較に束縛されたローカル変数がdupもdropもされないことを検証する。idris2-lspの最終IR(`--directive dumprcexpr`)では、次のようになった。
 
 | | 変更前 | 変更後 |
@@ -70,19 +85,19 @@ Idris2自身のコンパイル済みIR(`Lifted`)は、すべての値を一様�
 | `drop`の行数 | 81,879 | 81,185 (-694) |
 | `dup`の行数 | 81,217 | 81,217 |
 | IRの行数 | 689,992 | 689,298 |
-| `0`/`1`の判別対象に対する`drop`で始まる`case`のアーム | 4,008 | 3,380 (-628) |
+| `0`/`1`のスクルーティニーに対する`drop`で始まる`case`のアーム | 4,008 | 3,380 (-628) |
 
 残る3,380件は、呼び出し、エイリアス、分岐から来るBoolである。これらを扱うには、生成元の演算だけでなく、生成元の型が必要になる。
 
 ### Stage 2: Boolを返す関数
 
-残っているアーム先頭のdropの最大の原因は、呼び出しだった(呼び出しの結果は、当初の4,008件のうち1,319件)。末尾が`B8`リテラル、ネイティブな`Bits8`の値、またはそのような関数の呼び出しである関数は、現在、`ret= Native Bits8`のワーカーを持つ(`boolReturnPlan`、`rc2/doc/dual-abi.md`の「Bool return」。`--directive noboolret`で無効にできる)。そのため、その呼び出し元は結果をネイティブな`Bits8`として束縛し、それに対する`case`は`drop`を必要としない。idris2-lspでは、`0`/`1`の判別対象に対するアーム先頭のdropが3,381件から2,633件に、ネイティブな`Bits8`のワーカーが362個から594個になった。根拠は、今も生成側だけである。`Int`の`0`リテラルは`Bool`ではない。比較プリミティブは、末尾としては固有の規則を必要としない。フロントエンドがそれを`B8`リテラル上の`case`に変えるからである。
+残っているアーム先頭のdropの最大の原因は、呼び出しだった(呼び出しの結果は、当初の4,008件のうち1,319件)。末尾が`B8`リテラル、ネイティブな`Bits8`の値、またはそのような関数の呼び出しである関数は、現在、`ret= Native Bits8`のワーカーを持つ(`boolReturnPlan`、`rc2/doc/dual-abi.md`の「Bool return」。`--directive noboolret`で無効にできる)。そのため、その呼び出し元は結果をネイティブな`Bits8`として束縛し、それに対する`case`は`drop`を必要としない。idris2-lspでは、`0`/`1`のスクルーティニーに対するアーム先頭のdropが3,381件から2,633件に、ネイティブな`Bits8`のワーカーが362個から594個になった。根拠は、今も生成側だけである。`Int`の`0`リテラルは`Bool`ではない。比較プリミティブは、末尾としては固有の規則を必要としない。フロントエンドがそれを`B8`リテラル上の`case`に変えるからである。
 
-### 型付き定数のcase判別対象
+### 型付き定数のcaseスクルーティニー
 
-altがすべて、`alwaysUnboxed`な型(`B8`、`Char`、`Int8`など。`Types.litRep`)の定数である`case`では、Idris2の型付けにより(ローカル変数の型は1つである)、判別対象はタグ付き即値を保持している。それは`Bool`、すべて引数なしの列挙型、`Bits8`のいずれかである。この値に対する`dup`/`drop`/`free`は何もしない。そこで`Types.typedConstScrutinees`が、該当する本物の`RCLoc`を集め、`RC.definitionNatives`がそれを`natives`に合流させる。これは、`alwaysUnboxed`な演算のオペランド(`alwaysUnboxedBoxedLocalsR`)の場合とまったく同じ扱いである。スイッチは`--directive noboolcase`である。
+altがすべて、`alwaysUnboxed`な型(`B8`、`Char`、`Int8`など。`Types.litRep`)の定数である`case`では、Idris2の型付けにより(ローカル変数の型は1つである)、スクルーティニーはタグ付き即値を保持している。それは`Bool`、すべて引数なしの列挙型、`Bits8`のいずれかである。この値に対する`dup`/`drop`/`free`は何もしない。そこで`Types.typedConstScrutinees`が、該当する本物の`RCLoc`を集め、`RC.definitionNatives`がそれを`natives`に合流させる。これは、`alwaysUnboxed`な演算のオペランド(`alwaysUnboxedBoxedLocalsR`)の場合とまったく同じ扱いである。スイッチは`--directive noboolcase`である。
 
-これは**Boolであることの判定ではない**。根拠が決めるのはアンボックスだけであり、しかも型付きである。根拠にするのは定数の種類(`B8 0`)であり、素の`0`/`1`ではない(`Int`や`Nat`のマッチは`I`/`BI`のaltを持つので、該当しない)。`Bits8`や列挙型の判別対象は2..255の値を取りうる。`1 -> A; _ -> B`というcaseは、意味を正確に保つ。ここでも`Emit`でも、ほかのどのパスでも、これを真偽値の判定や「0/1のもう一方」の分岐に書き換えることはない。0/1の形の二分岐への書き換えは`boolBranches`だけであり、これが発火するのは、融合された比較の結果に対してだけである。`boolProducer`、`boolReturnPlan`、`B8 0`/`B8 1`のリテラル検査は、いずれもこの集合を読まない。
+これは**Boolであることの判定ではない**。根拠が決めるのはアンボックスだけであり、しかも型付きである。根拠にするのは定数の種類(`B8 0`)であり、素の`0`/`1`ではない(`Int`や`Nat`のマッチは`I`/`BI`のaltを持つので、該当しない)。`Bits8`や列挙型のスクルーティニーは2..255の値を取りうる。`1 -> A; _ -> B`というcaseは、意味を正確に保つ。ここでも`Emit`でも、ほかのどのパスでも、これを真偽値の判定や「0/1のもう一方」の分岐に書き換えることはない。0/1の形の二分岐への書き換えは`boolBranches`だけであり、これが発火するのは、融合された比較の結果に対してだけである。`boolProducer`、`boolReturnPlan`、`B8 0`/`B8 1`のリテラル検査は、いずれもこの集合を読まない。
 
 このような定数のローカル変数をネイティブに読む呼び出しは、以前は、その変数を`RAppNameRep`の`postDrop`に加えていた。そのため`applyCallSiteRewrite`は、定義内のすべての`postDrop`からこれらのローカル変数を取り除く(`stripImmediatePostDrop`)。そうしないと、`annotate`にはそのdropと対になるdupがなくなる。
 
@@ -95,7 +110,7 @@ idris2-lspで、同じコンパイラを使い、`--directive noboolcase`を既�
 | `drop`の行数 | 80,467 | 78,871 (-1,596) |
 | `dup`の行数 | 79,112 | 79,113 |
 | IRの行数 | 680,384 | 678,789 |
-| alwaysUnboxedな定数の判別対象に対する`drop`で始まる`case`のアーム | 1,463 | 526 |
+| alwaysUnboxedな定数のスクルーティニーに対する`drop`で始まる`case`のアーム | 1,463 | 526 |
 
 発生源ごとに見ると、1,453件(計測に使った、種類タグ付きのダンプにおける`B8`だけの件数。上の1,463は、`Char`などのalways-unboxedなaltの種類も数えている)の内訳は、コンストラクタのフィールドが508、`case`の値の`let`が253、`dup`のエイリアスが231、呼び出しの結果が204、その他が181、パラメータが6、ループパラメータが1だった。(`B8`のaltで判別されるパラメータは、`paramEligibility`によって、すでにネイティブな`Bits8`になっている。パラメータに対して全プログラム規模の生成側の不動点を求めても、増えるのは1%未満にとどまると見込まれるのは、このためである。)コンストラクタのフィールド(約500件)は、次の節で扱う。列挙した発生源の合計は1,453ではなく1,384なので、約70件は内訳が示されていない。
 
@@ -103,7 +118,7 @@ idris2-lspで、同じコンパイラを使い、`--directive noboolcase`を既�
 
 型付き定数の`case`が判別するコンストラクタのフィールドも、即値である。ところが、`annotate`より後の2つのパスが、`natives`を見ずに、参照カウント操作を付けていた。
 
-- `Reuse.resolveReuse`は、altがdropしない分解済みフィールドのすべてを、判別対象をdropする前にdupする。また、すべてのフィールドを`reuseOffer`の`dupOnShared`/`dropOnUnique`に載せる。
+- `Reuse.resolveReuse`は、altがdropしない分解済みフィールドのすべてを、スクルーティニーをdropする前にdupする。また、すべてのフィールドを`reuseOffer`の`dupOnShared`/`dropOnUnique`に載せる。
 - `ConAltNative.shadowOneField`は、昇格したフィールドの所有権を一から導き直す(`reannotateFieldOwnership`。末尾に`drop`が付く)。
 
 この2つは、定義の中で`typedConstScrutinees`が見つけた集合(`RC2.immOf`)を受け取り、それらのフィールドを対象から外す。dropの前のdupも、`dupOnShared`/`dropOnUnique`のエントリも、導き直されたdropも生成しない。`--directive noboolfield`で無効にできる(根拠を借りている`noboolcase`のもとでも無効になる)。変わるのは、参照カウントの帳簿だけである。安全である理由は、次のとおりである。
@@ -113,7 +128,7 @@ idris2-lspで、同じコンパイラを使い、`--directive noboolcase`を既�
 - セルが再利用される一意な親では、フィールドのスロットは上書きされる。古い即値にdropは要らない。共有された親では、セル自身のdropがそのフィールドについて解放するものはない。
 - 別のコンストラクタに格納されたり、ボックス化のまま呼び出しに渡されたりしたフィールドも、同じタグ付きワードのまま渡される。`natives`に載っているローカル変数は、数えられることがない。
 
-`rcexpr-lint`にも、対応する変更が必要だった。このことは、最初の、より広い試み(`ConAltNative`の後で、これらのローカル変数に対するすべての参照カウント操作を取り除く)が報告した異常の説明にもなっている。use-after-freeの検査は、caseのフィールドを、その判別対象を*借用している*ものとして扱う。そのため、`drop [parent]`の後でdupなしに読まれるフィールドが、問題として検出される。これはヒープ上のフィールドには正しく、即値には誤りである。`Lint.idr`は、`u:`のcaseのローカル変数すべてに、事実上無制限のカウントを与え(`seedImmediates`)、借用されたフィールドとして再束縛しない。そのため、このような読み出しは問題にならず、残ったdup/drop(`noboolfield`の形)がアンダーフローすることもない。`typedcase.rcexpr`には、親のdropの後でフィールドを読む形がある。同じファイルから`u:`の印を外すと、今でも問題として検出される。狭い版を1回実行したとき、`con`の引数の過剰消費も報告された。これはlintの問題ではなかった。1つの`reuseOffer`の`dupOnShared`が、誤ったローカルid(`v261316`ではなく`v271316`)を出力したのである。idris2-lspを連続して2回コンパイルしたときに発生し、その後の6回の同一の実行では発生していない(原因は不明。TODO.mdを参照)。
+`rcexpr-lint`にも、対応する変更が必要だった。このことは、最初の、より広い試み(`ConAltNative`の後で、これらのローカル変数に対するすべての参照カウント操作を取り除く)が報告した異常の説明にもなっている。use-after-freeの検査は、caseのフィールドを、そのスクルーティニーを*借用している*ものとして扱う。そのため、`drop [parent]`の後でdupなしに読まれるフィールドが、問題として検出される。これはヒープ上のフィールドには正しく、即値には誤りである。`Lint.idr`は、`u:`のcaseのローカル変数すべてに、事実上無制限のカウントを与え(`seedImmediates`)、借用されたフィールドとして再束縛しない。そのため、このような読み出しは問題にならず、残ったdup/drop(`noboolfield`の形)がアンダーフローすることもない。`typedcase.rcexpr`には、親のdropの後でフィールドを読む形がある。同じファイルから`u:`の印を外すと、今でも問題として検出される。狭い版を1回実行したとき、`con`の引数の過剰消費も報告された。これはlintの問題ではなかった。1つの`reuseOffer`の`dupOnShared`が、誤ったローカルid(`v261316`ではなく`v271316`)を出力したのである。idris2-lspを連続して2回コンパイルしたときに発生し、その後の6回の同一の実行では発生していない(原因は不明。TODO.mdを参照)。
 
 idris2-lspで、同じコンパイラを使い、`--directive noboolfield`を既定と比べて計測した。
 
@@ -122,13 +137,13 @@ idris2-lspで、同じコンパイラを使い、`--directive noboolfield`を既
 | `dup`の行数 | 79,113 | 78,483 (-630) |
 | `drop`の行数 | 78,871 | 71,191 (-7,680) |
 | IRの行数 | 678,789 | 670,479 |
-| alwaysUnboxedな定数の判別対象に対するアーム先頭のdrop | 526 | 120 |
+| alwaysUnboxedな定数のスクルーティニーに対するアーム先頭のdrop | 526 | 120 |
 
 (残った120件のうち、13件がフィールド、14件がパラメータである。残りは`let`束縛されたボックス化の呼び出し結果などである。) `Test13NativeArgChain`は、`1 -> ..; _ -> ..`を通した、値が2のフィールドと255のフィールドを扱う。また、親がdropされた後で読まれるフィールドと、`tcBump`も扱う。`tcBump`は、そのようなフィールドを持つコンストラクタを、共有された値と一意な値のそれぞれについて作り直す(再利用する)。`check.sh`は、スイッチを指定した場合と比べて、アーム先頭のdropと`dupOnShared`のエントリが少ないことを検証する。
 
 ## 比較は別の、より限定された仕組み(`RCmpCase`)
 
-比較(`LT`/`GT`/`EQ`/`LTE`/`GTE`)は`opResultRep`に**ない**ことが目立つ。算術のようにネイティブな`RLet.Rep`を持つことはない。代わりに、比較が、Idris2自身のBoolの符号化(`False=0`/`True=1`)に対する二分岐の、唯一かつ直接の判別対象になっているとき、`RC.idr`の`normalize`がその形全体を専用の`RCmpCase` IRノードへ融合する(`tryFuseCompare`、`boolBranches`、`constantBoolValue`)。比較は生のCのブール式になって`if`に直接埋め込まれ、ネイティブであれ何であれ、ボックス化された値が実体化されることは一切ない。これは、このモジュールの上に重ねた(そして`nativeEligible`を再利用する)別個の最適化であり、`RLet.Rep`の仕組みの拡張ではない。設計の全体と、そのバグ(`annotate`の`RCmpCase`のケースにあった二重解放で、本書の内容とは無関係)については、`doc/`のコミット履歴と`BENCHMARKS.md`の「比較/分岐融合」節を参照。
+比較(`LT`/`GT`/`EQ`/`LTE`/`GTE`)は`opResultRep`に**ない**ことが目立つ。算術のようにネイティブな`RLet.Rep`を持つことはない。代わりに、比較が、Idris2自身のBoolの符号化(`False=0`/`True=1`)に対する二分岐の、唯一かつ直接のスクルーティニーになっているとき、`RC.idr`の`normalize`がその形全体を専用の`RCmpCase` IRノードへ融合する(`tryFuseCompare`、`boolBranches`、`constantBoolValue`)。比較は生のCのブール式になって`if`に直接埋め込まれ、ネイティブであれ何であれ、ボックス化された値が実体化されることは一切ない。これは、このモジュールの上に重ねた(そして`nativeEligible`を再利用する)別個の最適化であり、`RLet.Rep`の仕組みの拡張ではない。設計の全体と、そのバグ(`annotate`の`RCmpCase`のケースにあった二重解放で、本書の内容とは無関係)については、`doc/`のコミット履歴と`BENCHMARKS.md`の「比較/分岐融合」節を参照。
 
 ### ボックス化されたオペランド(`Integer`、`String`)の比較
 
@@ -138,7 +153,7 @@ idris2-lspで、同じコンパイラを使い、`--directive noboolfield`を既
 - **所有権。**ネイティブの場合と変わらない。`annotate`の`RCmpCase`のケースは、ボックス化された各オペランドに`postDrop`のエントリを1つ与える(オペランドがまだ使われるなら、dupしたうえで)。`emitCmpCaseInto`は、条件を評価した直後、どちらの分岐よりも前に、それらをdropする。Boolのローカル変数がないので、`dup`/`drop`も、結果に対する`to_i64`もない。
 - **shadowは作らない。**オペランドの型がネイティブではないので、`Loop`の`nativeArgTypes`/`nativeArgTypesFor`は、このような`RCmpCase`を無視する。`Integer`の比較でしか読まれないループパラメータは、ボックス化のままになる。
 
-形の条件は、上のものと同じである(比較そのものが、二分岐の判別対象である)。それより前に比較へ`let`束縛された変数に対する`case`は、融合されない。
+形の条件は、上のものと同じである(比較そのものが、二分岐のスクルーティニーである)。それより前に比較へ`let`束縛された変数に対する`case`は、融合されない。
 
 ### ネストした比較のマージ(`Compiler.RC2.CmpMerge`)
 
@@ -159,6 +174,12 @@ cmp <=T [x, y] then A  else  B
 
 これが発火する場所は限られる。`idris2-lsp`では、ほとんどどこにもない(TODO.mdを参照)。`Ord Int`/`Integer`の`compare`は呼び出しのままであり(書き換えた本体が`delegatingThreshold`を超える)、ほかの場所では`<=`がすでにプリミティブだからである。発火するには、`compare`の展開がインライン化される必要がある。これが起きるのは、`String`、`Char`、`Double`の呼び出し元が1つだけの`compare`(early inline)と、手書きの`if x < y then A else if x == y then A else B`である。計測では、手書きのマージ済みの形を2億回反復すると、`Int`と`Double`で、10.48秒ではなく9.86秒(約6%)かかった。`compare x y /= GT`を通した`String`の挿入ソートは、0.139秒ではなく0.134秒で、比較ごとに`strcmp`が1回減る。
 
+## 畳み込みの後でrepを付け直す
+
+`Types.repOf`は、フェーズ1が`let`を作るときに、その時点の値の形から`let`のrepを決める。後になって初めて`ROp`になる値は、`Boxed`のままになる。該当するのは`Int`(とほかの固定幅の型)の`mod`/`div`である。`Prelude.Num.mod`は`case y == 0 of 0 => %Int x y; _ => crash`であり、`repOf`はこれを`Nothing`とする。定数の`y`でインライン化して`ConstFold`をかけると、`let v : Boxed`の中に`op %Int [x, #3]`が残る。この`op`は、ボックス化された`idris2rc2_mod_Int64`を通して出力されていた。`mkInt64`が2回、呼び出し、`to_i64`、`drop`で16 nsかかる。ネイティブの`idris2rc2_emod_i64`なら1 ns未満である(`n mod 3`を1億回繰り返すループは、1.7 sから0.1 sになった)。
+
+`ConstFold.refreshReps`は、各定義の畳み込み済みの本体を走査する(`foldConstDef`と`foldConstDefWith`の中で動くので、`PushCon`と`SpecClosure`による再畳み込みの後にも動く)。値がネイティブの結果を持つ`ROp`/`RPrimVal`になった`Boxed`の`let`に、`repOf`が与えるrepを付ける。フェーズ2はこの後で`natives`と`inlineableRep`を計算するので、最初から得ていたはずの`let`と同じものを見る。除数が定数でない場合は`case`が残るので、`mod x y`は変わらない。`Test151IntModDivNative`。
+
 ## 見つかったバグと修正(時系列。コミット単位の詳細は`git log`と`BENCHMARKS.md`を参照)
 
 1. **`Cast Integer Int`でのメモリ破壊。** `opResultRep (Cast i o)`は当初、`o`(変換先の型)だけを調べ、`i`(変換元の型)を調べていなかった。GMPの`Integer`(常にボックス化される、任意精度の型)からネイティブ化の対象の型への変換が、誤ってネイティブ化の対象と扱われ、ヒープのポインタを生の`int64_t`として解釈してしまった。`nativeEligible i`も要求することで修正した。
@@ -172,7 +193,7 @@ cmp <=T [x, y] then A  else  B
 
    どちらも正しさのバグではなかった。`alwaysUnboxed`の値に対する`idris2rc2_drop`は、構成上、ランタイムで何もしないことが保証されている(上の`alwaysUnboxed`の項目を参照)。そのため、出力されたCは誤ったものではなく、無駄なものだっただけである。ただし、この2つの経路に限っては、`alwaysUnboxed`が存在する意義そのものを損なっていた。
 
-   修正は、どちらも`Types.alwaysUnboxed`で直接フィルタすることである。`DualABI.idr`の`wrapperPostDrop`は、自身の`eligible : List (Int, PrimType)`を`alwaysUnboxed`でフィルタし、dropのリストにはalways-unboxedでない位置だけを残す。`Emit.idr`には共有のヘルパー`alwaysUnboxedDropVar : (String, String, CFType) -> Maybe String`を追加した。これは`createFFIArgList`/`discardLastArgument`と同じ`where`ブロックにあり、`emitGenericForeignWrapper`と`emitFastPackFixedWrapper`の両方の`removeVarsArgList`が使う。後者は一貫性のためだけである。`idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed`の引数は常に`CFUser`なので、実際には`alwaysUnboxed`のケースに当たらない。このヘルパーは、`cfTypeNative vt`が`Just ty`で、かつ`alwaysUnboxed ty`が成り立つとき、`Nothing`(dropを省く)を返す。
+   修正は、どちらも`Types.alwaysUnboxed`で直接フィルタすることである。`DualABI.idr`の`wrapperPostDrop`は、自身の`eligible : List (Int, PrimType)`を`alwaysUnboxed`でフィルタし、dropのリストにはalways-unboxedでない位置だけを残す。`Emit.idr`には共有のヘルパー`alwaysUnboxedDropVar : (String, String, CFType) -> Maybe String`を追加した。これは`createFFIArgList`/`discardLastArgument`と同じ`where`ブロックにあり、`emitGenericForeignWrapper`の`removeVarsArgList`が使う。置き換え対象の`fastPack`/`fastConcat`用の専用ラッパー(その後削除した)でも使っていたが、その引数は常に`CFUser`だったので、実際には`alwaysUnboxed`のケースに当たらなかった。このヘルパーは、`cfTypeNative vt`が`Just ty`で、かつ`alwaysUnboxed ty`が成り立つとき、`Nothing`(dropを省く)を返す。
 
    関連する3つ目の箇所である`Emit.idr`の`emitFFIWorker`(Stage 3cのネイティブABIのFFIワーカーで、常にボックス化されるラッパーではない)も調べたが、修正は不要だった。そのボックス化の位置は、構成上、`cfTypeNative`がすでに`Nothing`を返した(そもそもネイティブ化の対象でない)位置とちょうど一致する。一方`cfTypeNative`は、`alwaysUnboxed`の型に対して必ず`Just`を返す。したがって、そのような型がこのワーカー自身のボックス化位置のdropリストに現れることは、構造上ありえない。
 
@@ -181,7 +202,7 @@ cmp <=T [x, y] then A  else  B
 - `rc2/src/Compiler/RC2/Types.idr`: 上で説明した、純粋な決定関数のすべて。
 - `rc2/src/Compiler/RC2/RC.idr`: フェーズ1(`repOf`を呼ぶ`bindOne`/`bindCompound`)と、フェーズ2(`nativeLocalsR`、`alwaysUnboxedBoxedLocalsR`、`definitionNatives`、`splitBorrows`、`boxedOperands`)。比較融合の別経路である`tryFuseCompare`もここにある。
 - `rc2/src/Compiler/RC2/RCExp.idr`: `Rep`、`RLet.rep`、`ROp.postDrop`、`RCLocal.RCConst`、`RCmpCase`。
-- `rc2/src/Compiler/RC2/Emit.idr`: `nativeCType`/`nativeMk`/`nativeUnbox`、`rcVarToNativeC`/`rcVarToBoxedC`、`cOp`/`nativeOpExpr`/`nativeCmpExpr`、`emitNativeValue`、`InlineMap`/`tryInlineNativeOp`、`RepMap`。あわせて`alwaysUnboxedDropVar`(上のバグ6)もあり、`emitGenericForeignWrapper`/`emitFastPackFixedWrapper`の`removeVarsArgList`が参照する。
+- `rc2/src/Compiler/RC2/Emit.idr`: `nativeCType`/`nativeMk`/`nativeUnbox`、`rcVarToNativeC`/`rcVarToBoxedC`、`cOp`/`nativeOpExpr`/`nativeCmpExpr`、`emitNativeValue`、`InlineMap`/`tryInlineNativeOp`、`RepMap`。あわせて`alwaysUnboxedDropVar`(上のバグ6)もあり、`emitGenericForeignWrapper`の`removeVarsArgList`が参照する。
 - `rc2/src/Compiler/RC2/DualABI.idr`: 本書のフェーズ1/2の仕組みの一部ではないが、`synthesizeWorker`の`wrapperPostDrop`が、`Types.alwaysUnboxed`の2つ目の、独立した利用者である(上のバグ6)。通常の関数に対する`annotate`の`alwaysUnboxedBoxedLocalsR`と同じやり方で、二重ABIのラッパーのdropリストをフィルタする。
 
 ## 検証方法

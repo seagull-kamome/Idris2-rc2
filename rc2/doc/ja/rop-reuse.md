@@ -96,6 +96,8 @@ Boxedの`Integer`のランタイムプリミティブ10個の契約を変更し�
 
 新しいマクロ`IDRIS2RC2_DEFOP_REUSE(OPNAME, TY, CTY, GET, MK, OP)`は、この再利用可能な2つの型に対して、再利用を伴って消費する版を生成する。上の`IDRIS2RC2_INTEGER_BINOP`とまったく同じ形で、`a`、次に`b`に`idris2rc2_isUnique`を適用し、どちらも一意でなければ新しく確保する。ただし、GMPの関数を呼んで`dst->v`のmpz_tに書き込む代わりに、`((IDRIS2RC2_##TY *)a)->v = result`と直接変更する。
 
+`IDRIS2RC2_DEFOP_REUSE`は、`IDRIS2RC2_DEFOP_REUSE_RESULT(OPNAME, TY, CTY, GET, MK, RESULT)`の薄いラッパーである。こちらがこの3通りの形を1か所にまとめて持ち、結果の式(`a`と`b`を使う)を引数として受け取る。下で述べるシフト、`Int64`/`Bits64`の`div`/`mod`、`Double`の演算は、これを直接使う。
+
 `Double`は、小整数キャッシュの対象にならない。`idris2rc2_mkDouble`は必ず新しく確保するので、そもそもタグ付きと再利用可能の分割が要らない。そのため、`add`/`sub`/`mul`/`div`用に専用の`IDRIS2RC2_DOUBLE_BINOP(OPNAME, OP)`マクロを用意した。
 
 ### 今回の`Div`/`Mod`と`Neg`
@@ -157,9 +159,9 @@ isReuseConsumingOp _ = False
 - 1回目は、`postDrop`にある永続的なBoxedのローカル用である。
 - 2回目は、`boxOpArg`がNativeのオペランド用に作り出した、一時的なNativeからBoxedへの変換結果用である。
 
-`isReuseConsumingOp op`が`True`なら、この2回の`removeVars`をどちらも完全にスキップする。ランタイムのプリミティブが、渡されたすべてのオペランドの処分を引き受けるからである。永続的なローカルでも、一時的な値でも同じである。
+`isReuseConsumingOp op`が`True`なら、`postDrop`のdropと、新しく作った一時的な値のdropをスキップする。ランタイムのプリミティブが、渡されたすべてのオペランドの処分を引き受けるからである。永続的なローカルでも、一時的な値でも同じである。(`Int`、`Int64`、`Bits64`のオペランドはnativeになりうるので、`boxOpArg`はそれらに対して実際に一時的な値を作る。)
 
-(実際には、この10個の演算で`boxOpArg`が一時的な値を作ることはない。`Integer`は決してnative-eligibleにならないので(`doc/native-type-inference.md`の`nativeEligible`を参照)、`boxOpArg`がBoxedに変換すべきNativeの`Integer`オペランドが、そもそも存在しないためである。それでも2回の呼び出しの両方を無条件にスキップするのは、一様に扱うためで、実際の挙動が変わらない、より狭い2つ目の条件を足さないためである。)
+スキップ*しない*のは、オペランドのインライン化された式が負っているdropである。`x`がBoxedの`Int64`である`(x + 1) `div` y`では、nativeの`x + 1`が、`div`に渡すボックスの中にインライン化される。この式が`x`から読んだ参照は、プリミティブのオペランドではない。これをスキップすると、評価のたびに参照が1つリークした(`boxOpArgParts`は、新しいボックスをそれらのdropと分けて扱う。`tests/Test174OwnershipLeaks/ReuseOpInlineOperand`)。
 
 `isReuseConsumingOp op`が`False`なら、挙動はまったく変わらない。以前の明示的なdropの出力が、この変更の前と同じように実行される。
 
@@ -184,7 +186,7 @@ isReuseConsumingOp _ = False
 - **この拡張をテストしているときに見つかった、参照実装の`negate`のタイプミス。** `Int64`/`Bits64`/`Double`の拡張のためのテスト(現在は`Test49IntegerOpReuse.idr`に統合している)を書いているときに、固定した参照実装の`idris2 --cg refc` 0.8.0にインストールされている`mathFunctions.h`が、`idris2_nagate_Int8/16/32/64`と`idris2_nagate_Double`を、"nagate" という綴りの誤りのままマクロとして定義していることが分かった。同じ参照実装自身のコード生成は、正しい綴りの`idris2_negate_<...>`の呼び出しを出力する。このため、固定幅整数型や`Double`に`negate`を使うIdris2のプログラムは、このバイナリに対しては*リンク*に失敗する。
 
   これは参照実装のバイナリの欠陥であり、rc2の欠陥ではない(`rc2/support/rc2/numeric.h`自身の`idris2rc2_negate_Int64`/`negate_Double`は綴りが正しく、影響を受けない)。そのため、`Test49IntegerOpReuse.idr`の固定幅の拡張関数は、`negate`をまったく動かしていない。同じファイルの元からある、`Integer`型の`bigFactorial`の`negate`の使用が、再利用を伴って消費する`Neg`の一般的なパターンをすでにカバーしている。`Integer`の`idris2_negate_Integer`はマクロではなく実際の関数なので、このタイプミスの影響を受けない。詳細は`TODO.md`の "Pinned reference `idris2 --cg refc` 0.8.0 misspells `negate` for fixed-width/`Double` types" の項を参照すること。
-- **`boxOpArg`の一時的な値の再利用は、除外ではなく、すでに含まれている。** 上で述べたとおり、`Emit.idr`のスキップは`postDrop`と`boxOpArg`の一時的な値の両方を一様に対象にしている。`Integer`は、`boxOpArg`がBoxedに変換すべきNativeのオペランドをそもそも生まないので、より狭い条件を切り出す必要がなかった。この一様なスキップを、将来の読者が見落としと取り違えないように、ここで明記しておく。
+- **`boxOpArg`の一時的な値の再利用は、除外ではなく、すでに含まれている。** `Emit.idr`のスキップは、`postDrop`と`boxOpArg`の一時的な値の両方を一様に対象にしている。より狭い条件を切り出す必要はなかった。インライン化されたオペランドの式が負っているdropは例外である。上を参照すること。
 
 ## 実施した検証
 
@@ -213,7 +215,24 @@ isReuseConsumingOp _ = False
 ## ファイル
 
 - `rc2/support/rc2/numeric.h`: `IDRIS2RC2_INTEGER_BINOP`、`IDRIS2RC2_INTEGER_SHIFTOP`、`idris2rc2_negate_Integer`、およびこの2つのマクロから作った10個の実体化。拡張では、`IDRIS2RC2_INTTYPES_TAGGED`/`IDRIS2RC2_INTTYPES_REUSABLE`(従来の1つだった`IDRIS2RC2_INTTYPES`の分割)、`IDRIS2RC2_DEFOP_REUSE`、`IDRIS2RC2_DOUBLE_BINOP`、手書きの`Int64`/`Double`用`negate`も加わった。
+- `rc2/support/rc2/idris2rc2_strings.c`: 後述の「文字列演算」の6つの文字列プリミティブ。
 - `rc2/src/Compiler/RC2/Emit/Util.idr`: `isReuseConsumingOp`。拡張による`Int64Type`/`Bits64Type`/`DoubleType`のケースと、二重dropのバグの修正で追加した、対応する`IntType`のケースを含む。
 - `rc2/src/Compiler/RC2/Emit.idr`: `emitRC (ROp ...)`の、`isReuseConsumingOp`で制御される2回の`removeVars`のスキップ。
 - `rc2/tests/Test49IntegerOpReuse.idr`: `Integer`の仕組みと、同じファイルの末尾に統合した`Int64`/`Bits64`/`Double`の拡張の、両方の回帰テスト。
 - 変更していないことを明示するもの: `rc2/src/Compiler/RC2/RCExp.idr`(`ROp`自身の形)、`rc2/src/Compiler/RC2/RC.idr`(`annotate`の`ROp`のケース)、`rc2/src/Compiler/RC2/Reuse.idr`(コンストラクタ再利用専用で、無関係)。「何を変える必要がなかったか」が、この文書の要点であるため、ここで明記している。
+
+## 消費型として扱う演算(`isReuseConsumingOp`)
+
+`Integer`は、`Div`を除くすべての算術演算とビット演算を対象にする(`idris2rc2_div_Integer`は複数の文からなるユークリッド除算で、変換していない)。`Int64`/`Bits64`/`Double`は、それぞれの`PrimType`が持つすべての演算を対象にする。8/16/32ビットの型は除外している。`Types.alwaysUnboxed`によってこれらはタグ付きポインタになるので、再利用できるセルも、スキップすべき呼び出し後のdropもない。`Int64Type`を挙げる箇所には、必ず`IntType`も挙げなければならない。`cPrimType`は両方をCの名前`Int64`に対応づけるので、`Add IntType`と`Add Int64Type`は同じ`idris2rc2_add_Int64`を呼ぶ。片方が抜けると、最適化を取りこぼすだけでは済まず、プリミティブがすでに消費したオペランドを`Emit.idr`がdropする(二重drop)。
+
+## 文字列演算
+
+`StrTail`、`StrReverse`、`StrIndex`、`StrCons`、`StrAppend`、`StrSubstr`も消費型である(`idris2rc2_strings.c`)。プリミティブは結果を作ったあと、渡されたすべてのオペランドをdropする。nativeの`Char`/`Int`のインデックスのボックスも含む。再利用はなく、所有権の移動だけである。結果の長さはオペランドと異なるからである。rc2自身の型検査(`--typecheck rc2.ipkg`、12.7 s。カウンタを入れて再リンクしたrc2のバイナリ)で数えると、`++`は1.19M回実行され、左のオペランドが一意だったのは呼び出しの23%、右のオペランドは47%で、オペランドの平均は10バイトだった。したがって確保を再利用しても、節約は実行時間の0.4%未満である。移動によって得られるのは、Boxedのオペランドを取ってBoxedの結果を作るすべての`ROp`に共通する1つの契約と、C中の`drop`の減少である。`rc2-norepl`では11.6k行(行数の0.7%)減る。
+
+`StrLength`と`StrHead`は、オペランドを読むだけのマクロである(結果は、上の`ROp`と同じくBoxedである)。これらは借用のままで、`Emit`は引き続きその`postDrop`を出力する。
+
+演算のあとも生き続けるオペランドは、先に`dup`され、プリミティブがその参照をdropする。読むだけの演算の場合とは違い、`DupMerge`はこの組を打ち消せなくなる。`rc2-norepl`では96組である(文字列演算の`postDrop`のエントリの0.8%。`DupMerge`なしで11,667、ありで11,571)。
+
+`tools/rcexpr-lint`の`consumingOp`は、同じダンプ名(`++`、`op_strcons`、`op_strtail`、`op_strrev`、`op_strindex`、`op_strsubstr`)を列挙している。
+
+数値の場合と同じく、これはランタイム契約の変更である。古いコンパイラで作ったオブジェクト(`--inc`ビルド)は、呼び出しのあとでなおdropする。以前にビルドしたものは作り直し、`support/`を変更したあとは`idris2 --install rc2.ipkg`を実行すること。

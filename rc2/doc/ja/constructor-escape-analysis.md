@@ -118,7 +118,7 @@ idris2-lspで`--directive noknowncon`(オフ)とオンを比較した結果は�
 - `bigAltThreshold`(24。Inlineの`smallBodyThreshold`と同じ)を超える部分が、2回以上行き着くことはない。これは、連鎖が乗算的に膨らまないようにするためである。`Lifted`版で`rc2/doc/inlining.md`の「Size budget」が記録している失敗は、この形をとる。
 - 行き着いた部分の合計サイズが、コンシューマ自身のサイズに`pushSizeBudget`(200。`caseOfCaseSizeBudget`と同じ)を加えた値以下である。
 
-**新しいid。** どのコピーも、それが束縛するものすべてに新しいidを振る(`LateInline`の`collectBoundIds`/`freshenBoundIds`(このためにexportした)と、`Loop`の`renameRCExp`を使う)。後段のパスは、idが定義ごとに一意であると仮定しているためである。そのために`VarId`カウンタが必要なので、この段階は純粋な`foldConst`の中ではなく、`Core`の中で動く。idを消費するので、生成されるCの、以降の変数番号がずれる。生成されたCをgrepするrefcスイートのテスト(`callingConvention`)1件は、まさにこの理由で、期待出力の番号を付け直した。
+**新しいid。** どのコピーも、それが束縛するものすべてに新しいidを振る(`LateInline`の`collectBoundIds`/`freshenBoundIds`(このためにexportした)と、`Rewrite`の`renameRCExp`を使う)。後段のパスは、idが定義ごとに一意であると仮定しているためである。そのために`VarId`カウンタが必要なので、この段階は純粋な`foldConst`の中ではなく、`Core`の中で動く。idを消費するので、生成されるCの、以降の変数番号がずれる。生成されたCをgrepするrefcスイートのテスト(`callingConvention`)1件は、まさにこの理由で、期待出力の番号を付け直した。
 
 **順序。** ボトムアップで処理する。末端に置かれたコンシューマは、すでに書き換え済みの外側の`value`の、末尾位置に位置している。
 

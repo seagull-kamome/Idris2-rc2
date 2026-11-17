@@ -56,8 +56,10 @@ hint): the name goes to the C compiler as the argument `-l<name>` of a shell
 command, and anything else (a quote, a backtick, `$`, `/`, white space inside
 the name, a non-ASCII letter, a bare `lib`) is a compile error. A name that
 does not start with `lib` is neither linked nor checked, so a misspelt `Libfoo`
-is ignored. With three options or more, the library and the header option are both
-ignored; with one, there is a library and no header.
+is ignored. The options are counted after the expression (or the function name of
+another tag): with one, it is the library and there is no header; with two, the
+library and the header; with three or more, the library and the header option are
+both ignored (`libList`/`headerList`, `ForeignSpec.idr`).
 
 Compatibility: upstream and RefC read the header field and the library field as
 ONE name each, so a declaration that must also compile on RefC keeps a single

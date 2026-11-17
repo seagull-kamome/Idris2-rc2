@@ -316,11 +316,12 @@ Only `DeadCode.pruneDeadDefs` and the top-level driver
    back to the whole program. Such a failure does not stop the build; look
    for `error:` in its output.
 
-   `rc2-norepl` itself still cannot be linked this way: a `C` `main()` is
-   written only for a module named `Main`, so the program's entry module
-   must be called that; and `NoRepl.SchemeStubs` gives `%foreign_impl`
-   to declarations of another package, which needs the whole program (the
-   25 functions of `Libraries.Utils.Scheme` stay undefined at the link).
+   `rc2-norepl` itself still cannot be linked this way:
+   `NoRepl.SchemeStubs` gives `%foreign_impl` to declarations of another
+   package, which needs the whole program (the 25 functions of
+   `Libraries.Utils.Scheme` stay undefined at the link). (The entry module
+   no longer has to be called `Main`: see "Why rc2 doesn't need Chez's
+   \"recompile the root term separately\" step" above.)
 
 2. **New `incCompile` function** (`Compiler.RC2.RC2`, mirrors Chez's
    `incCompile`):

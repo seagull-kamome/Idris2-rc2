@@ -97,7 +97,7 @@ Inline (Lifted level)
 - 同じく`alwaysUnboxedBoxedLocalsR`。この2つが漏れると、ネイティブなローカルがBoxedとして扱われ、宣言されていないC変数を`drop`する(`refc-suite/doubles`)。
 - `ConAltNative`の走査。
 
-最初から素通しの節を1行足す必要があったファイルは2つある。1つは`Compiler.RC2.Loop`の`renameRCExp`である。自己末尾呼び出しをリネームするこの走査は`RCExp`に対して網羅的だが、実際には`RMemoize`がここに届くことはない。引数なしのCAFにはループで持ち回すパラメータがなく、`applyLoop`が適用されないからである。もう1つは`Pretty.idr`の`prettyExp`(`dumprcexpr`の表示処理)である。
+最初から素通しの節を1行足す必要があったファイルは2つある。1つは`Compiler.RC2.Rewrite`の`renameRCExp`である。自己末尾呼び出しをリネームするこの走査は`RCExp`に対して網羅的だが、実際には`RMemoize`がここに届くことはない。引数なしのCAFにはループで持ち回すパラメータがなく、`applyLoop`が適用されないからである。もう1つは`Pretty.idr`の`prettyExp`(`dumprcexpr`の表示処理)である。
 
 ### 制限
 

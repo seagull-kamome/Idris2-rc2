@@ -24,12 +24,12 @@ sinkに成功したら、その結果をそのまま返さず、もう一度`app
 
 ### `value`が候補になるかの判定(`sinkEligible`)
 
-候補になるのは、素の`ROp`/`RCon`/`RAppName`である(先頭にある`RDup`/`RDrop`/`RFree`/`RReleaseReuse`のラッパを剥がしたあとの形で判定する。剥がすラッパの種類は、類似の理由で`Compiler.RC2.Loop.isInvariantExpr`が剥がすものと同じである)。除外条件も、当てはまるものは、その関数と同じ理由で同じにする。これは導出し直さず、意図的に同期させている。
+候補になるのは、素の`ROp`/`RCon`/`RAppName`/`RStructGet`/`RUnderApp`/`RDelay`である(先頭にある`RDup`/`RDrop`/`RFree`/`RReleaseReuse`のラッパを剥がしたあとの形で判定する。剥がすラッパの種類は、類似の理由で`Compiler.RC2.Loop.isInvariantExpr`が剥がすものと同じである)。除外条件も、当てはまるものは、その関数と同じ理由で同じにする。これは導出し直さず、意図的に同期させている。
 
 - `ROp`/`RAppName`の`lazy`フィールドは`Nothing`でなければならない。遅延された演算は、評価の*タイミング*自体が観測可能だからである。
 - `RCon`の`reuseFrom`は`Nothing`でなければならない。特定の`RReuseOffer`が持つ、枝ごとの実行時一意性チェックのプロトコルと絡み合っており、このパスが動かしてよいものではない。
 
-**`RAppName`(名前付きの通常の呼び出し)は、`Compiler.RC2.Loop`のホイストでは意図的に除外しているが、ここでは候補になる。** ホイストでその除外が必要なのは、ホイスト固有の事情による。ホイストは、計算を無条件に、呼び出しごとに1回、ループの前へ移す。ループが1度も回らない経路では、本来その計算は一切行われなかったはずである(`rc2/doc/loop-conversion.md`の「ループ不変式のホイスト」節を参照)。これに対してsinkingは、`value`を実行する回数を減らすだけである(それを必要とする1つの枝に実際に到達したときだけにする)。もともと必ず実行された呼び出しは、移動後も必ず実行される。実際の使用箇所のすぐ近くに来て、そこへ到達したときにだけ実行されるようになるだけである。「実行されない」経路が「実行される」経路に変わることはない。パス全体がこの同じ安全性の論拠に立っている。`RApp`/`RUnderApp`(クロージャの適用/構築)は、明示的に対象外である。アロケーションやトランポリンなど、名前付きの直接呼び出しより仕組みが多く、ここでは解析していない。`RExtPrim`(`%World`を受け渡す本物の副作用)は、沈めても沈めなくても、候補にならない。
+**`RAppName`(名前付きの通常の呼び出し)は、`Compiler.RC2.Loop`のホイストでは意図的に除外しているが、ここでは候補になる。** ホイストでその除外が必要なのは、ホイスト固有の事情による。ホイストは、計算を無条件に、呼び出しごとに1回、ループの前へ移す。ループが1度も回らない経路では、本来その計算は一切行われなかったはずである(`rc2/doc/loop-conversion.md`の「ループ不変式のホイスト」節を参照)。これに対してsinkingは、`value`を実行する回数を減らすだけである(それを必要とする1つの枝に実際に到達したときだけにする)。もともと必ず実行された呼び出しは、移動後も必ず実行される。実際の使用箇所のすぐ近くに来て、そこへ到達したときにだけ実行されるようになるだけである。「実行されない」経路が「実行される」経路に変わることはない。パス全体がこの同じ安全性の論拠に立っている。`RApp`(クロージャの適用)は対象外である。`RUnderApp`/`RDelay`は、後述の「クロージャ」で扱う。`RExtPrim`(`%World`を受け渡す本物の副作用)は、沈めても沈めなくても、候補にならない。
 
 呼び出しを沈めるために、このパスはそれまで不要だった基盤を1つ追加した。`Sink.idr`は`SortedMap Int Rep`(`reps`)を、`applySinkExp`/`trySinkInto`/`trySinkIntoArms`に通して受け渡す。初期値は空である(トップレベルの引数は、すべて本当に`RBoxed`である。これは`localRepIn`の「IDがなければ`RBoxed`とみなす」という規約に沿っており、`Compiler.RC2.DualABI`の同名の関数をそのまま写した)。すべての`RLet`(その`Rep`の宣言)と`RLoop`(その`loopParams`)で拡張する。`Compiler.RC2.Loop.fillLoopContinuePostDrop`や`Compiler.RC2.DualABI.applyCallSiteRewriteBody`がすでに受け渡している形と同じである。これは`consumedOperands`のためだけにある。`ROp`は、どのオペランドがBoxedかを`postDrop`がすでに正確に列挙している。しかし`RAppName`にはそのようなフィールドがなく、呼び出しが走った時点で、引数は*すべて*無条件に消費される(所有権が呼び出し先へ移る)。そのため`consumedOperands`は、`addOperandDrops`に渡す前に、引数リスト全体から、`reps`が実際に`RBoxed`だと確認したものだけを選び出す必要がある。すでにネイティブな引数が`RDrop`の`vars`に現れてはならない。専用のテストは`tests/Test22BranchSinking.idr`の`callSinkable`である。`buildMsg tag n`の呼び出しは、その結果を読む1つの枝へ沈み、もう一方の枝には、代わりに明示的な`drop [tag, n]`が入る。
 
@@ -43,9 +43,9 @@ sinkに成功したら、その結果をそのまま返さず、もう一度`app
 
 `genuinelyUsedR`は、`RCExp.idr`の`freeLocalsR`とは意図的に別物にしている。`RDrop`/`RFree`/`RReleaseReuse`の対象は、`genuinelyUsedR`では*何も*寄与しない。`freeLocalsR`はそれを使用として数える。それではすべてのsink候補が、どの枝でも使われているように見えてしまい、この目的にはまったく逆になる。
 
-sinkingが働くのは、**Usedの枝がちょうど1つ**で、ほかのすべての枝がDropOnlyまたはAbsentの場合だけである。Usedが2つ以上の場合は、得るものがないので放置する。Usedが0の場合は、`var`が本当にデッドコードであり、その後始末はこのパスの仕事ではないので、放置する。
+sinkingが働くのは、**Usedの枝が一部にあり、すべてではない**場合である。`value`をUsedの各枝へ複製し、ほかの枝はすべてDropOnlyまたはAbsentである。すべての枝がUsedの場合は、得るものがないので放置する。Usedが0の場合は、`var`が本当にデッドコードであり、その後始末はこのパスの仕事ではないので、放置する。
 
-**`var`は、その分岐の判別オペランド(`isDecidingOperand`)であってはならない。** 判別オペランドとは、`RCmpCase`の比較の引数、または`RConCase`/`RConstCase`のスクルティニーである。スクルティニーは、どの枝が走るよりも*前*に評価されなければならない。`value`が分岐の判別対象そのものを計算するなら、`value`を特定の1つの枝へ沈めることは、構造上不可能である。これは開発中に捕まえた本物のバグである。`let v1 = v0 - 1 in case v1 of 0 => ...; _ => (v1 を使って v0 の fib を計算する)`(`tests/Test111Basics/Recursion.idr`の`fib`)を考える。各枝の本体だけを調べる検査では、これは「1つの枝(`_`)が使い、もう一方(`0`)は`v1`を二度と読まない」という形に見える。`v1`の束縛を`_`の枝に沈めると、`case v1 of ...`が、宣言される前の`v1`を参照することになり、未宣言識別子のコンパイルエラーになった。`trySinkInto`は、`trySinkIntoArms`を呼ぶ前に必ず`isDecidingOperand`を調べる。
+**`var`は、その分岐の判別オペランド(`isDecidingOperand`)であってはならない。** 判別オペランドとは、`RCmpCase`の比較の引数、または`RConCase`/`RConstCase`のスクルーティニーである。スクルーティニーは、どの枝が走るよりも*前*に評価されなければならない。`value`が分岐のスクルーティニーそのものを計算するなら、`value`を特定の1つの枝へ沈めることは、構造上不可能である。これは開発中に捕まえた本物のバグである。`let v1 = v0 - 1 in case v1 of 0 => ...; _ => (v1 を使って v0 の fib を計算する)`(`tests/Test111Basics/Recursion.idr`の`fib`)を考える。各枝の本体だけを調べる検査では、これは「1つの枝(`_`)が使い、もう一方(`0`)は`v1`を二度と読まない」という形に見える。`v1`の束縛を`_`の枝に沈めると、`case v1 of ...`が、宣言される前の`v1`を参照することになり、未宣言識別子のコンパイルエラーになった。`trySinkInto`は、`trySinkIntoArms`を呼ぶ前に必ず`isDecidingOperand`を調べる。
 
 ### 書き換え本体と、正しくするまでに見つかった2つ目の本物のバグ
 
@@ -55,9 +55,11 @@ sinkingが働くのは、**Usedの枝がちょうど1つ**で、ほかのすべ�
 
 `consumedOperands`は、`value`自身が読むときに消費するはずのBoxedオペランドを、すべて集める。対象は2種類ある。1つは`ROp`の`postDrop`リストである。もう1つは、`RCon`のフィールドのうち、先に`dup`されなかったものである(先頭の`RDup`がすでに追加の参照で守ったものを追跡する)。そのフィールドの最後の参照は、独立して残るのではなく、新しいコンストラクタへそのまま移る。`tests/Test110Loop/LoopInvariantParam.idr`に吸収された、かつての`Test21BoxedInvariantNotHoisted.idr`のケースは`dup v0; dup v1; con _ [v0, v1]`であり、両方のフィールドを先に`dup`するので、ここでは正しく何も寄与しない。`addOperandDrops`は、`value`を沈めなかったすべての枝の先頭に、これらに対する`drop`を付ける。これは、`value`自身の`postDrop`やフィールドの移動が、以前は毎回無条件に提供していた解放を、そのまま置き換えるものである。ただし、これらのどれかがその枝ですでに独立に読まれている場合には、sinkを行わないこと(`Nothing`)にして抜ける。この場合は二重dropの危険があるからである。そのようなことは、まず起こらない。ただ、防ぐコストは何もかからないので、守りを入れている。実際に発動することはないはずである。
 
+`consumedOperands`が対象にするのは`RCLoc`のオペランドだけである。定数の形をした`RCLocal`(`RCEmptyCon`/`RCConstCon`/`RCConstPartial`、または`litRep`がネイティブに置けない`RCConst`)は、釣り合わせるべき`drop`を持つ本物の参照カウント付きの値ではない。また`Emit.Util`の`varName`には、それを表す出力がない(「unreachable」のプレースホルダになる)。沈めた`RCon`の定数フィールドは、この対象の制限がなければそこへ行き着いてしまう。
+
 ### 無関係な`let`を越えるsinking
 
-`trySinkInto`は、`var`の束縛と最終的な分岐のあいだにある、*無関係な*ローカル変数`y`の先頭の`RLet`も通り抜ける。`let x = .. in let y = (x を読まない) in <branch>`という形で、`y`はその場に残したまま、`x`を使う1つの枝の探索をその先へ続ける。このケースが発動するのは、`y`自身がsinkできなかった場合に限る。`y`がsinkできるなら、`applySinkExp`の最も内側からの走査が、`let y = .. in <branch>`をすでに書き換え済みである(`y`の束縛は枝の1つの内側へ移っている。前述の「アルゴリズム」を参照)。したがって、この`RLet`の形が残るのは、`y`が2つ以上の枝で読まれる場合か、`y`自身が`sinkEligible`でない場合だけである。`y`の値が`var`を読む場合は、`Nothing`で抜ける。その読み取りは、最終的にどの枝が走るかにかかわらず無条件に行われるので、`var`はどの枝より前に本当に必要になる。これは、`isDecidingOperand`が分岐のスクルティニーに適用するのとまったく同じ理屈である。専用のテストは`tests/Test22BranchSinking.idr`の`skipUnrelatedLet`である。`x`の束縛は、`y`の束縛を通り抜けて(`y`は両方の枝で読まれ、`x`は`y`の計算に現れない)、`x`を読む1つの枝の内側に着地する。
+`trySinkInto`は、`var`の束縛と最終的な分岐のあいだにある、*無関係な*ローカル変数`y`の先頭の`RLet`も通り抜ける。`let x = .. in let y = (x を読まない) in <branch>`という形で、`y`はその場に残したまま、`x`を使う1つの枝の探索をその先へ続ける。このケースが発動するのは、`y`自身がsinkできなかった場合に限る。`y`がsinkできるなら、`applySinkExp`の最も内側からの走査が、`let y = .. in <branch>`をすでに書き換え済みである(`y`の束縛は枝の1つの内側へ移っている。前述の「アルゴリズム」を参照)。したがって、この`RLet`の形が残るのは、`y`が2つ以上の枝で読まれる場合か、`y`自身が`sinkEligible`でない場合だけである。`y`の値が`var`を読む場合は、`Nothing`で抜ける。その読み取りは、最終的にどの枝が走るかにかかわらず無条件に行われるので、`var`はどの枝より前に本当に必要になる。これは、`isDecidingOperand`が分岐のスクルーティニーに適用するのとまったく同じ理屈である。専用のテストは`tests/Test22BranchSinking.idr`の`skipUnrelatedLet`である。`x`の束縛は、`y`の束縛を通り抜けて(`y`は両方の枝で読まれ、`x`は`y`の計算に現れない)、`x`を読む1つの枝の内側に着地する。
 
 ### `var`自身の死を越えて剥がさない
 
@@ -79,6 +81,14 @@ idris2-lspに対して`rcexpr-lint`が見つけた(`{rc2_mutualLoop:18}`、`Bind
 
 先頭の`dup`は呼び出しと一緒にsinkされる。したがって呼び出しが消費するのは、その`dup`が追加した参照だけであり、ほかの枝は何も負っていない。`a`と`b`が分岐の後で再び読まれる場合、これは本物の二重dropだった(`malloc`のもとでヒープ破壊を起こす。`tests/Test22BranchSinking`の`sinkCallTwiceH`で再現した)。`RCon`/`ROp`のケースは、`dup`されたオペランドをすでに除外していたが、`RAppName`は除外していなかった。修正として、`consumedOperands`は、呼び出しのオペランドが出現するたびに、`dup`された参照を1つずつ打ち消すようになった。
 
+`ROp`、`RStructGet`、`RCon`のケースは、当初は集合によるフィルタを使っていた。これは、`dup`されたローカル変数の出現を*すべて*打ち消してしまう。`dup x; op *Integer [x, x] postDrop= [x, x]`で、その後`x`がデッドになる場合(`dup`は1つ、オペランドは2つ)、値が沈まなかった枝には、`x`が持ち込んだ参照のdropが残らなかった。これはリークである。現在は4つのケースすべてが`spend`を共有している(`tests/Test137SinkDupTwice`)。
+
+## クロージャ(`RUnderApp`、`RDelay`)
+
+`partial`(部分適用された呼び出し)や`delay`(遅延セル)は、アロケーションを行うだけで、ほかの副作用を持たない。したがって`RCon`と同じように候補になる。動機となったのは、`case`の前で構築され、1つの枝だけがforceする遅延クロージャである。ほかの枝は、アロケーションとその解放のコストを払わなくなる。`consumedOperands`は、キャプチャされた変数を消費されたものとして数える。そのため、クロージャを受け取らない枝には、`RCon`のフィールドと同様に、それらに対する明示的な`drop`が入る。
+
+sinkによってクロージャはその`apply`の隣に移り、`applyFoldApplied`(`doc/const-closure-fold.md`)の候補になる。このパスはSinkの直後にもう一度走る(`--directive noapplyfold`で無効にできる)。
+
 ## パイプライン上の位置
 
 このパスは、`Compiler.RC2.Loop`(自己末尾呼び出しの変換)の後、`Compiler.RC2.DualABI`の前に走る(`RC2.idr`の`toRCDefs`を参照)。`RLoop`/`RLoopContinue`ノードがすでに最終的な形になっている程度には遅い。そのおかげで、この1つのパスが、ループ本体の内側にも、ループを含まない通常の関数にも、同じように届く。一方、`DualABI`が木の形について考える必要が生じる前でもある。`genuinelyUsedR`/`removeVarDrop`が、どちらも`RLoop`/`RLoopContinue`のケースを持つのは、このためである。このコードベースのほかの木の走査はすべて、パイプライン上で`Compiler.RC2.Loop`より前にあるので、これらのケースが要らなかった。`--directive nosink`を指定すると、この段階だけが無効になる。ほかの任意の段階と同じ規約である(`RC2.idr`の`toRCDefs`のdocコメントを参照)。
@@ -90,6 +100,7 @@ idris2-lspに対して`rcexpr-lint`が見つけた(`{rc2_mutualLoop:18}`、`Bind
   - `consumedOperands`/`addOperandDrops`: 上記の2つ目のバグの修正。
   - `sinkEligible`/`isDecidingOperand`: 適用条件のガード。
   - `trySinkInto`/`trySinkIntoArms`/`applySinkExp`/`applySink`: 書き換えと木全体の走査。
+- `rc2/tests/Test159SinkClosure`: クロージャを、それを返す1つの枝へ沈める(`check.sh`がIRを調べる)。
 - `rc2/src/Compiler/RC2/RC2.idr`: `toRCDefs`のパイプラインへの組み込み。
 - `rc2/src/Compiler/RC2/ConAltNative.idr`: `peelWrappers`。「先頭のラッパを剥がしてから分岐に入る」という、このパスのラッパを剥がすケースが写している慣用形である。
 - `tests/Test110Loop/LoopInvariantParam.idr`に吸収された、かつての`Test21BoxedInvariantNotHoisted.idr`のケース: 動機となったケースである。自己末尾呼び出しのループの中にあり、`Compiler.RC2.Loop`のループ不変式のホイストとは、そのネガティブケースとして共有している。

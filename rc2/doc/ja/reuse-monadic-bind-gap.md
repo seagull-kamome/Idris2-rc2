@@ -212,7 +212,7 @@ def Main.{replaceL2:0}  (fun args=["v59:Boxed"(x), "v60:Boxed"(xs'), "v61:Boxed"
 ## 検証方法(この調査を再開する場合)
 
 1. `cd rc2 && source ../env.sh`
-2. 最小の`HasIO io =>`多相の再現プログラムを書く。副作用を持つコールバックに`!`記法を使い、判別対象自身のコンストラクタを再構築するcaseの枝の中に置く(上の再現プログラムを参照)。
+2. 最小の`HasIO io =>`多相の再現プログラムを書く。副作用を持つコールバックに`!`記法を使い、スクルーティニー自身のコンストラクタを再構築するcaseの枝の中に置く(上の再現プログラムを参照)。
 3. `nix-shell -p idris2 gcc gmp pkg-config --run 'build/exec/idris2-rc2 --cg rc2 --directive dumprcexpr <file>.idr -o <out>'`
-4. `build/exec/<out>.rcexpr`を読む(`rc2/doc/reading-the-ir.md`を参照)。分解された判別対象について、`drop [...]`(無条件)と`reuseOffer`/`reuse=`のどちらがあるかを探し、再構築が`partial ... missing=N`の呼び出し(bindの継続で、インライン化は安全でない)か、完全に適用された直接呼び出しかを確認する。
+4. `build/exec/<out>.rcexpr`を読む(`rc2/doc/reading-the-ir.md`を参照)。分解されたスクルーティニーについて、`drop [...]`(無条件)と`reuseOffer`/`reuse=`のどちらがあるかを探し、再構築が`partial ... missing=N`の呼び出し(bindの継続で、インライン化は安全でない)か、完全に適用された直接呼び出しかを確認する。
 5. 実際のパッケージで測り直すには、`rc2/tests/bench.sh --missing-containers --skip-build`を使う。ソースの変更の候補ごとに、変更の前後を*同じセッションの中で*測る。セッションが違うとマシンの負荷が大きく変わるので、セッションをまたぐ比較は信頼できない。変更のたびにベースラインも一緒に測り直し、以前の文書に記録された値を信用しない。

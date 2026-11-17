@@ -1726,10 +1726,11 @@ from Stage 2.
   fields verbatim, deliberately un-precomputed unlike `RAppNameRep`'s
   own `argReps`/`retRep`, plus a `postDrop` field always inherited
   unchanged from the `RAppNameRep` it replaces).
-- `rc2/src/Compiler/RC2/NativeUse.idr` -- `nativeArgType`/`nativeArgTypes`/
-  `stripOwnership` now `export`ed for `Compiler.RC2.DualABI`'s own
-  reuse; defensive `RAppNameRep` pass-through case in `renameRCExp`
-  (now also renaming `postDrop`).
+- `rc2/src/Compiler/RC2/NativeUse.idr` -- `nativeArgType`/`nativeArgTypes`
+  now `export`ed for `Compiler.RC2.DualABI`'s own reuse.
+- `rc2/src/Compiler/RC2/Rewrite.idr` -- `stripOwnership` `export`ed for
+  the same reuse; defensive `RAppNameRep` pass-through case in
+  `renameRCExp` (now also renaming `postDrop`).
 - `rc2/src/Compiler/RC2/RC.idr` -- `normalizeDef`/`annotateDef` updated
   for `MkRCFun`'s new shape; defensive `RAppNameRep` pass-through case
   in `annotate`.
