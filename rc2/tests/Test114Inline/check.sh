@@ -84,15 +84,3 @@ if [ "$shareDefs" -ge 1 ] && [ "$mixed" = "1" ] && [ "$k4099" = "1" ]; then
 else
     fail "ShareSubtrees: $shareDefs pairUp share(s) (want >=1), the fallback written $mixed time(s) (want 1), score's body $k4099 time(s) (want 1) in $dump"
 fi
-# WideCall: a function of 24 arguments is called with them one by one, not
-# as one array through a closure and the trampoline (`MaxExtractFunArgs`,
-# 32), directly and as a closure's function.
-c="$TMP/${name}_rc2.c"
-arrays="$(grep -cE 'Test114Inline_WideCall_wide[A-Za-z0-9_]*\(IDRIS2RC2_Value \*var_arglist' "$c" || true)"
-direct="$(grep -cE 'Test114Inline_WideCall_wide\(idris2rc2_mkInt64' "$c" || true)"
-if [ "$arrays" = "0" ] && [ "$direct" -ge 1 ]; then
-    pass "WideCall: wide takes its 24 arguments one by one, $direct direct call(s)"
-else
-    fail "WideCall: $arrays array-taking definition(s) of wide (want 0), $direct direct call(s) (want >=1) in $c"
-fi
-

@@ -14,7 +14,6 @@ import Test114Inline.InlineCalleeFirst
 import Test114Inline.FunDedup
 import Test114Inline.ConstFields
 import Test114Inline.ShareSubtrees
-import Test114Inline.WideCall
 
 main : IO ()
 main = do
@@ -25,4 +24,3 @@ main = do
     FunDedup.run
     ConstFields.run
     ShareSubtrees.run
-    WideCall.run

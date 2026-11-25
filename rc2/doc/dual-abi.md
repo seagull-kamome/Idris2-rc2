@@ -1546,8 +1546,8 @@ the closest analogue to bug #2 above) passed without any fix needed.
     arity bounds of `idris2rc2_applyClosure`'s and
     `idris2rc2_applyClosureN`'s fast paths, follow. No function of
     `rc2-norepl` takes an array now; its `.o` text went from 18.62 MB to
-    18.47 MB. `Test114Inline/WideCall` calls a 24-argument function
-    directly and through closures. C generated with the old bound (an
+    18.47 MB. `Test118FFI/WideDualABIWorker`'s `add32` and `add33`
+    sit on either side of the bound, called directly and through closures. C generated with the old bound (an
     incremental build's objects, a saved seed) must be generated again:
     its closures of 21 to 32 arguments would be called positionally.
 

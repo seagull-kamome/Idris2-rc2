@@ -119,3 +119,16 @@ if [ -n "$bin" ] && [ "$ndl" = "1" ] && [ "$nrt" = "1" ] && [ "$("$bin")" = "(5,
 else
     fail "library lists: -ldl x$ndl, -lrt x$nrt, binary: ${bin:-none}: $out"
 fi
+
+# WideDualABIWorker's bound (rc2/doc/dual-abi.md, item 12): `add32`, at
+# MaxExtractFunArgs, takes its arguments one by one; `add33`, past it, as
+# one array. Moving the bound without the runtime's dispatch cases makes
+# one of the two wrong.
+add32="$(grep -cE '^IDRIS2RC2_Value \*Test118FFI_WideDualABIWorker_add32$' "$c" || true)"
+add33="$(grep -cE '^IDRIS2RC2_Value \*Test118FFI_WideDualABIWorker_add33\(IDRIS2RC2_Value \*var_arglist\[33\]\)' "$c" || true)"
+if [ "$add32" -ge 1 ] && [ "$add33" -ge 1 ]; then
+    pass "WideDualABIWorker: add32 takes positional parameters, add33 one array"
+else
+    fail "WideDualABIWorker: add32 positional $add32 time(s) (want >=1), add33 array-taking $add33 time(s) (want >=1) in $c"
+fi
+
