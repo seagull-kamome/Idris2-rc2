@@ -86,7 +86,7 @@ static inline IDRIS2RC2_Value *idris2rc2_dispatchWithExtra(IDRIS2RC2_Closure *c,
   ...
   default:
     // Caller (idris2rc2_applyClosure) only reaches here for
-    // 1 <= c->arity <= 20; the generic FUNSTAR arity is deliberately
+    // 1 <= c->arity <= 32; the generic FUNSTAR arity is deliberately
     // out of scope for this fast path (falls through to the ordinary
     // mkClosure-based path instead).
     IDRIS2RC2_VERIFY(false, "idris2rc2_dispatchWithExtra: impossible arity %d", (int)c->arity);
@@ -102,7 +102,7 @@ applies before falling back to the old path:
 IDRIS2RC2_Value *idris2rc2_applyClosure(IDRIS2RC2_Value *_c, IDRIS2RC2_Value *arg) {
   IDRIS2RC2_Closure *c = (IDRIS2RC2_Closure *)_c;
   if (!idris2rc2_isUnique(c) && c->arity - c->filled == 1 &&
-      c->arity >= 1 && c->arity <= 20) {
+      c->arity >= 1 && c->arity <= 32) {
     IDRIS2RC2_Value *result = idris2rc2_dispatchWithExtra(c, arg);
     idris2rc2_drop((IDRIS2RC2_Value *)c);
     return idris2rc2_trampoline(result);
@@ -124,7 +124,7 @@ of the closure right after the old path finished:
   argument remains, the grown (still under-saturated) closure must
   actually be kept around for a future application, so the ordinary
   path is used.
-- `c->arity >= 1 && c->arity <= 20` -- restricts to the typed `FUNn`
+- `c->arity >= 1 && c->arity <= 32` -- restricts to the typed `FUNn`
   range `idris2rc2_dispatchWithExtra` implements. See "Scope" below.
 
 When the condition holds, the original closure's args are dup'd
@@ -207,11 +207,11 @@ matching `idris2rc2_dispatchClosure`'s own typed switch cases. A
 closure with arity greater than 20 uses the generic, array-based
 `IDRIS2RC2_FUNSTAR` calling convention instead (`idris2rc2_dispatchClosure`'s
 own `default:` case) and is excluded from the fast-path condition in
-`idris2rc2_applyClosure` (`c->arity <= 20`), falling through to the
+`idris2rc2_applyClosure` (`c->arity <= 32`), falling through to the
 original `idris2rc2_tailcallApplyClosure`-then-trampoline path
 unchanged. This is a deliberate, known gap in this round's scope, not
 an oversight -- see `TODO.md`'s "Performance: closure-dispatch fast
-path doesn't cover arity > 20 (`FUNSTAR`)" entry for why it was left
+path doesn't cover arity > 32 (`FUNSTAR`)" entry for why it was left
 out and what extending it would need.
 
 ## Reference tests

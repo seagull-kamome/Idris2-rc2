@@ -1567,7 +1567,7 @@ buildClosureIntoSink fc (SinkReturn _) n args missing = do
 --    `IDRIS2RC2_FUNSTAR`.
 export
 MaxExtractFunArgs : Nat
-MaxExtractFunArgs = 20
+MaxExtractFunArgs = 32
 
 ||| Split a non-empty list into everything but its last element, and the
 ||| last element itself, in order -- `Nothing` for an empty list. Used

@@ -1537,6 +1537,17 @@ the closest analogue to bug #2 above) passed without any fix needed.
     matching the wrapper's own established convention verbatim.
     Re-verified: `Test24CStructSupport.idr` compiles and runs correctly
     again; full `verify.sh`/`refc-suite` unaffected.
+12. **`MaxExtractFunArgs` raised from 20 to 32 (2026-11-25).** In
+    `rc2-norepl` twelve boxed functions had 21 to 31 arguments, and every
+    one of their 50 non-tail calls built a closure and ran it through the
+    trampoline. Their arguments are real values: of the ones passed, 5-7%
+    were erased. `IDRIS2RC2_FUN21`..`FUN32` and `case 21`..`case 32` in
+    `idris2rc2_dispatchFn` and `idris2rc2_dispatchWithExtra`, and the
+    arity bounds of `idris2rc2_applyClosure`'s and
+    `idris2rc2_applyClosureN`'s fast paths, follow. No function of
+    `rc2-norepl` takes an array now; its `.o` text went from 18.62 MB to
+    18.47 MB. `Test114Inline/WideCall` calls a 24-argument function
+    directly and through closures.
 
 ## Bool return (stage 2 of the Bool plan)
 
