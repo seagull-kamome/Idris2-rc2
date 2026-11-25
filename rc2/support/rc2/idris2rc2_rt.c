@@ -205,7 +205,7 @@ typedef IDRIS2RC2_Value *(*const IDRIS2RC2_FUNSTAR)(IDRIS2RC2_Value **);
 // Extracted from idris2rc2_dispatchClosure below (which just calls this
 // with c->fn/c->arity/c->args) so idris2rc2_applyClosureN can reuse the
 // exact same arity-keyed switch over its own on-stack args array,
-// without a second copy of these 21 cases -- see
+// without a second copy of these 33 cases -- see
 // rc2/doc/rapp-nary-closure-apply.md's own "Runtime side" section.
 static inline IDRIS2RC2_Value *idris2rc2_dispatchFn(void *fn, uint8_t arity, IDRIS2RC2_Value **xs) {
   switch (arity) {
@@ -656,9 +656,9 @@ IDRIS2RC2_Value *idris2rc2_applyClosure(IDRIS2RC2_Value *_c, IDRIS2RC2_Value *ar
 // `collectAppChain` merged into one `RApp` node instead of `n` chained
 // single-argument ones -- see rc2/doc/rapp-nary-closure-apply.md's own
 // "Runtime side" section for the full design this mirrors. Three
-// cases, none of them duplicating idris2rc2_dispatchFn's own 0-20
+// cases, none of them duplicating idris2rc2_dispatchFn's own 0-32
 // switch or idris2rc2_tailcallApplyClosure's own grow-in-place logic:
-//   - n == remaining (this closure's own arity, <= 20): saturates in
+//   - n == remaining (this closure's own arity, <= 32): saturates in
 //     one shot, dispatched via the *same* switch idris2rc2_dispatchClosure
 //     uses, so no intermediate IDRIS2RC2_Closure is ever allocated for
 //     this call at all. Unique/non-unique split exactly mirrors
@@ -674,7 +674,7 @@ IDRIS2RC2_Value *idris2rc2_applyClosure(IDRIS2RC2_Value *_c, IDRIS2RC2_Value *ar
 //   - n < remaining: still partial afterwards -- exactly
 //     idris2rc2_tailcallApplyClosure's own unique-in-place/grow-by-copy
 //     split, generalized from +1 to +n new args.
-//   - n > remaining, or arity > 20 (FUNSTAR territory, deliberately out
+//   - n > remaining, or arity > 32 (FUNSTAR territory, deliberately out
 //     of the fast lane above): fully generic, already-correct
 //     one-argument-at-a-time fallback through the existing
 //     idris2rc2_applyClosure -- bounded by `n` iterations, correct for

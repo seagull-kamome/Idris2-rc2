@@ -200,19 +200,18 @@ evaluating anything. This fast path has nothing to do with laziness
 either way: there is no `idris2rc2_applyClosure` call on a `Delay`'s
 closure here for it to speed up or leave undisturbed.
 
-## Scope: arity 1..20 only
+## Scope: arity 1..32 only
 
 `idris2rc2_dispatchWithExtra` only implements the typed `FUNn` range,
 matching `idris2rc2_dispatchClosure`'s own typed switch cases. A
-closure with arity greater than 20 uses the generic, array-based
+closure with arity greater than 32 uses the generic, array-based
 `IDRIS2RC2_FUNSTAR` calling convention instead (`idris2rc2_dispatchClosure`'s
 own `default:` case) and is excluded from the fast-path condition in
 `idris2rc2_applyClosure` (`c->arity <= 32`), falling through to the
 original `idris2rc2_tailcallApplyClosure`-then-trampoline path
-unchanged. This is a deliberate, known gap in this round's scope, not
-an oversight -- see `TODO.md`'s "Performance: closure-dispatch fast
-path doesn't cover arity > 32 (`FUNSTAR`)" entry for why it was left
-out and what extending it would need.
+unchanged. A function of more arguments than that takes them as one
+array (`MaxExtractFunArgs`), so this path only meets closures of such
+functions. The bound was 20 until 2026-11-25 (`dual-abi.md`, item 12).
 
 ## Reference tests
 

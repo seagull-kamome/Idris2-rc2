@@ -129,7 +129,7 @@ the entire program gets this for free, dictionary or not.
 `rc2/support/rc2/runtime.c` already has exactly the pattern this needs
 for "share an implementation across a small closed range of arities,
 fall back generically above it": `idris2rc2_dispatchClosure`'s own
-`switch (c->arity)` (0-20, `default` to the array-passed `FUNSTAR`
+`switch (c->arity)` (0-32, `default` to the array-passed `FUNSTAR`
 calling convention). Its cases only ever read `c->args[i]` -- nothing
 about them is closure-specific.
 
@@ -139,7 +139,7 @@ call site with zero duplication:
 
 ```c
 static inline IDRIS2RC2_Value *idris2rc2_dispatchFn(void *fn, uint8_t arity, IDRIS2RC2_Value **xs) {
-  switch (arity) { /* unchanged body, still 0-20 + default */ }
+  switch (arity) { /* unchanged body, 0-32 + default */ }
 }
 static inline IDRIS2RC2_Value *idris2rc2_dispatchClosure(IDRIS2RC2_Closure *c) {
   return idris2rc2_dispatchFn(c->fn, c->arity, c->args);
@@ -153,11 +153,11 @@ IDRIS2RC2_Value *idris2rc2_applyClosureN(IDRIS2RC2_Value *_c, IDRIS2RC2_Value **
   IDRIS2RC2_Closure *c = (IDRIS2RC2_Closure *)_c;
   uint8_t remaining = c->arity - c->filled;
 
-  if (n == remaining && c->arity >= 1 && c->arity <= 20) {
+  if (n == remaining && c->arity >= 1 && c->arity <= 32) {
     // Saturating in one shot: no intermediate closure at all. Gather the
     // filled args and the new ones in a stack scratch buffer, then reuse
     // the *same* switch dispatchClosure uses.
-    IDRIS2RC2_Value *xs[20];
+    IDRIS2RC2_Value *xs[32];
     IDRIS2RC2_Value *result;
     if (idris2rc2_isUnique(c)) {
       // Unique: the filled args transfer into the call (no dup), so
@@ -192,7 +192,7 @@ IDRIS2RC2_Value *idris2rc2_applyClosureN(IDRIS2RC2_Value *_c, IDRIS2RC2_Value **
 
   // n > remaining (over-application, e.g. a curried call whose base
   // itself returns another function still needing more args), or
-  // arity > 20 (FUNSTAR territory, out of scope for the fast lane):
+  // arity > 32 (FUNSTAR territory, out of scope for the fast lane):
   // fully generic, already-correct one-at-a-time fallback. Bounded by
   // `remaining` iterations at most for the over-application case.
   IDRIS2RC2_Value *it = _c;

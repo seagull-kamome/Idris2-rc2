@@ -5,8 +5,8 @@ module Main
 
 -- `%export` of a function with as many arguments as the exporter allows (20).
 -- An `IO` function has one more parameter than it declares (the world), so its
--- compiled entry point takes 21 and is declared with an argument array instead
--- of positional parameters; the exported C wrapper has to call it that way.
+-- compiled entry point takes 21 (positional, within `MaxExtractFunArgs`), and
+-- the exported C wrapper has to pass the world in the right place.
 -- Each argument is weighted by its position so a swapped or shifted argument
 -- changes the result. The functions are called from plain C (the companion
 -- Test138ExportWideIO.c) through `prim__callFromC`.

@@ -1540,14 +1540,16 @@ the closest analogue to bug #2 above) passed without any fix needed.
 12. **`MaxExtractFunArgs` raised from 20 to 32 (2026-11-25).** In
     `rc2-norepl` twelve boxed functions had 21 to 31 arguments, and every
     one of their 50 non-tail calls built a closure and ran it through the
-    trampoline. Their arguments are real values: of the ones passed, 5-7%
-    were erased. `IDRIS2RC2_FUN21`..`FUN32` and `case 21`..`case 32` in
+    trampoline. They are not erased ones dragged along: only 5-7% of the
+    arguments those calls passed were erased. `IDRIS2RC2_FUN21`..`FUN32` and `case 21`..`case 32` in
     `idris2rc2_dispatchFn` and `idris2rc2_dispatchWithExtra`, and the
     arity bounds of `idris2rc2_applyClosure`'s and
     `idris2rc2_applyClosureN`'s fast paths, follow. No function of
     `rc2-norepl` takes an array now; its `.o` text went from 18.62 MB to
     18.47 MB. `Test114Inline/WideCall` calls a 24-argument function
-    directly and through closures.
+    directly and through closures. C generated with the old bound (an
+    incremental build's objects, a saved seed) must be generated again:
+    its closures of 21 to 32 arguments would be called positionally.
 
 ## Bool return (stage 2 of the Bool plan)
 

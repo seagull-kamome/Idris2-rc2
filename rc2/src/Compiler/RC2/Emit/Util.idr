@@ -1546,9 +1546,9 @@ buildClosureIntoSink fc (SinkReturn _) n args missing = do
     closure <- makeClosure fc n args missing
     emit fc "return \{closure};"
 
--- Must match the dispatch switch in support/rc2/runtime.c
--- (`idris2rc2_dispatchClosure`'s own fixed `IDRIS2RC2_FUN0`..`FUN8`/
--- `FUNSTAR` function-pointer types, all-`IDRIS2RC2_Value*`-only).
+-- Must match the dispatch switch in support/rc2/idris2rc2_rt.c
+-- (`idris2rc2_dispatchFn`'s `IDRIS2RC2_FUN0`..`FUN32`/`FUNSTAR`
+-- function-pointer types, all-`IDRIS2RC2_Value*`-only).
 -- Governs two things, both about a function that CAN be dispatched
 -- through that closure machinery -- i.e. an ordinary function or a
 -- dual-ABI wrapper, never a dual-ABI *worker* (see `MkRCFun`'s own
