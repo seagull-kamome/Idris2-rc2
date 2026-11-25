@@ -555,6 +555,40 @@ boxedCmpExpr (LTE ty) [x, y] = "idris2rc2_lte_" ++ cPrimType ty ++ "_raw(" ++ x 
 boxedCmpExpr (GTE ty) [x, y] = "idris2rc2_gte_" ++ cPrimType ty ++ "_raw(" ++ x ++ ", " ++ y ++ ")"
 boxedCmpExpr fn _ = "0 /* [rc2] unreachable boxed comparison " ++ show fn ++ " */"
 
+||| A `Double` as a C literal, the same whichever backend built rc2: `show`
+||| gives the shortest digits on both, but Chez writes `4.611686018427388e18`
+||| where rc2 writes `4611686018427388000.0`. The digits and the power of ten
+||| are written again as `d.ddde<n>`; what is not a plain number is left to
+||| `show` (rc2/doc/self-hosting.md, the fixed point).
+export
+cDouble : Double -> String
+cDouble x =
+    let s = show x
+        (neg, body) = case unpack s of
+                           ('-' :: cs) => (True, cs)
+                           cs => (False, cs)
+        (mant, ex) = break (\c => c == 'e' || c == 'E') body
+        (ip, fp) = break (== '.') mant
+        frac = drop 1 fp
+        expn : Maybe Integer
+        expn = case ex of
+                    [] => Just 0
+                    (_ :: '+' :: ds) => parseInteger (pack ds)
+                    (_ :: ds) => parseInteger (pack ds)
+        digits = ip ++ frac
+        lead = length (takeWhile (== '0') digits)
+        sig = reverse (dropWhile (== '0') (reverse (drop lead digits)))
+    in if not (all isDigit digits) || null digits then s
+       else case (expn, sig) of
+            (Nothing, _) => s
+            (_, []) => (if neg then "-" else "") ++ "0.0"
+            (Just e, d :: ds) =>
+                -- the point sits after `ip`; the first significant digit is
+                -- at `lead`, so it is worth 10^(len ip - lead - 1 + e)
+                let pow = e + cast (length ip) - cast lead - 1
+                in (if neg then "-" else "") ++ pack [d] ++ "." ++ (if null ds then "0" else pack ds)
+                     ++ "e" ++ show pow
+
 export
 nativeLitExpr : Constant -> String
 nativeLitExpr (I x) = showIntMin x
@@ -566,7 +600,7 @@ nativeLitExpr (B8 x) = "UINT8_C(\{show x})"
 nativeLitExpr (B16 x) = "UINT16_C(\{show x})"
 nativeLitExpr (B32 x) = "UINT32_C(\{show x})"
 nativeLitExpr (B64 x) = "UINT64_C(\{show x})"
-nativeLitExpr (Db x) = show x
+nativeLitExpr (Db x) = cDouble x
 nativeLitExpr (Ch x) = "((uint32_t)" ++ escapeChar x ++ ")"
 nativeLitExpr _ = "0 /* [rc2] unreachable native literal */"
 
@@ -663,7 +697,7 @@ genConstant c cdef = case c of
   I x   => go cdef "Int64" "INT64" (showIntMin x)
   I64 x => go cdef "Int64" "INT64" (showInt64Min x)
   B64 x => go cdef "Bits64" "BITS64" "UINT64_C(\{show x})"
-  Db x  => go cdef "Double" "DOUBLE" (show x)
+  Db x  => go cdef "Double" "DOUBLE" (cDouble x)
   -- IDRIS2RC2_String carries an explicit byte length (datatypes.h) --
   -- `sizeof(lit) - 1` reads it straight off the very literal `lit`
   -- itself (a compile-time constant, valid in a static initializer),
@@ -893,7 +927,7 @@ boxedConstExpr c = do
         B64 x => if cast x < the Integer 9223372036854775808
            then pure "IDRIS2RC2_IMM_BITS64(UINT64_C(\{show x}))"
            else orStagen $ CDB64 $ show x
-        Db x => orStagen $ CDDb $ cCleanString $ show x
+        Db x => orStagen $ CDDb $ cCleanString $ cDouble x
         Ch x  => pure "idris2rc2_mkChar(\{escapeChar x})"
         Str _ => orStagen $ CDStr !(getNextCounter)
         PrT t => pure $ cPrimType t

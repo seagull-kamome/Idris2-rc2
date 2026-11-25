@@ -667,9 +667,9 @@ mutual
                                    pure ("(((IDRIS2RC2_String *)\{sc'})->len == sizeof(\{lit}) - 1 && ! memcmp(\{lit}, ((IDRIS2RC2_String *)\{sc'})->str, sizeof(\{lit}) - 1))", [])
                         BI x => pure (integerAltCond sc' x, [])
                         Db  x => case scRep of
-                                      RNative (TPrim DoubleType) => (\(e, p) => ("\{e} == \{show x}", p)) <$> rcVarToNativeC (TPrim DoubleType) sc
-                                      RInlineNative (TPrim DoubleType) => (\(e, p) => ("\{e} == \{show x}", p)) <$> rcVarToNativeC (TPrim DoubleType) sc
-                                      _ => pure ("((IDRIS2RC2_Double *)\{sc'})->v == \{show x}", [])
+                                      RNative (TPrim DoubleType) => (\(e, p) => ("\{e} == \{cDouble x}", p)) <$> rcVarToNativeC (TPrim DoubleType) sc
+                                      RInlineNative (TPrim DoubleType) => (\(e, p) => ("\{e} == \{cDouble x}", p)) <$> rcVarToNativeC (TPrim DoubleType) sc
+                                      _ => pure ("((IDRIS2RC2_Double *)\{sc'})->v == \{cDouble x}", [])
                         x => throw $ InternalError "[rc2] RConstCase : unsupported type. \{show fc} \{show x}")
                     (\(MkRConstAlt _ body) => branchBody resolvedSink body tailPosition)
                     defaultAction

@@ -133,9 +133,17 @@ shareIn f scc body =
             here = filter eligible (map (\c => (c, freeOrder c.expr)) uncovered)
             keyed = foldl (\m, cf => insertWith (++) (length (snd cf), leafHash (fst cf).expr) [cf] m)
                           (the (SortedMap (Nat, Int) (List (Cand, List LocalId))) empty) here
-        in foldl share acc (filter (\cl => length cl >= 2)
-                                  (concatMap (classes . reverse) (map snd (SortedMap.toList keyed))))
+            -- In the order the classes first appear in the body, not the
+            -- buckets': `leafHash` reads `show` of constants, which differs
+            -- between backends (a `Double`'s), and the order names the new
+            -- functions, so a compiler built by rc2 would write other C than
+            -- one built by Chez (rc2/doc/shared-subtrees.md).
+            found = filter (\cl => length cl >= 2) (concatMap (classes . reverse) (map snd (SortedMap.toList keyed)))
+        in foldl share acc (sortBy (\a, b => compare (firstStart a) (firstStart b)) found)
       where
+        firstStart : List (Cand, List LocalId) -> Nat
+        firstStart cl = foldl (\m, (c, _) => min m c.start) (maybe Z (start . fst) (head' cl)) cl
+
         -- In a subtree chosen before: they do not overlap, so the one
         -- starting last at or before `c` is the only one to look at.
         inside : Cand -> Bool

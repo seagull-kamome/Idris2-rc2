@@ -117,6 +117,10 @@ comparing `Test112Numeric/ImmediateInts.idr`' `Int` to `Double` casts against Ch
 that test now avoids such values. Decide whether rc2 should follow
 Chez's rule; nothing in Idris itself fixes the format.
 
+The C rc2 writes no longer depends on it: a `Double` literal goes out in one
+spelling whichever backend built rc2 (`Emit.Util.cDouble`, 2026-11-25,
+`rc2/doc/self-hosting.md`). What is left is what a program prints.
+
 ## Upstream stdlib `%foreign` declarations with no C/RefC backend at all
 
 Surveyed every `%foreign` declaration in `idris2-src/libs` (206 across

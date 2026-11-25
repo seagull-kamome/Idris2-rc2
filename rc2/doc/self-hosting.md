@@ -191,7 +191,14 @@ seed        ->  stage1                 ->  stage2 (the proof)
   `test` (the order and the `IDRIS2_PATH` of `idris2-src/Makefile`), then the API
   package, `rc2` and `rc2base`. With these in a new prefix, the old toolchain is not needed.
 - **fixed point**: stage1 builds `rc2-norepl.ipkg`; the C file must equal stage1's.
-  This is the check that the toolchain reproduces itself.
+  This is the check that the toolchain reproduces itself. It asks that the C
+  not depend on which backend built rc2. Two things did (2026-11-25):
+  `ShareSubtrees` named its new functions in the order of buckets keyed by
+  `FunDedup.leafHash`, which hashes `show` of constants, and Emit wrote a
+  `Double` literal with `show`, which Chez spells `4.611686018427388e18` and
+  rc2 `4611686018427388000.0`. Both now follow the program instead
+  (`shared-subtrees.md`; `Emit.Util.cDouble`). `rc2-norepl.ipkg` takes `rc2`
+  from the installed package, so `idris2 --install rc2.ipkg` comes first.
 
 ### The seed
 

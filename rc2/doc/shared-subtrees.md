@@ -36,8 +36,10 @@ and a new function of no arguments is no CAF.
    free locals paired in that order, the locals they bind paired as
    `FunDedup`'s equality pairs them. A pairing the order gets wrong only
    loses a share.
-4. A class of two or more becomes a function: the body of its first
-   member, taking that member's free locals as Boxed parameters. Every
+4. A class of two or more becomes a function, in the order the classes
+   first appear in the body (not the buckets', whose `leafHash` reads `show`
+   of constants and so differs between backends, `self-hosting.md`): the
+   body of its first member, taking that member's free locals as Boxed parameters. Every
    member is replaced by a call with its own free locals. A candidate
    inside a member is not looked at again.
 
