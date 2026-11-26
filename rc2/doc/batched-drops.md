@@ -41,15 +41,19 @@ theirs back too, and a run of three or more becomes `idris2rc2_dup3`..
 two never changes.
 
 `idris2rc2_drop3`..`drop6` and `idris2rc2_dup3`..`dup6`
-(`idris2rc2_memory.c`) are out of line. Each reads the process-wide flag of
-`hybrid-refcount.md` once, and when single-threaded makes the plain
-operation of each argument. Six is what x86-64 passes in registers. Under
-clang on x86-64 and AArch64 they are `preserve_most`, so the caller keeps
-its registers across the call, and `zero_call_used_regs("skip")`: a
-hardened toolchain (nix's clang) zeroes the registers a function used when
-it returns, which `preserve_most` would have to save first. Every variable `removeVars` drops is an
-`IDRIS2RC2_Value *` already, as it compiled as the argument of
-`idris2rc2_drop` under `-Werror`.
+(`idris2rc2_memory.c`) are out of line, and make the plain operation of
+each argument while the process is single-threaded (`hybrid-refcount.md`).
+A dup reads that flag once; a drop reads it again for each argument, as a
+teardown can run a finalizer that starts the first thread. Six is what
+x86-64 passes in registers.
+
+Under clang on x86-64 and AArch64 they are `preserve_most`, so the caller
+keeps its registers across the call, and `zero_call_used_regs("skip")`
+where clang has it: a hardened toolchain (nix's clang) zeroes the registers
+a function used when it returns, which `preserve_most` would have to save
+first. A caller has to know the convention, so under clang their names end
+in `_pm`: a program and a runtime built by different compilers fail to link
+instead of corrupting registers.
 
 The compiler cannot tell a cold path from a hot one: a `Left` alt is an
 error in `Core`, and a backtracking parser's usual case elsewhere. So
@@ -71,7 +75,7 @@ day):
 
 | | `.o` text | codegen time | `bench.sh` |
 |---|---|---|---|
-| drops only, one flag check, `preserve_most` | 17.36 MB | 98.3 s (−0.7%) | within noise |
+| the new helpers, drops only | 17.36 MB | 98.3 s (−0.7%) | within noise |
 | and dups of three or more | 15.44 MB (−11.0%) | 101 s (+1.5%) | within noise |
 
 `bench.sh` stays within noise of the run before (`BenchListFuse` 6.56 s to
@@ -85,7 +89,6 @@ Tried and dropped:
   hot loops, where a call costs more than it saves.
 - Dups of three or more under the plain C convention: 15.47 MB, codegen
   +3%.
-
 - One variadic `idris2rc2_dropMany(n, ...)`: 18.60 MB, but 104 s (+3%),
   `va_arg` and the variadic prologue on every call.
 - The same with the variables in a compound literal array

@@ -368,21 +368,33 @@ again:
 }
 
 
+// The flag is read again for each drop: a teardown can run a finalizer that
+// forks, and the drops after it must then be atomic. A dup runs nothing.
 IDRIS2RC2_RC_CC void idris2rc2_drop3(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b, IDRIS2RC2_Value *c) {
-  if (__builtin_expect(!idris2rc2_threaded, 1)) { idris2rc2_dropPlain(a); idris2rc2_dropPlain(b); idris2rc2_dropPlain(c); }
-  else { idris2rc2_drop(a); idris2rc2_drop(b); idris2rc2_drop(c); }
+  if (__builtin_expect(!idris2rc2_threaded, 1)) idris2rc2_dropPlain(a); else idris2rc2_drop(a);
+  if (__builtin_expect(!idris2rc2_threaded, 1)) idris2rc2_dropPlain(b); else idris2rc2_drop(b);
+  if (__builtin_expect(!idris2rc2_threaded, 1)) idris2rc2_dropPlain(c); else idris2rc2_drop(c);
 }
 IDRIS2RC2_RC_CC void idris2rc2_drop4(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b, IDRIS2RC2_Value *c, IDRIS2RC2_Value *d) {
-  if (__builtin_expect(!idris2rc2_threaded, 1)) { idris2rc2_dropPlain(a); idris2rc2_dropPlain(b); idris2rc2_dropPlain(c); idris2rc2_dropPlain(d); }
-  else { idris2rc2_drop(a); idris2rc2_drop(b); idris2rc2_drop(c); idris2rc2_drop(d); }
+  if (__builtin_expect(!idris2rc2_threaded, 1)) idris2rc2_dropPlain(a); else idris2rc2_drop(a);
+  if (__builtin_expect(!idris2rc2_threaded, 1)) idris2rc2_dropPlain(b); else idris2rc2_drop(b);
+  if (__builtin_expect(!idris2rc2_threaded, 1)) idris2rc2_dropPlain(c); else idris2rc2_drop(c);
+  if (__builtin_expect(!idris2rc2_threaded, 1)) idris2rc2_dropPlain(d); else idris2rc2_drop(d);
 }
 IDRIS2RC2_RC_CC void idris2rc2_drop5(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b, IDRIS2RC2_Value *c, IDRIS2RC2_Value *d, IDRIS2RC2_Value *e) {
-  if (__builtin_expect(!idris2rc2_threaded, 1)) { idris2rc2_dropPlain(a); idris2rc2_dropPlain(b); idris2rc2_dropPlain(c); idris2rc2_dropPlain(d); idris2rc2_dropPlain(e); }
-  else { idris2rc2_drop(a); idris2rc2_drop(b); idris2rc2_drop(c); idris2rc2_drop(d); idris2rc2_drop(e); }
+  if (__builtin_expect(!idris2rc2_threaded, 1)) idris2rc2_dropPlain(a); else idris2rc2_drop(a);
+  if (__builtin_expect(!idris2rc2_threaded, 1)) idris2rc2_dropPlain(b); else idris2rc2_drop(b);
+  if (__builtin_expect(!idris2rc2_threaded, 1)) idris2rc2_dropPlain(c); else idris2rc2_drop(c);
+  if (__builtin_expect(!idris2rc2_threaded, 1)) idris2rc2_dropPlain(d); else idris2rc2_drop(d);
+  if (__builtin_expect(!idris2rc2_threaded, 1)) idris2rc2_dropPlain(e); else idris2rc2_drop(e);
 }
 IDRIS2RC2_RC_CC void idris2rc2_drop6(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b, IDRIS2RC2_Value *c, IDRIS2RC2_Value *d, IDRIS2RC2_Value *e, IDRIS2RC2_Value *f) {
-  if (__builtin_expect(!idris2rc2_threaded, 1)) { idris2rc2_dropPlain(a); idris2rc2_dropPlain(b); idris2rc2_dropPlain(c); idris2rc2_dropPlain(d); idris2rc2_dropPlain(e); idris2rc2_dropPlain(f); }
-  else { idris2rc2_drop(a); idris2rc2_drop(b); idris2rc2_drop(c); idris2rc2_drop(d); idris2rc2_drop(e); idris2rc2_drop(f); }
+  if (__builtin_expect(!idris2rc2_threaded, 1)) idris2rc2_dropPlain(a); else idris2rc2_drop(a);
+  if (__builtin_expect(!idris2rc2_threaded, 1)) idris2rc2_dropPlain(b); else idris2rc2_drop(b);
+  if (__builtin_expect(!idris2rc2_threaded, 1)) idris2rc2_dropPlain(c); else idris2rc2_drop(c);
+  if (__builtin_expect(!idris2rc2_threaded, 1)) idris2rc2_dropPlain(d); else idris2rc2_drop(d);
+  if (__builtin_expect(!idris2rc2_threaded, 1)) idris2rc2_dropPlain(e); else idris2rc2_drop(e);
+  if (__builtin_expect(!idris2rc2_threaded, 1)) idris2rc2_dropPlain(f); else idris2rc2_drop(f);
 }
 
 IDRIS2RC2_RC_CC void idris2rc2_dup3(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b, IDRIS2RC2_Value *c) {

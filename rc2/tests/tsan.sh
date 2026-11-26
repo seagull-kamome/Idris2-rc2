@@ -51,7 +51,9 @@ rm -rf "$OUT"
 mkdir -p "$OUT/rt" "$OUT/base"
 
 cp "$RC2_DIR"/support/rc2/*.[ch] "$RC2_DIR"/support/rc2/Makefile "$OUT/rt/"
-if ! make -C "$OUT/rt" CFLAGS="$TSAN_CFLAGS -Wall -Wno-unused-function" > "$OUT/rt.log" 2>&1; then
+# The programs below are built with gcc, so the runtime is too: the batched
+# refcount calls take another convention under clang (doc/batched-drops.md).
+if ! make -C "$OUT/rt" CC=gcc CFLAGS="$TSAN_CFLAGS -Wall -Wno-unused-function" > "$OUT/rt.log" 2>&1; then
     fail "tsan runtime build" "see $OUT/rt.log"
     exit 1
 fi
@@ -59,7 +61,7 @@ fi
 # rc2base's own Makefile, with CFLAGS replaced so it picks up the TSan
 # runtime's headers.
 cp "$REPO_DIR"/libs/rc2base/support/c/* "$OUT/base/"
-if ! make -C "$OUT/base" libidris2rc2base.a \
+if ! make -C "$OUT/base" CC=gcc libidris2rc2base.a \
         CFLAGS="$TSAN_CFLAGS -fPIC -w -I$OUT/rt -I$PREFIX/support/c -I." > "$OUT/base.log" 2>&1; then
     fail "tsan rc2base build" "see $OUT/base.log"
     exit 1

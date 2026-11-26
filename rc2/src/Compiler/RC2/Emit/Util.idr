@@ -737,8 +737,7 @@ batchCall : (fn : String) -> String -> List String -> String
 batchCall fn ind vs = ind ++ fn ++ show (length vs) ++ "(" ++ concat (intersperse ", " vs) ++ ");"
 
 -- The held-back run as lines: `fn`3..`fn`6 calls, a run of seven or eight
--- split so that no call takes fewer than three, one or two inline. Pairs stay
--- inline: a call for two is slower in a hot loop than it saves
+-- split so that no call takes fewer than three, one or two inline
 -- (rc2/doc/batched-drops.md).
 pendingLines : (fn : String) -> String -> List String -> List String
 pendingLines fn ind (a :: b :: c :: d :: e :: f :: rest@(_ :: _ :: _ :: _)) = batchCall fn ind [a, b, c, d, e, f] :: pendingLines fn ind rest
@@ -820,28 +819,29 @@ applyFunctionToVars : {auto oft : Ref OutfileText Output}
                     -> Core ()
 applyFunctionToVars fun vars = traverse_ (\v => emit EmptyFC $ fun ++ "(" ++ v ++ ");" ) vars
 
+-- `removeVars` and `dupVars`: hold `vs` back as drops or dups.
+holdBackVars : {auto oft : Ref OutfileText Output} -> {auto il : Ref IndentLevel Nat}
+            -> Bool -> List String -> Core ()
+holdBackVars _ [] = pure ()
+holdBackVars dups vs = do
+    indent <- indentation
+    update OutfileText (holdBack dups indent vs)
+
 export
 removeVars : {auto oft : Ref OutfileText Output}
            -> {auto il : Ref IndentLevel Nat}
            -> List String
            -> Core ()
-removeVars [] = pure ()
-removeVars vs = do
-    indent <- indentation
-    update OutfileText (holdBack False indent vs)
+removeVars = holdBackVars False
 
 export
 dupVars : {auto oft : Ref OutfileText Output}
            -> {auto il : Ref IndentLevel Nat}
            -> List String
            -> Core ()
-dupVars [] = pure ()
-dupVars vs = do
-    indent <- indentation
-    update OutfileText (holdBack True indent vs)
+dupVars = holdBackVars True
 
-||| Emits a single `idris2rc2_dup(v);` for `extra=0` -- the exact same
-||| output `dupVars [v]` produces. For `extra > 0` (made by
+||| For `extra=0` a dup of `v` held back like `dupVars [v]`'s. For `extra > 0` (made by
 ||| `Compiler.RC2.DupMerge`), emits `idris2rc2_dup_n(v, N);` where
 ||| `N = extra + 1`, a runtime primitive doing one increment of `N`
 ||| instead of `N` separate `idris2rc2_dup` calls. See
