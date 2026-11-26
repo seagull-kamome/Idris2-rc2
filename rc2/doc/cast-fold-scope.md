@@ -88,12 +88,13 @@ exclusion.
 
 Test: `castDoubleToStringNotFolded` in `Test17ConstFold.idr`.
 
-## `Double` arithmetic and `Int`/`Integer` -> `Double`: fold-safe, held back only by `safeConst`'s blanket `Db`
+## `Double` arithmetic and `Int`/`Integer` -> `Double`: fold-safe, held back only by `safeConst`'s blanket `Db` (comparisons now fold)
 
 `safeConst (Db _) = False` is a single blunt switch that stops
 `constFoldOp` folding **any** PrimFn whose operands include a `Db`
 literal -- not just the two `Cast` directions above but also
-`Add`/`Sub`/`Mul`/`Div`/`Neg DoubleType`, the `Double` comparisons,
+`Add`/`Sub`/`Mul`/`Div`/`Neg DoubleType`, the `Double` comparisons (no
+longer: see the end of this section),
 `DoubleSqrt`/`DoubleFloor`/`DoubleCeiling`, the transcendentals
 (`DoubleExp`/`Log`/`Pow`/`Sin`/`Cos`/`Tan`/`ASin`/`ACos`/`ATan`), and
 `Cast (fixed-width int / Integer) -> DoubleType`. `getOp` implements
@@ -137,6 +138,12 @@ concern is fixed-width *integer* wraparound under gcc
 `Db` from its `hasUnfoldableConst` is fine). Investigated 2026-09-10,
 not yet done -- see `git log` for the fusion commit this was split off
 from.
+
+The comparisons fold since 2026-11-26: `constFoldOp` lets one through
+`safeConst` (its `compares`), since a constant-case alt now makes its
+scrutinee a constant (`const-caf-fold.md`, "Constant-case alts") and
+`2.5 > 1.0` was then left in the IR. `safeConst` itself, and so
+`InlineCExp`'s guard, is unchanged.
 
 ## `String` as `Cast`'s source (either direction): parser semantics unverified
 

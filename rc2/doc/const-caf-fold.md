@@ -218,6 +218,30 @@ later-processed CAF (via `RAppName`'s fold arm) benefits from the same
 outer fixpoint loop automatically -- no separate re-triggering
 mechanism was needed for this half either.
 
+### Constant-case alts
+
+In an alt of a `case` on a local, the local is the alt's constant, and
+`foldConst` puts it in `env` for the alt's body, so a comparison of it
+or a `case` on it again folds. The case trees upstream gives rc2 test a
+value again in the clauses they copy into each alt: `snf'` compared a
+local that its alt had matched against `-2` with `0`. In `rc2-norepl`
+(2026-11-26) 107 comparisons and 117 cases were of such a local.
+
+A `Double` that matched `0.0` may be `-0.0`, so a `0.0` alt adds
+nothing; no other two `Double`s compare equal, and NaN matches no alt.
+Nor does an `Integer` alt too big for the pointer word: it is no
+`RCConst` (`isConstLocalProof`), as a literal would be a fresh mpz at each
+use (`const-con-fold.md`, Bug #2, says why its `let` stays). Upstream's
+case tree already writes such an alt's constant for the scrutinee in the
+body, and the `bigLits` path folds what reads it.
+A `let` whose value then becomes a constant is one too (the
+`RV (RCConst c)` arm, for any `litRep` constant as for a `Str`).
+
+The same pass folds a comparison of a local with itself: `<` and `>`
+are false, `==`, `<=` and `>=` true, but for a `Double` (NaN). Left to
+C, clang's `-Wtautological-compare` rejects `x == x` under `-Werror`
+(`libs/rc2base`'s `TestPosixErrno`). Test: `Test190ConstAltFold`.
+
 ## Bugs found and fixed
 
 ### `RC.idr`'s `annotate` was missing 3 of 5 constant-form intercepts

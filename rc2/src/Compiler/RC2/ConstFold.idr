@@ -54,11 +54,39 @@ safeConst _ = True
 ||| resolved constant operands, subject to the safety exclusions above.
 constFoldOp : {0 arity : Nat} -> PrimFn arity -> Vect arity Constant -> Maybe Constant
 constFoldOp fn cs =
-    if not (foldableOp fn) || not (all safeConst cs)
+    if not (foldableOp fn) || not (compares fn || all safeConst cs)
        then Nothing
        else case getOp {vars = []} fn (map (NPrimVal EmptyFC) cs) of
                  Just (NPrimVal _ c) => Just c
                  _                   => Nothing
+  where
+    -- A comparison is exact on a `Double` too, whichever backend runs it
+    -- (rc2/doc/cast-fold-scope.md).
+    compares : {0 n : Nat} -> PrimFn n -> Bool
+    compares (EQ _) = True
+    compares (LT _) = True
+    compares (LTE _) = True
+    compares (GT _) = True
+    compares (GTE _) = True
+    compares _ = False
+
+||| What a comparison of a value with itself gives: `<` and `>` false,
+||| `==`, `<=` and `>=` true but for a `Double`, which may be NaN.
+selfHolds : {0 arity : Nat} -> PrimFn arity -> Maybe Bool
+selfHolds (LT _) = Just False
+selfHolds (GT _) = Just False
+selfHolds (EQ DoubleType) = Nothing
+selfHolds (LTE DoubleType) = Nothing
+selfHolds (GTE DoubleType) = Nothing
+selfHolds (EQ _) = Just True
+selfHolds (LTE _) = Just True
+selfHolds (GTE _) = Just True
+selfHolds _ = Nothing
+
+||| A comparison of a local with itself (`selfHolds`).
+selfCompare : {0 arity : Nat} -> PrimFn arity -> Vect arity RCLocal -> Maybe Bool
+selfCompare op [a@(RCLoc _), b] = if a == b then selfHolds op else Nothing
+selfCompare _ _ = Nothing
 
 ||| The range of a type whose `cast` to `Integer` keeps the value, and a
 ||| constant of that type for a value in the range. See `doc/widening-compare.md`.
@@ -406,12 +434,16 @@ foldConst caf env (RLet fc var rep value body) =
                       then RLet fc var rep value' body'
                       else body'
             -- The same for a string a CAF substitution (`cafValueOf`) or an
-            -- inlined CAF left as a bare `RCConst`.
-            RV _ cval@(RCConst (Str _)) =>
-                let body' = foldConst caf (insertConst var (Element cval ItIsConst2) env) body
-                in if mentionsLocal (RCLoc var) body'
-                      then RLet fc var rep value' body'
-                      else body'
+            -- inlined CAF left as a bare `RCConst`, and for a native-eligible
+            -- constant a local became, such as a constant-case scrutinee in
+            -- its alt (`RPrimVal` above says why not a `BI`).
+            RV _ (RCConst c) =>
+                if isJust (litRep c) || (case c of { Str _ => True; _ => False })
+                   then let body' = foldConst caf (insertConst var (Element (RCConst c) ItIsConst2) env) body
+                        in if mentionsLocal (RCLoc var) body'
+                              then RLet fc var rep value' body'
+                              else body'
+                   else RLet fc var rep value' (foldConst caf env body)
             RErased _ => foldNull var (Element RCErased ItIsErased2)
             RV _ RCErased => foldNull var (Element RCErased ItIsErased2)
             RV _ RCWorld => foldNull var (Element RCWorld ItIsWorld2)
@@ -582,7 +614,9 @@ foldConst _ env (ROp fc lazy op args postDrop) =
             Just cs => case constFoldOp op cs of
                             Just c  => RPrimVal fc c
                             Nothing => ROp fc lazy op resolvedArgs postDrop
-            Nothing => ROp fc lazy op resolvedArgs postDrop
+            Nothing => case selfCompare op resolvedArgs of
+                            Just b => RPrimVal fc (I (if b then 1 else 0))
+                            Nothing => ROp fc lazy op resolvedArgs postDrop
 foldConst caf env (RCmpCase fc op args postDrop t f) =
     let t' = foldConst caf env t
         f' = foldConst caf env f
@@ -592,11 +626,13 @@ foldConst caf env (RCmpCase fc op args postDrop t f) =
                             Just (I 1) => t'
                             Just (I 0) => f'
                             _          => RCmpCase fc op resolvedArgs postDrop t' f'
-            Nothing => case cmpWidened env op resolvedArgs of
-                            Just (Decided True)  => t'
-                            Just (Decided False) => f'
-                            Just (Narrowed op' args') => RCmpCase fc op' args' postDrop t' f'
-                            Nothing => RCmpCase fc op resolvedArgs postDrop t' f'
+            Nothing => case selfCompare op.fst resolvedArgs of
+                            Just b => if b then t' else f'
+                            Nothing => case cmpWidened env op resolvedArgs of
+                                            Just (Decided True)  => t'
+                                            Just (Decided False) => f'
+                                            Just (Narrowed op' args') => RCmpCase fc op' args' postDrop t' f'
+                                            Nothing => RCmpCase fc op resolvedArgs postDrop t' f'
 -- Mirrors `RConstCase`'s own scrutinee-resolution below, for tag
 -- dispatch: a resolved `RCConstCon`/`RCEmptyCon` scrutinee makes the
 -- whole case disappear in favour of the matching alt (fields
@@ -690,8 +726,21 @@ foldConst caf env (RConstCase fc sc alts mDef) =
                      l'@(RCLoc _) => l'
                      _ => l
 
+    -- Whether a scrutinee that matched `c` is `c` itself: a `Double` matching
+    -- `0.0` may be `-0.0`, and no other two values compare equal (NaN matches
+    -- nothing).
+    pins : Constant -> Bool
+    pins (Db d) = d /= 0
+    pins _ = True
+
+    -- In an alt, the scrutinee is its constant (rc2/doc/const-caf-fold.md,
+    -- "Constant-case alts").
     foldConstConstAlt : CafTable -> Env -> RConstAlt -> RConstAlt
-    foldConstConstAlt caf env (MkRConstAlt c body) = MkRConstAlt c (foldConst caf env body)
+    foldConstConstAlt caf env (MkRConstAlt c body) =
+        let env' = case (aliasOf sc, isConstLocalProof (RCConst c)) of
+                        (RCLoc i, Just prf) => if pins c then insertConst i (Element (RCConst c) prf) env else env
+                        _ => env
+        in MkRConstAlt c (foldConst caf env' body)
 foldConst caf env (RDup fc v extra body) = RDup fc v extra (foldConst caf env body)
 foldConst caf env (RDrop fc vars body) = RDrop fc vars (foldConst caf env body)
 foldConst caf env (RFree fc v body) = RFree fc v (foldConst caf env body)
