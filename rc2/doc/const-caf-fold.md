@@ -254,6 +254,28 @@ are false, `==`, `<=` and `>=` true, but for a `Double` (NaN). Left to
 C, clang's `-Wtautological-compare` rejects `x == x` under `-Werror`
 (`libs/rc2base`'s `TestPosixErrno`). Test: `Test190ConstAltFold`.
 
+### Casts between `Char` and integers
+
+`foldableOp` folds a `Cast` only between integer types, so
+`cast-Int-Char [#160]` stayed (29 such casts in `rc2-norepl`). A cast of
+an integer constant to `Char` now folds as rc2's runtime computes it,
+`idris2rc2_charFromCodepoint`: the codepoint, or NUL for a surrogate,
+a negative or a too-large value. The host's `getOp` would not agree on
+those. A cast from `Char` folds only to a type every codepoint fits in
+(`Int`, `Int32`, `Int64`, `Integer`, `Bits32`, `Bits64`), so no wrap-around
+is evaluated on the host.
+
+### Identities
+
+`x + 0`, `0 + x` and `x - 0` of an `Integer`, and `"" ++ s` and
+`s ++ ""`, are the other operand. Only those: their `let` is Boxed, so the
+operand's ownership moves into it as at any `let y = x`. A fixed-width
+`x + 0` has a native `let`, and the `RV` of a Boxed `x` there would read it
+without the drop the `op`'s `postDrop` gave, leaking a boxed `Int64` or
+`Bits64` beyond 62 bits. Nor a `Double`: `-0.0 + 0.0` is `0.0`. In
+`rc2-norepl` there were 15 fixed-width ones and 1 `"" ++ s`. Test:
+`Test192SmallFolds`.
+
 ## Bugs found and fixed
 
 ### `RC.idr`'s `annotate` was missing 3 of 5 constant-form intercepts

@@ -50,10 +50,44 @@ safeConst : Constant -> Bool
 safeConst (Db _) = False
 safeConst _ = True
 
+||| The value of an integer constant of any width.
+intValue : Constant -> Maybe Integer
+intValue (I x) = Just (cast x)
+intValue (I8 x) = Just (cast x)
+intValue (I16 x) = Just (cast x)
+intValue (I32 x) = Just (cast x)
+intValue (I64 x) = Just (cast x)
+intValue (BI x) = Just x
+intValue (B8 x) = Just (cast x)
+intValue (B16 x) = Just (cast x)
+intValue (B32 x) = Just (cast x)
+intValue (B64 x) = Just (cast x)
+intValue _ = Nothing
+
+||| A cast between `Char` and an integer constant, as rc2's runtime computes
+||| it (rc2/doc/const-caf-fold.md, "Casts between `Char` and integers").
+charCast : {0 arity : Nat} -> PrimFn arity -> Vect arity Constant -> Maybe Constant
+charCast (Cast _ CharType) [c] = (\v => Ch (if codepoint v then chr (cast v) else '\0')) <$> intValue c
+  where
+    codepoint : Integer -> Bool
+    codepoint v = (v >= 0 && v <= 0xD7FF) || (v >= 0xE000 && v <= 0x10FFFF)
+charCast (Cast CharType to) [Ch ch] =
+    let v : Integer = cast (ord ch)
+    in case to of
+            IntType => Just (I (cast v))
+            Int32Type => Just (I32 (cast v))
+            Int64Type => Just (I64 (cast v))
+            IntegerType => Just (BI v)
+            Bits32Type => Just (B32 (cast v))
+            Bits64Type => Just (B64 (cast v))
+            _ => Nothing
+charCast _ _ = Nothing
+
 ||| Thin wrapper around `Core.Primitives.getOp`: apply `fn` to already-
-||| resolved constant operands, subject to the safety exclusions above.
+||| resolved constant operands, subject to the safety exclusions above, but
+||| for a cast to or from `Char` (`charCast`).
 constFoldOp : {0 arity : Nat} -> PrimFn arity -> Vect arity Constant -> Maybe Constant
-constFoldOp fn cs =
+constFoldOp fn cs = charCast fn cs <|>
     if not (foldableOp fn) || not (compares fn || all safeConst cs)
        then Nothing
        else case getOp {vars = []} fn (map (NPrimVal EmptyFC) cs) of
@@ -82,6 +116,22 @@ selfHolds (EQ _) = Just True
 selfHolds (LTE _) = Just True
 selfHolds (GTE _) = Just True
 selfHolds _ = Nothing
+
+||| `x + 0`, `0 + x` and `x - 0` of an `Integer`, and `"" ++ s` and `s ++ ""`:
+||| the other operand (rc2/doc/const-caf-fold.md, "Identities").
+identityOf : {0 arity : Nat} -> PrimFn arity -> Vect arity RCLocal -> Maybe RCLocal
+identityOf (Add IntegerType) [a, b] = if zero b then Just a else if zero a then Just b else Nothing
+  where
+    zero : RCLocal -> Bool
+    zero (RCConst (BI 0)) = True
+    zero _ = False
+identityOf (Sub IntegerType) [a, RCConst (BI 0)] = Just a
+identityOf StrAppend [a, b] = if empty b then Just a else if empty a then Just b else Nothing
+  where
+    empty : RCLocal -> Bool
+    empty (RCConst (Str "")) = True
+    empty _ = False
+identityOf _ _ = Nothing
 
 ||| A comparison of a local with itself (`selfHolds`).
 selfCompare : {0 arity : Nat} -> PrimFn arity -> Vect arity RCLocal -> Maybe Bool
@@ -636,7 +686,7 @@ foldConst _ env (ROp fc lazy op args postDrop) =
                             Nothing => ROp fc lazy op resolvedArgs postDrop
             Nothing => case selfCompare op resolvedArgs <|> pastCompare env.matched op resolvedArgs of
                             Just b => RPrimVal fc (I (if b then 1 else 0))
-                            Nothing => ROp fc lazy op resolvedArgs postDrop
+                            Nothing => maybe (ROp fc lazy op resolvedArgs postDrop) (RV fc) (identityOf op resolvedArgs)
 foldConst caf env (RCmpCase fc op args postDrop t f) =
     let t' = foldConst caf env t
         f' = foldConst caf env f
