@@ -725,9 +725,9 @@ export
 record Output where
   constructor MkOutput
   body : DList String
-  pendingDrops : List String
-  pendingDups : Bool
-  dropIndent : String
+  pending : List String
+  pendingIsDup : Bool
+  pendingIndent : String
 
 export
 emptyOutput : Output
@@ -740,30 +740,30 @@ batchCall fn ind vs = ind ++ fn ++ show (length vs) ++ "(" ++ concat (interspers
 -- split so that no call takes fewer than three, one or two inline. Pairs stay
 -- inline: a call for two is slower in a hot loop than it saves
 -- (rc2/doc/batched-drops.md).
-dropLines : (fn : String) -> String -> List String -> List String
-dropLines fn ind (a :: b :: c :: d :: e :: f :: rest@(_ :: _ :: _ :: _)) = batchCall fn ind [a, b, c, d, e, f] :: dropLines fn ind rest
-dropLines fn ind [a, b, c, d, e, f, g] = [batchCall fn ind [a, b, c, d], batchCall fn ind [e, f, g]]
-dropLines fn ind [a, b, c, d, e, f, g, h] = [batchCall fn ind [a, b, c, d, e], batchCall fn ind [f, g, h]]
-dropLines fn ind vs@(_ :: _ :: _ :: _) = [batchCall fn ind vs]
-dropLines fn ind vs = map (\v => ind ++ fn ++ "(" ++ v ++ ");") vs
+pendingLines : (fn : String) -> String -> List String -> List String
+pendingLines fn ind (a :: b :: c :: d :: e :: f :: rest@(_ :: _ :: _ :: _)) = batchCall fn ind [a, b, c, d, e, f] :: pendingLines fn ind rest
+pendingLines fn ind [a, b, c, d, e, f, g] = [batchCall fn ind [a, b, c, d], batchCall fn ind [e, f, g]]
+pendingLines fn ind [a, b, c, d, e, f, g, h] = [batchCall fn ind [a, b, c, d, e], batchCall fn ind [f, g, h]]
+pendingLines fn ind vs@(_ :: _ :: _ :: _) = [batchCall fn ind vs]
+pendingLines fn ind vs = map (\v => ind ++ fn ++ "(" ++ v ++ ");") vs
 
-flushDrops : Output -> Output
-flushDrops o = case o.pendingDrops of
+flushPending : Output -> Output
+flushPending o = case o.pending of
     [] => o
-    ds => { body $= \ls => DList.appendR ls (dropLines (if o.pendingDups then "idris2rc2_dup" else "idris2rc2_drop") o.dropIndent (reverse ds)),
-            pendingDrops := [] } o
+    ds => { body $= \ls => DList.appendR ls (pendingLines (if o.pendingIsDup then "idris2rc2_dup" else "idris2rc2_drop") o.pendingIndent (reverse ds)),
+            pending := [] } o
 
 -- Holds `vs` back as drops (`False`) or dups (`True`) at `indent`, after a
 -- held-back run of the other kind or at another indentation is written.
 holdBack : Bool -> String -> List String -> Output -> Output
 holdBack dups indent vs o =
-    let o' = if indent == o.dropIndent && dups == o.pendingDups then o else flushDrops o
-    in { pendingDrops := reverse vs ++ o'.pendingDrops, pendingDups := dups, dropIndent := indent } o'
+    let o' = if indent == o.pendingIndent && dups == o.pendingIsDup then o else flushPending o
+    in { pending := reverse vs ++ o'.pending, pendingIsDup := dups, pendingIndent := indent } o'
 
 ||| Every line of `o`, the held-back drops included.
 export
 outputLines : Output -> List String
-outputLines o = reify (flushDrops o).body
+outputLines o = reify (flushPending o).body
 
 ------------------------------------------------------------------------
 
@@ -803,14 +803,14 @@ emit
     FC -> String -> Core ()
 emit EmptyFC line = do
     indent <- indentation
-    update OutfileText (\o => { body $= flip DList.snoc (indent ++ line) } (flushDrops o))
+    update OutfileText (\o => { body $= flip DList.snoc (indent ++ line) } (flushPending o))
 emit fc line = do
     let comment = "// " ++ show fc
     indent <- indentation
     let indentedLine = indent ++ line
     update OutfileText $ \o => { body $= case isLTE (length indentedLine) maxLineLengthForComment of
         (Yes _) => flip DList.snoc (padRight maxLineLengthForComment ' ' indentedLine ++ " " ++ comment)
-        (No _)  => flip DList.appendR [indentedLine, (padRight maxLineLengthForComment ' ' "" ++ " " ++ comment)] } (flushDrops o)
+        (No _)  => flip DList.appendR [indentedLine, (padRight maxLineLengthForComment ' ' "" ++ " " ++ comment)] } (flushPending o)
 
 export
 applyFunctionToVars : {auto oft : Ref OutfileText Output}

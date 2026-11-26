@@ -27,7 +27,7 @@ more.
 
 Nothing changes in the IR. `removeVars` (`Emit/Util.idr`) does not write
 its drops: it holds them back in the output buffer (`Output`'s
-`pendingDrops`, with their indentation). The next line `emit` writes, a
+`pending`, with their indentation). The next line `emit` writes, a
 `removeVars` at another indentation, or the end of the definition
 (`outputLines`) writes them first: `idris2rc2_dropN` calls of six, with
 seven and eight left over split 4+3 and 5+3, and a run of one or two as
