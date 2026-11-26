@@ -94,6 +94,7 @@ EmitDeps retTy = {auto a : Ref ArgCounter Nat}
               -> {auto r : Ref RepMap (SortedMap LocalId Rep)}
               -> {auto lm : Ref InlineMap (SortedMap LocalId (String, List String))}
               -> {auto fa : Ref LoopParams (List (String, List (LocalId, Rep)))}
+              -> {auto jp : Ref JoinParams (SortedMap Nat (String, List (LocalId, Rep)))}
               -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
               -> {auto tf : Ref TrampolineFree (SortedSet Name)}
               -> retTy
@@ -406,6 +407,10 @@ mutual
                          emitConstCaseInto sink tailPosition fc' sc alts def
                      RLoop fc' loopParams initial prologueDrop body =>
                          emitLoopInto sink tailPosition fc' loopParams initial prologueDrop body
+                     RJoin fc' label params scope body =>
+                         emitJoinInto sink tailPosition fc' label params scope body
+                     RJump fc' label args =>
+                         emitJump fc' label args
                      -- See doc/caf-memoization.md. Always routed to its
                      -- own dedicated renderer, regardless of `sink` --
                      -- same reasoning as RCmpCase/RConCase/RConstCase
@@ -765,6 +770,44 @@ mutual
         put LoopParams ((label, loopParams) :: outerStack)
         emitInto emptyFC sink tailPosition body
         put LoopParams outerStack
+
+    ||| Lower an `RJoin` (RCExp.idr): declare its params, emit `scope`, then
+    ||| `join_N:;` and `body`, both into one `sink`. When the sink is a
+    ||| variable, `scope` falls through where it has assigned it, so a `goto`
+    ||| past `body` follows it (rc2/doc/join-points.md).
+    emitJoinInto : EmitDeps (Sink -> TailPositionStatus -> FC -> (label : Nat) -> List (LocalId, Rep) -> (scope : RCExp) -> (body : RCExp) -> Core ())
+    emitJoinInto sink0 tailPosition fc label params scope body = do
+        sink <- resolveSink fc sink0
+        traverse_ (\(p, rep) => do
+                       emit fc "\{sinkCType rep}\{idName p} = \{sinkZero rep};"
+                       update RepMap (insert p rep)) params
+        n <- getNextCounter
+        let cLabel = "join_" ++ n
+        update JoinParams (insert label (cLabel, params))
+        emitInto fc sink tailPosition scope
+        case sink of
+             SinkReturn _ => do
+                 emit fc "\{cLabel}:;"
+                 emitInto fc sink tailPosition body
+             _ => do
+                 emit fc "goto \{cLabel}_end;"
+                 emit fc "\{cLabel}:;"
+                 emitInto fc sink tailPosition body
+                 emit fc "\{cLabel}_end:;"
+
+    ||| Lower an `RJump`: assign each param of its `RJoin`, then `goto` its
+    ||| label. The params are fresh, so no argument reads one.
+    emitJump : EmitDeps (FC -> (label : Nat) -> List RCLocal -> Core ())
+    emitJump fc label args = do
+        Just (cLabel, params) <- lookup label <$> get JoinParams
+            | Nothing => throw $ InternalError "[rc2] RJump to j\{show label} outside its RJoin"
+        traverse_ (\(v, (p, rep)) => do
+            (valStr, pending) <- case rep of
+                 RNative ty => rcVarToNativeC ty v
+                 _ => rcVarToBoxedC v
+            emit fc "\{idName p} = \{valStr};"
+            removeVars pending) (zip args params)
+        emit fc "goto \{cLabel};"
 
     ||| The raw C expression for a value Compiler.RC2.Types has decided is
     ||| Native ty -- an `RLet`'s own tail is always an `ROp`/`RPrimVal`
@@ -1218,6 +1261,8 @@ emitRC sink (RDup fc loc extra cont) _ = unreachableInEmitRC "RDup"
 emitRC sink (RFree fc loc cont) _ = unreachableInEmitRC "RFree"
 emitRC sink (RReleaseReuse fc loc cont) _ = unreachableInEmitRC "RReleaseReuse"
 emitRC sink (RReuseOffer fc sc dupOnShared dropOnUnique cont) _ = unreachableInEmitRC "RReuseOffer"
+emitRC sink (RJoin fc label params scope body) _ = unreachableInEmitRC "RJoin"
+emitRC sink (RJump fc label args) _ = unreachableInEmitRC "RJump"
 
 addCommaToList : List String -> List String
 addCommaToList [] = []
@@ -1331,6 +1376,7 @@ createCFunctions n (MkRCFun args retRep isWorker body) = do
     -- rc2/doc/loop-conversion.md's "Multiple loops per function" for
     -- why this is a stack, not a single slot.
     _ <- newRef LoopParams (the (List (String, List (LocalId, Rep))) [])
+    _ <- newRef JoinParams (the (SortedMap Nat (String, List (LocalId, Rep))) empty)
     -- emitInto's own tryEmitLoopContinue-first / RLoop-dispatch protocol
     -- handles a loop body correctly on its own (declare params, its own
     -- `loop_N:;` label, goto, no return); for anything else, SinkReturn

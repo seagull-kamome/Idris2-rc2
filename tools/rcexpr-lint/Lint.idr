@@ -193,6 +193,7 @@ uCaseLocals acc (RFreeNode _ b) = uCaseLocals acc b
 uCaseLocals acc (RReleaseReuseNode _ b) = uCaseLocals acc b
 uCaseLocals acc (RReuseOfferNode _ _ _ b) = uCaseLocals acc b
 uCaseLocals acc (RLoopNode _ _ _ b) = uCaseLocals acc b
+uCaseLocals acc (RJoinNode _ _ s b) = uCaseLocals (uCaseLocals acc s) b
 uCaseLocals acc (RMemoizeNode _ _ b) = uCaseLocals acc b
 uCaseLocals acc _ = acc
 
@@ -335,6 +336,16 @@ mutual
       let readAs = checkReads dn "continue loop args" st args
           (st', dropAs) = doDrops dn "continue loop postDrop" st postDrop
       in (st', readAs ++ dropAs)
+  -- The body is closed but for its params, and walked once although each
+  -- jump hands them what its own arguments held (one reference, several, or
+  -- a field's borrowed one): they are never dead here, and `Leak` follows
+  -- each jump into the body (rc2's doc/join-points.md).
+  walk dn st (RJoinNode _ params scope body) =
+      let (stFinal, scopeAs) = walk dn st scope
+          stBody = foldl (\s, (i, r) => if isBoxedRep r then insert i (owning immediateRefs) s else s) st params
+          (_, bodyAs) = walk dn stBody body
+      in (stFinal, scopeAs ++ bodyAs)
+  walk dn st (RJumpNode _ args) = (st, checkReads dn "jump args" st args)
   walk dn st (RMemoizeNode _ _ body) = walk dn st body
 
   -- A field borrows from a tracked scrutinee (see `Entry`); from an

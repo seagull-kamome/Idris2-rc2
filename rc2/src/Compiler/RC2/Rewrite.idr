@@ -155,6 +155,9 @@ mutual
   -- loop-carried parameters. Kept total (as a plain pass-through), same
   -- reasoning as RAppNameRep/RAppFFIInline just above.
   mapLocalsRCExp f g (RMemoize fc n rep body) = RMemoize fc n rep (mapLocalsRCExp f g body)
+  mapLocalsRCExp f g (RJoin fc label params scope body) =
+      RJoin fc label (map (\(i, r) => (g i, r)) params) (mapLocalsRCExp f g scope) (mapLocalsRCExp f g body)
+  mapLocalsRCExp f g (RJump fc label args) = RJump fc label (map f args)
 
   mapLocalsConAlt : (RCLocal -> RCLocal) -> (LocalId -> LocalId) -> RConAlt -> RConAlt
   mapLocalsConAlt f g (MkRConAlt name ci tag args body) =
@@ -237,6 +240,8 @@ stripOwnership ids (RAppNameRep {sameLen} fc n argReps retRep postDrop args) =
     RAppNameRep fc n argReps retRep (filter (keepUnlessOwned ids) postDrop) args
 stripOwnership ids (RExtPrim fc lazy p args postDrop) =
     RExtPrim fc lazy p args (filter (keepUnlessOwned ids) postDrop)
--- RV, RAppName, RUnderApp, RApp, RCon, RPrimVal, RErased, RCrash: no
+stripOwnership ids (RJoin fc label params scope body) =
+    RJoin fc label params (stripOwnership ids scope) (stripOwnership ids body)
+-- RV, RAppName, RUnderApp, RApp, RCon, RPrimVal, RErased, RCrash, RJump: no
 -- ownership-tracking positions of their own.
 stripOwnership _ e = e

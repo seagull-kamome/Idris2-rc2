@@ -78,6 +78,9 @@ record Env where
   ||| a direct tail call (`callRep`) is not counted as a tail call: the caller can still drop
   ||| its borrowed arguments after it (`rcexpr-lint --borrow-stats-direct`)
   directTail : Bool
+  ||| each `join` being walked: a `jump` to it goes on into its body with the
+  ||| params owning what the jump handed over (rc2's `doc/join-points.md`)
+  joins : SortedMap String (List (Int, RRep), RCExp)
 
 ||| What `walk` is evaluating for: the function's own result (`Tail`:
 ||| every path must end owing nothing), or the value of a `let` of
@@ -371,6 +374,8 @@ scanExp sc (RReleaseReuseNode _ body) = scanExp sc body
 scanExp sc (RReuseOfferNode _ _ _ body) = scanExp sc body
 scanExp sc (RLoopNode _ _ _ body) = scanExp sc body
 scanExp sc (RLoopContinueNode _ _) = sc
+scanExp sc (RJoinNode _ _ s b) = scanExp (scanExp sc s) b
+scanExp sc (RJumpNode _ _) = sc
 scanExp sc (RMemoizeNode _ _ body) = scanExp sc body
 
 ||| The argument lists of the `continue`s that jump to the loop whose
@@ -390,6 +395,7 @@ continueArgs (RFreeNode _ body) acc = continueArgs body acc
 continueArgs (RReleaseReuseNode _ body) acc = continueArgs body acc
 continueArgs (RReuseOfferNode _ _ _ body) acc = continueArgs body acc
 continueArgs (RMemoizeNode _ _ body) acc = continueArgs body acc
+continueArgs (RJoinNode _ _ s b) acc = continueArgs b (continueArgs s acc)
 continueArgs (RLoopContinueNode args _) acc = args :: acc
 continueArgs _ acc = acc
 
@@ -663,6 +669,22 @@ mutual
                       else differences env "loop" st3 (MkSt lc.snapshot empty lc.snapTokens lc.baseline 0)
           in MkRes Nothing (f1 ++ f2 ++ f3 ++ f4)
   walk env m st (RMemoizeNode _ _ body) = walk env m st body
+  walk env m st (RJoinNode label params scope body) =
+      walk ({ joins $= insert label (params, body) } env) m st scope
+  walk env m st (RJumpNode label args) = case lookup label env.joins of
+      Nothing => MkRes Nothing [MkAnomaly env.defName (Unknown "jump outside its join") 0 "jump"]
+      -- Each param takes over what its argument held: the references it
+      -- owned, or none if it is a field that only borrows its scrutinee's.
+      Just (params, body) => walk env m (foldl handOver st (zip args params)) body
+
+  handOver : St -> (RCLocal, (Int, RRep)) -> St
+  handOver st (RVar a, (p, r)) = case lookup a st.owned of
+      Just n => if isBoxedRep r
+                   then let st' = setOwned p n (untrack a st)
+                        in if contains a st.fields then { fields $= insert p } st' else st'
+                   else st
+      Nothing => st
+  handOver st _ = st
 
   walkLet : Env -> Mode -> St -> Int -> RRep -> RCExp -> RCExp -> Res
   walkLet env m st var rep value body =
@@ -719,14 +741,14 @@ export
 leakDef : (directTail : Bool) -> (wantEvents : Bool) -> String -> RCDef -> List Anomaly
 leakDef directTail wantEvents name (RCFun args retRep _ body) =
     let exempt = exemptLocals body
-        env0 = MkEnv name exempt retRep empty Nothing wantEvents False empty directTail
+        env0 = MkEnv name exempt retRep empty Nothing wantEvents False empty directTail empty
         env = foldl (\e, (i, r) => case r of
                                         NativeRep s => if isRetRep s then { reps $= insert i s } e else e
                                         _ => e) env0 args
         st0 = foldl (\s, (i, r) => bindOwned env r i s) (MkSt empty empty empty 0 0) args
     in dedupe (walk env Tail st0 body).finds
 leakDef directTail wantEvents name (RCErrorDef body) =
-    dedupe (walk (MkEnv name (exemptLocals body) Boxed empty Nothing wantEvents False empty directTail) Tail (MkSt empty empty empty 0 0) body).finds
+    dedupe (walk (MkEnv name (exemptLocals body) Boxed empty Nothing wantEvents False empty directTail empty) Tail (MkSt empty empty empty 0 0) body).finds
 leakDef _ _ _ (RCCon _ _ _) = []
 leakDef _ _ _ (RCForeign _) = []
 

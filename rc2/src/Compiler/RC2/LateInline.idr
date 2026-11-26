@@ -256,6 +256,7 @@ collectBoundIds (RConCase _ _ alts mDef) =
 collectBoundIds (RConstCase _ _ alts mDef) =
     concatMap (\(MkRConstAlt _ body) => collectBoundIds body) alts ++ maybe [] collectBoundIds mDef
 collectBoundIds (RLoop _ loopParams _ _ body) = map fst loopParams ++ collectBoundIds body
+collectBoundIds (RJoin _ _ params scope body) = map fst params ++ collectBoundIds scope ++ collectBoundIds body
 collectBoundIds e = concatMap collectBoundIds (children e)
 
 ||| `True` iff `target` occurs in `e` other than as a native-operand read

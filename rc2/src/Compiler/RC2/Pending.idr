@@ -26,6 +26,9 @@ data TailKind = Done | Pending | Passes Name
 tailKinds : RCExp -> List TailKind
 tailKinds (RLoop _ _ _ _ k) = tailKinds k
 tailKinds (RLoopContinue _ _ _) = []
+-- What a jump returns is what its join point's body does, which `RJoin`'s
+-- tail children already count.
+tailKinds (RJump {}) = []
 tailKinds (RAppNameRep _ n _ RBoxed _ _) = [Passes n]
 tailKinds (RV _ _) = [Done]
 tailKinds (RCon {}) = [Done]

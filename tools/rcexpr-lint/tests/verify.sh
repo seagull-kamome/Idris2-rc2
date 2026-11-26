@@ -17,8 +17,10 @@
 # drops one field only is dead and reports nothing.
 # `leakclean.rcexpr` holds the balanced shapes the leak check has to
 # accept (erased alts, always-unboxed locals, immortal lets, padded loop
-# params, struct fields, reuse, FFI/callRep consumption); `leak.rcexpr`
-# one definition per leak-check finding. `borrow.rcexpr` is run with
+# params, struct fields, reuse, FFI/callRep consumption, a join point whose
+# jumps hand its params their references); `leak.rcexpr`
+# one definition per leak-check finding (a join point whose body leaks a
+# param among them). `borrow.rcexpr` is run with
 # `--borrow-stats`; every figure in its `.expected` was counted by hand.
 # `borrowdirect.rcexpr` is run with `--borrow-stats-direct`: a parameter passed on by a
 # `callRep` in tail position is borrowable there, the same one passed by `call` is not.

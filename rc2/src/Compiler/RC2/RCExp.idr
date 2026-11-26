@@ -548,6 +548,14 @@ data RCExp : Type where
      ||| The value of a lazy value: evaluates and stores it on first use
      ||| (`idris2rc2_force`). Borrows `v`; `postDrop` as on `ROp`.
      RForce : FC -> LazyReason -> (v : RCLocal) -> (postDrop : List LocalId) -> RCExp
+     ||| A join point: `scope`, whose tail positions may jump to `body` under
+     ||| `label`, binding `params`. Only produced by `Compiler.RC2.JoinPoints`,
+     ||| the last pass (`doc/join-points.md`): several analyses here
+     ||| (`mentionsLocal`, `countUsesR`, ...) do not look inside one, so a pass
+     ||| put after it must teach them first.
+     RJoin : FC -> (label : Nat) -> (params : List (LocalId, Rep)) -> (scope : RCExp) -> (body : RCExp) -> RCExp
+     ||| Jump to the enclosing `RJoin` named `label`, its params taking `args`.
+     RJump : FC -> (label : Nat) -> (args : List RCLocal) -> RCExp
 
 public export
 data RConAlt : Type where
@@ -646,6 +654,10 @@ freeLocalsR (RReuseOffer _ sc dupOnShared dropOnUnique body) =
 freeLocalsR (RMemoize _ _ _ body) = freeLocalsR body
 freeLocalsR (RDelay _ _ _ caps) = fromList caps
 freeLocalsR (RForce _ _ v _) = fromList [v]
+freeLocalsR (RJoin _ _ params scope body) =
+    union (freeLocalsR scope)
+          (difference (freeLocalsR body) (fromList (map (RCLoc . fst) params)))
+freeLocalsR (RJump _ _ args) = fromList args
 freeLocalsR _ = empty
 
 ||| `insert` every element of `xs`, one at a time, into `acc` -- never
@@ -702,6 +714,8 @@ mentionedLocalsAcc acc (RLoopContinue _ args postDrop) = insertAll args (insertA
 mentionedLocalsAcc acc (RMemoize _ _ _ body) = mentionedLocalsAcc acc body
 mentionedLocalsAcc acc (RDelay _ _ _ caps) = insertAll caps acc
 mentionedLocalsAcc acc (RForce _ _ v postDrop) = insertAll (v :: map RCLoc postDrop) acc
+mentionedLocalsAcc acc (RJoin _ _ _ scope body) = mentionedLocalsAcc (mentionedLocalsAcc acc scope) body
+mentionedLocalsAcc acc (RJump _ _ args) = insertAll args acc
 -- RPrimVal/RErased/RCrash: no locals at all.
 mentionedLocalsAcc acc _ = acc
 
@@ -1026,6 +1040,8 @@ foldRCNamesR nf = go
     go (RReuseOffer _ sc dupOnShared dropOnUnique body) =
         l (RCLoc sc) <+> ls (map RCLoc dupOnShared) <+> ls (map RCLoc dropOnUnique) <+> go body
     go (RMemoize _ _ _ body) = go body
+    go (RJoin _ _ params scope body) = go scope <+> go body
+    go (RJump _ _ args) = ls args
 
 ||| `foldRCNamesR` lifted over a whole `RCDef` (only `MkRCFun`/
 ||| `MkRCError` carry an `RCExp` body).
@@ -1069,6 +1085,7 @@ directReads (RFree _ x _) = [RCLoc x]
 directReads (RReuseOffer _ _ ds us _) = map RCLoc (ds ++ us)
 directReads (RLoop _ _ initial pd _) = initial ++ map RCLoc pd
 directReads (RLoopContinue _ args pd) = args ++ map RCLoc pd
+directReads (RJump _ _ args) = args
 directReads _ = []
 
 export
@@ -1084,6 +1101,7 @@ children (RReleaseReuse _ _ k) = [k]
 children (RReuseOffer _ _ _ _ k) = [k]
 children (RLoop _ _ _ _ k) = [k]
 children (RMemoize _ _ _ k) = [k]
+children (RJoin _ _ _ scope body) = [scope, body]
 children _ = []
 
 ||| `e` with its `children` replaced, in the same order.
@@ -1106,6 +1124,7 @@ withChildren (RReleaseReuse fc v _) [k] = RReleaseReuse fc v k
 withChildren (RReuseOffer fc sc ds us _) [k] = RReuseOffer fc sc ds us k
 withChildren (RLoop fc ps i pd _) [k] = RLoop fc ps i pd k
 withChildren (RMemoize fc n r _) [k] = RMemoize fc n r k
+withChildren (RJoin fc label params _ _) [scope, body] = RJoin fc label params scope body
 withChildren e _ = e
 
 ||| The tail positions directly below a node that only passes its value on:
@@ -1123,6 +1142,7 @@ tailChildren (RReuseOffer _ _ _ _ k) = Just [k]
 tailChildren (RCmpCase _ _ _ _ t f) = Just [t, f]
 tailChildren (RConCase _ _ alts mDef) = Just (map (\(MkRConAlt _ _ _ _ b) => b) alts ++ toList mDef)
 tailChildren (RConstCase _ _ alts mDef) = Just (map (\(MkRConstAlt _ b) => b) alts ++ toList mDef)
+tailChildren (RJoin _ _ _ scope body) = Just [scope, body]
 tailChildren _ = Nothing
 
 ||| `tailChildren` in an `Applicative`: `e` rebuilt with `f` run on each tail
@@ -1142,6 +1162,7 @@ traverseTailChildren f (RConCase fc sc alts mDef) =
     Just (RConCase fc sc <$> traverse (\(MkRConAlt n ci t as b) => MkRConAlt n ci t as <$> f b) alts <*> traverse f mDef)
 traverseTailChildren f (RConstCase fc sc alts mDef) =
     Just (RConstCase fc sc <$> traverse (\(MkRConstAlt c b) => MkRConstAlt c <$> f b) alts <*> traverse f mDef)
+traverseTailChildren f (RJoin fc label params scope body) = Just (RJoin fc label params <$> f scope <*> f body)
 traverseTailChildren _ _ = Nothing
 
 ||| `v` is only ever released or reused below, never read or `dup`'d:
@@ -1166,6 +1187,7 @@ mapChildren f (RReleaseReuse fc x k) = RReleaseReuse fc x (f k)
 mapChildren f (RReuseOffer fc sc ds us k) = RReuseOffer fc sc ds us (f k)
 mapChildren f (RLoop {sameLen} fc ps initial pd k) = RLoop fc ps initial pd (f k)
 mapChildren f (RMemoize fc n r k) = RMemoize fc n r (f k)
+mapChildren f (RJoin fc label params scope body) = RJoin fc label params (f scope) (f body)
 mapChildren _ e = e
 
 ||| `mapChildren` in an `Applicative`: rebuilds `e` with `f` run on each
@@ -1187,4 +1209,5 @@ traverseChildren f (RReleaseReuse fc x k) = RReleaseReuse fc x <$> f k
 traverseChildren f (RReuseOffer fc sc ds us k) = RReuseOffer fc sc ds us <$> f k
 traverseChildren f (RLoop {sameLen} fc ps initial pd k) = RLoop fc ps initial pd <$> f k
 traverseChildren f (RMemoize fc n r k) = RMemoize fc n r <$> f k
+traverseChildren f (RJoin fc label params scope body) = RJoin fc label params <$> f scope <*> f body
 traverseChildren _ e = pure e

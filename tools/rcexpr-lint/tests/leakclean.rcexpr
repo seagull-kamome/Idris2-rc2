@@ -88,3 +88,28 @@ def Main.charOut  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
     #1
   else
     #0
+
+def TestCleanJoin  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  join j0 ["v10:Boxed", "v11:Boxed"]
+  case v1 of
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      jump j0 [v2, #0]
+    _builtin.CONS [cons] tag= Just 1 args= [v3, v4] ->
+      dup v3
+      drop [v1]
+      jump j0 [v2, v3]
+  at j0 ->
+    drop [v10]
+    v11
+
+def TestCleanJoinBorrowedField  (fun args= ["v1:Boxed"] ret= Boxed)
+  join j0 ["v10:Boxed", "v11:Boxed"]
+  case v1 of
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      jump j0 [#0, v1]
+    _builtin.CONS [cons] tag= Just 1 args= [v3, v4] ->
+      jump j0 [v3, v1]
+  at j0 ->
+    dup v10
+    drop [v11]
+    v10

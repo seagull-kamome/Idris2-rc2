@@ -98,6 +98,8 @@ mapNamesG f cl l = go
     go (RLoop {sameLen} fc params initial prologueDrop body) = mapLoop fc params initial id l prologueDrop (go body)
     go (RLoopContinue fc args postDrop) = RLoopContinue fc (ls args) postDrop
     go (RMemoize fc n rep body) = RMemoize fc n rep (go body)
+    go (RJoin fc label params scope body) = RJoin fc label params (go scope) (go body)
+    go (RJump fc label args) = RJump fc label (ls args)
 
 ||| `e` with every function name `f` maps changed, and the closures (`partial`,
 ||| constant closures, also inside constant constructors) renamed by `cl`,
@@ -178,6 +180,8 @@ where
   go (RLoop _ _ initial _ body) = ls initial || go body
   go (RLoopContinue _ args _) = ls args
   go (RMemoize _ _ _ body) = go body
+  go (RJoin _ _ _ scope body) = go scope || go body
+  go (RJump _ _ args) = ls args
 
 ||| `renameNamesG` with the closures renamed as the other names are.
 renameNamesR : (Name -> Name) -> RCExp -> RCExp

@@ -80,6 +80,7 @@ history, not there.
   forwards its parameters to another,
   `batched-drops.md` for making a run of drops or dups in the generated C an out-of-line call per six,
   `shared-subtrees.md` for making the repeated subtrees of a function one new function each copy calls,
+  `join-points.md` for making the repeated tail subtrees of a function one block each copy jumps to,
   `stack-con.md` for building a constructor that never leaves its function in the C frame,
   `concurrency.md` for the runtime's
   multi-step move to thread-safety -- atomic reference count, then real

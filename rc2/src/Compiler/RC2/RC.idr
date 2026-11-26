@@ -786,6 +786,9 @@ mutual
     -- reasoning as RAppNameRep above.
     annotate natives owned e@(RRetPack _ _ _ _) = pure e
     annotate natives owned e@(RStackCon _ _ _ _ _) = pure e
+    -- Made by Compiler.RC2.JoinPoints, the last pass: kept total, as RAppNameRep above.
+    annotate natives owned e@(RJoin {}) = pure e
+    annotate natives owned e@(RJump {}) = pure e
     -- RMemoize only ever wraps a whole top-level 0-argument definition's
     -- entire body (Compiler.RC2.RC2's own insertMemoize, inserted right
     -- after ConstFold, strictly before this pass runs -- see

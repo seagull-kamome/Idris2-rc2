@@ -236,6 +236,11 @@ mutual
           (w2, _) = val d rs w1 b
       in (w2, Top)
   val d rs w (RLoopContinueNode args _) = (addRefs args w, bot)
+  val d rs w (RJoinNode _ ps scope b) =
+      let (w1, a) = val d rs w scope
+          (w2, c) = val d rs ({ locals $= \m => foldl (\m', (x, _) => insert x Top m') m ps } w1) b
+      in (w2, lub a c)
+  val d rs w (RJumpNode _ args) = (addRefs args w, bot)
   val d rs w (RMemoizeNode _ _ b) = val d rs w b
   val d rs w (RDelayNode _ _ caps) = (addRefs caps w, one "constructor")
   val d rs w (RForceNode _ _ _) = (w, Top)
@@ -326,6 +331,7 @@ mutual
   rcOps (RConstCaseNode _ alts d) = concatMap (\a => rcOps a.altBody) alts ++ maybe [] rcOps d
   rcOps (RLoopNode _ _ pd b) = vars pd ++ rcOps b
   rcOps (RLoopContinueNode _ pd) = vars pd
+  rcOps (RJoinNode _ _ s b) = rcOps s ++ rcOps b
   rcOps (RMemoizeNode _ _ b) = rcOps b
   rcOps _ = []
 
@@ -351,6 +357,8 @@ mutual
   consumes v (RReuseOfferNode _ _ _ b) = consumes v b
   consumes v (RLoopNode _ i _ b) = count v i + consumes v b
   consumes v (RLoopContinueNode as _) = count v as
+  consumes v (RJoinNode _ _ s _) = consumes v s
+  consumes v (RJumpNode _ as) = count v as
   consumes v (RMemoizeNode _ _ b) = consumes v b
   consumes v (RDelayNode _ _ cs) = count v cs
   consumes _ _ = 0

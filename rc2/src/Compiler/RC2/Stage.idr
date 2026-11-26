@@ -61,6 +61,7 @@ data Stage : Type where
      NoNatMagic : Stage
      NoConstFields : Stage
      NoShareSubtrees : Stage
+     NoJoinPoints : Stage
 
 
 ||| The directive that disables `s`.
@@ -109,6 +110,7 @@ stageDirective NoInlineCalls = "noinlinecalls"
 stageDirective NoNatMagic = "nonatmagic"
 stageDirective NoConstFields = "noconstfields"
 stageDirective NoShareSubtrees = "nosharesubtrees"
+stageDirective NoJoinPoints = "nojoinpoints"
 
 
 ||| Every `Stage`; `inAllStages` proves the list is complete.
@@ -156,7 +158,8 @@ allStages = [
     NoInlineCalls,
     NoNatMagic,
     NoConstFields,
-    NoShareSubtrees
+    NoShareSubtrees,
+    NoJoinPoints
   ]
 
 
@@ -206,6 +209,7 @@ inAllStages NoInlineCalls = There (There (There (There (There (There (There (The
 inAllStages NoNatMagic = There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There Here))))))))))))))))))))))))))))))))))))))
 inAllStages NoConstFields = There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There Here)))))))))))))))))))))))))))))))))))))))
 inAllStages NoShareSubtrees = There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There Here))))))))))))))))))))))))))))))))))))))))
+inAllStages NoJoinPoints = There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There (There Here)))))))))))))))))))))))))))))))))))))))))
 
 ||| A stage that runs only when its directive is given.
 public export

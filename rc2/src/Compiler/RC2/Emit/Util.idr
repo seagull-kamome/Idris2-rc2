@@ -625,6 +625,10 @@ data InjectedRuntime : Type where
 -- "Multiple loops per function" for why a stack, not a single slot.
 export
 data LoopParams : Type where
+-- Each `RJoin` being emitted: its label -> the C label and the parameters an
+-- `RJump` to it assigns (rc2/doc/join-points.md).
+export
+data JoinParams : Type where
 export
 data RepMap : Type where
 -- Native-rep locals spliced into their sole use site instead of being
@@ -1305,6 +1309,7 @@ data Sink = SinkVar Bool String Rep | SinkReturn Rep
 
 ||| The C declaration prefix (type plus its own trailing space) a
 ||| `Sink`'s own variable is declared with.
+export
 sinkCType : Rep -> String
 sinkCType RBoxed = "IDRIS2RC2_Value * "
 sinkCType (RNative ty) = tyCType ty ++ " "
@@ -1313,6 +1318,7 @@ sinkCType (RRet n _) = retCType n ++ " "
 
 ||| The pre-branch placeholder value a `Sink`'s own variable is
 ||| initialised to -- see `resolveSink`.
+export
 sinkZero : Rep -> String
 sinkZero RBoxed = "NULL"
 sinkZero (RRet n _) = "(\{retCType n}){ 0 }"

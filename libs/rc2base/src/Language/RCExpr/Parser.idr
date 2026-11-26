@@ -789,6 +789,22 @@ loopG = do
     prologueDrop <- optionalField "prologueDrop"
     pure (params, initial, prologueDrop)
 
+joinG : Grammar () RcToken True (String, List (Int, RRep))
+joinG = do
+    nameEq "join"
+    label <- match RcName
+    match (RcPunct '[')
+    params <- sepBy (match (RcPunct ',')) loopParamG
+    match (RcPunct ']')
+    pure (label, params)
+
+jumpG : Grammar () RcToken True (String, List RCLocal)
+jumpG = do
+    nameEq "jump"
+    label <- match RcName
+    args <- localListG
+    pure (label, args)
+
 continueLoopG : Grammar () RcToken True (List RCLocal, List RCLocal)
 continueLoopG = do
     nameEq "continue"
@@ -933,6 +949,13 @@ mutual
           (_, st2) <- advanceLine st1
           (body, st3) <- parseBlock depth st2
           Right (RLoopNode params initial prologueDrop body, st3)
+      else if isPrefixOf "join " line then do
+          (label, params) <- runG ln joinG line
+          (_, st2) <- advanceLine st1
+          (scope, st3) <- parseBlock depth st2
+          st4 <- expectLine depth ("at " ++ label ++ " ->") st3
+          (body, st5) <- parseBlock (S depth) (snd st4)
+          Right (RJoinNode label params scope body, st5)
       else terminal depth ln line st1
 
   ||| Every shape that never continues at the same depth.
@@ -1023,6 +1046,10 @@ mutual
           msg <- runG ln crashG line
           (_, st2) <- advanceLine st1
           Right (RCrashNode msg, st2)
+      else if isPrefixOf "jump " line then do
+          (label, args) <- runG ln jumpG line
+          (_, st2) <- advanceLine st1
+          Right (RJumpNode label args, st2)
       else if isPrefixOf "continue loop " line then do
           (args, postDrop) <- runG ln continueLoopG line
           (_, st2) <- advanceLine st1

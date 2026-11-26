@@ -113,13 +113,23 @@ def Main.constScrutinee  (fun args= [] ret= Boxed)
       call Main.f [#'-', #"-"]
     _ ->
       #2
+
+def Main.joined  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  join j0 ["v10:Boxed", "v11:Native Int"]
+  case v1 of
+    1 ->
+      jump j0 [v2, #3]
+    _ ->
+      jump j0 [v1, #4]
+  at j0 ->
+    v10
 """
 
 main : IO ()
 main = case parseProgram sample of
     Left err => putStrLn ("PARSE ERROR: " ++ show err)
     Right prog => do
-        printLn (length prog == 10)
+        printLn (length prog == 11)
         traverse_ (\d => case lookup d prog of
                               Just (RCFun _ _ _ (RCall _ n _)) => putStrLn n
                               _ => putStrLn (d ++ " not found or not a single call"))
@@ -145,6 +155,11 @@ main = case parseProgram sample of
         case lookup "Main.constScrutinee" prog of
              Just (RCFun _ _ _ (RConstCaseNode sc [MkRConstAlt _ (RCall _ _ args)] _)) => printLn (sc :: args)
              _ => putStrLn "Main.constScrutinee not found or not a constant case"
+        -- `join`: the scope at its own depth, then `at jN ->` and the body.
+        case lookup "Main.joined" prog of
+             Just (RCFun _ _ _ (RJoinNode l ps (RConstCaseNode _ [MkRConstAlt _ (RJumpNode l2 as)] _) (RV _))) =>
+                 putStrLn (l ++ " " ++ show (length ps) ++ " " ++ l2 ++ " " ++ show as)
+             _ => putStrLn "Main.joined not found or not a join"
         case lookup "Main.example" prog of
              Just (RCFun _ _ _ body) => case body of
                  RLetIn 10 Boxed _ (RDupNode (RVar 10) 3 rest) => printLn (checkRest rest)

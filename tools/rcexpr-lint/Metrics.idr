@@ -80,6 +80,8 @@ walk m (RReuseOfferNode _ _ dropOnUnique body) = walk ({ reuseOffers $= S, postD
 walk m (RLoopNode _ _ prologueDrop body) = walk ({ loops $= S, postDrops $= (+ length prologueDrop) } m) body
 walk m (RLoopContinueNode _ pd) = { continues $= S, postDrops $= (+ length pd) } m
 walk m (RMemoizeNode _ _ body) = walk ({ memoizes $= S } m) body
+walk m (RJoinNode _ _ s b) = walk (walk m s) b
+walk m (RJumpNode _ _) = m
 
 countDef : Metrics -> RCDef -> Metrics
 countDef m (RCFun _ _ isWorker body) =

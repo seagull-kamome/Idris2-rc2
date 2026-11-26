@@ -80,6 +80,7 @@ import Compiler.RC2.TargetOs
 import Compiler.RC2.Types
 import Compiler.RC2.Util
 import Compiler.RC2.ShareSubtrees
+import Compiler.RC2.JoinPoints
 
 import Compiler.Common
 
@@ -480,9 +481,12 @@ toRCDefs strict directives incremental roots thunks preFolded0 = do
     deduped <- if (stageOff NoFunDedup directives) || incremental
                   then pure unreadDropped
                   else logTime 2 "rc2: Function dedup" $ pure (dedupFuns roots unreadDropped)
-    if stageOff NoStackCon directives
-       then pure deduped
-       else logTime 2 "rc2: Stack constructors" $ pure (applyStackCon deduped)
+    stacked <- if stageOff NoStackCon directives
+                  then pure deduped
+                  else logTime 2 "rc2: Stack constructors" $ pure (applyStackCon deduped)
+    if stageOff NoJoinPoints directives
+       then pure stacked
+       else logTime 2 "rc2: Join points" $ pure (map (\(n, d) => (n, applyJoinPoints d)) stacked)
 
 ||| `%cg rc2 inlineRuntime=<code>` companion to upstream's own
 ||| file-path-based `Compiler.Common.getExtraRuntime` -- splices the

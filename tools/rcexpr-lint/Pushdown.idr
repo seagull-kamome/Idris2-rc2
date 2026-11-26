@@ -95,6 +95,8 @@ own (RReuseOfferNode sc dos dru _) = MkOwn (sc :: dos) [] dru []
 own (RLoopNode _ ini pd _) = MkOwn ini [] pd []
 own (RLoopContinueNode as pd) = MkOwn as [] pd []
 own (RMemoizeNode _ _ _) = noOwn
+own (RJoinNode _ _ _ _) = noOwn
+own (RJumpNode _ as) = { consumes := as } noOwn
 own (RDelayNode _ _ cs) = { consumes := cs } noOwn
 own (RForceNode _ v pd) = MkOwn [] [v] pd []
 
@@ -124,6 +126,7 @@ single _ = Nothing
 
 kids : RCExp -> List RCExp
 kids (RLetIn _ _ v b) = [v, b]
+kids (RJoinNode _ _ s b) = [s, b]
 kids e = case arms e of
               Just as => as
               Nothing => maybeToList (single e)
@@ -226,6 +229,8 @@ brief (RReuseOfferNode sc dos dru _) = "reuseOffer " ++ show sc ++ " dupOnShared
 brief (RLoopNode _ ini _ _) = "loop initial=" ++ showLs ini
 brief (RLoopContinueNode as pd) = "continue " ++ showLs as ++ " postDrop=" ++ showLs pd
 brief (RMemoizeNode n _ _) = "memoize " ++ n
+brief (RJoinNode l _ _ _) = "join " ++ l
+brief (RJumpNode l as) = "jump " ++ l ++ " " ++ showLs as
 brief (RDelayNode _ t cs) = "delay " ++ t ++ " " ++ showLs cs
 brief (RForceNode _ v pd) = "force " ++ show v ++ " postDrop=" ++ showLs pd
 

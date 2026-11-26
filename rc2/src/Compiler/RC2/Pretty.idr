@@ -128,6 +128,13 @@ mutual
   prettyExp d (RForce _ lr v postDrop) =
       indent d ++ "force " ++ show lr ++ " " ++ show v
         ++ postDropNote postDrop ++ "\n"
+  prettyExp d (RJoin _ label params scope body) =
+      indent d ++ "join j" ++ show label ++ " " ++ show (map (\(i, r) => "\{show i}:\{prettyRep r}") params) ++ "\n"
+      ++ prettyExp d scope
+      ++ indent d ++ "at j" ++ show label ++ " ->\n"
+      ++ prettyExp (d + 1) body
+  prettyExp d (RJump _ label args) =
+      indent d ++ "jump j" ++ show label ++ " " ++ show args ++ "\n"
 
   ||| A dead field (`deadId`) as `_`.
   showFields : List LocalId -> String

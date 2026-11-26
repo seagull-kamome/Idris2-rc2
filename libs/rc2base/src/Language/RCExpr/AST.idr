@@ -139,6 +139,11 @@ mutual
     RReuseOfferNode : (scrutinee : RCLocal) -> (dupOnShared : List RCLocal) -> (dropOnUnique : List RCLocal) -> (body : RCExp) -> RCExp
     RLoopNode    : (params : List (Int, RRep)) -> (initial : List RCLocal) -> (prologueDrop : List RCLocal) -> (body : RCExp) -> RCExp
     RLoopContinueNode : (args : List RCLocal) -> (postDrop : List RCLocal) -> RCExp
+    ||| `join`: `scope`, whose tails may `jump` to `body` under `label` with
+    ||| `params` bound to the jump's arguments, which it consumes (rc2's
+    ||| `doc/join-points.md`).
+    RJoinNode    : (label : String) -> (params : List (Int, RRep)) -> (scope : RCExp) -> (body : RCExp) -> RCExp
+    RJumpNode    : (label : String) -> (args : List RCLocal) -> RCExp
     RMemoizeNode : (name : String) -> RRep -> (body : RCExp) -> RCExp
     ||| `delay`: a lazy cell over `thunk`'s saturated closure; `captures`
     ||| are consumed (rc2's `doc/lazy-memoization.md`).

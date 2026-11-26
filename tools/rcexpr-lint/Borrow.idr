@@ -241,6 +241,8 @@ indirect acc (RReuseOfferNode _ _ _ body) = indirect acc body
 indirect acc (RLoopNode _ initial _ body) = indirect (localsRefs initial acc) body
 indirect acc (RLoopContinueNode args _) = localsRefs args acc
 indirect acc (RMemoizeNode _ _ body) = indirect acc body
+indirect acc (RJoinNode _ _ s b) = indirect (indirect acc s) b
+indirect acc (RJumpNode _ args) = localsRefs args acc
 
 indirectDef : SortedSet String -> (String, RCDef) -> SortedSet String
 indirectDef acc (_, RCFun _ _ _ body) = indirect acc body
