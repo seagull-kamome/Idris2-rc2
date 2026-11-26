@@ -1,4 +1,4 @@
-# Batched drops
+# Batched drops (and dups)
 
 A run of three or more drops in the generated C becomes calls of three to
 six drops each:
@@ -35,9 +35,19 @@ inline drops. So drops `removeVars`
 writes for separate parts of a node (its `postDrop`, then the operands an
 inlined expression left pending) make one run, and the order is kept.
 
-`idris2rc2_drop3` to `idris2rc2_drop6` (`idris2rc2_memory.c`) are out of
-line, and each is the inline drops of its arguments. Six is what x86-64
-passes in registers. Every variable `removeVars` drops is an
+Dups go the same way: `dupVars`, and `dupVarExtra` for a dup of one, hold
+theirs back too, and a run of three or more becomes `idris2rc2_dup3`..
+`dup6` calls. A held-back run is all drops or all dups, so the order of the
+two never changes.
+
+`idris2rc2_drop3`..`drop6` and `idris2rc2_dup3`..`dup6`
+(`idris2rc2_memory.c`) are out of line. Each reads the process-wide flag of
+`hybrid-refcount.md` once, and when single-threaded makes the plain
+operation of each argument. Six is what x86-64 passes in registers. Under
+clang on x86-64 and AArch64 they are `preserve_most`, so the caller keeps
+its registers across the call, and `zero_call_used_regs("skip")`: a
+hardened toolchain (nix's clang) zeroes the registers a function used when
+it returns, which `preserve_most` would have to save first. Every variable `removeVars` drops is an
 `IDRIS2RC2_Value *` already, as it compiled as the argument of
 `idris2rc2_drop` under `-Werror`.
 
@@ -55,11 +65,26 @@ generating its own C (`--directive nocc`), the mean of two runs:
 | inline drops | 22.76 MB | 104.8 MB | 101 s |
 | `idris2rc2_drop3`..`drop6` | 18.62 MB (−18.2%) | 101.4 MB | 102 s (+1%) |
 
+Later (2026-11-26), on a master whose `.o` text was 17.36 MB and whose
+codegen took 99.5 s (`bench.sh` against that same master's, run the same
+day):
+
+| | `.o` text | codegen time | `bench.sh` |
+|---|---|---|---|
+| drops only, one flag check, `preserve_most` | 17.36 MB | 98.3 s (−0.7%) | within noise |
+| and dups of three or more | 15.44 MB (−11.0%) | 101 s (+1.5%) | within noise |
+
 `bench.sh` stays within noise of the run before (`BenchListFuse` 6.56 s to
 6.51 s, `BenchStringAlloc` 2.37 s to 2.34 s); its programs have few long
 runs of drops.
 
 Tried and dropped:
+
+- Runs of two as well (`idris2rc2_dup2`, `idris2rc2_drop2`): 13.26 MB, but
+  codegen +11% and `BenchIORef` +88%, `preserve_most` or not; pairs sit in
+  hot loops, where a call costs more than it saves.
+- Dups of three or more under the plain C convention: 15.47 MB, codegen
+  +3%.
 
 - One variadic `idris2rc2_dropMany(n, ...)`: 18.60 MB, but 104 s (+3%),
   `va_arg` and the variadic prologue on every call.

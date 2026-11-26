@@ -367,20 +367,39 @@ again:
   }
 }
 
-void idris2rc2_drop3(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b, IDRIS2RC2_Value *c) {
-  idris2rc2_drop(a); idris2rc2_drop(b); idris2rc2_drop(c);
+
+IDRIS2RC2_RC_CC void idris2rc2_drop3(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b, IDRIS2RC2_Value *c) {
+  if (__builtin_expect(!idris2rc2_threaded, 1)) { idris2rc2_dropPlain(a); idris2rc2_dropPlain(b); idris2rc2_dropPlain(c); }
+  else { idris2rc2_drop(a); idris2rc2_drop(b); idris2rc2_drop(c); }
 }
-void idris2rc2_drop4(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b, IDRIS2RC2_Value *c, IDRIS2RC2_Value *d) {
-  idris2rc2_drop(a); idris2rc2_drop(b); idris2rc2_drop(c); idris2rc2_drop(d);
+IDRIS2RC2_RC_CC void idris2rc2_drop4(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b, IDRIS2RC2_Value *c, IDRIS2RC2_Value *d) {
+  if (__builtin_expect(!idris2rc2_threaded, 1)) { idris2rc2_dropPlain(a); idris2rc2_dropPlain(b); idris2rc2_dropPlain(c); idris2rc2_dropPlain(d); }
+  else { idris2rc2_drop(a); idris2rc2_drop(b); idris2rc2_drop(c); idris2rc2_drop(d); }
 }
-void idris2rc2_drop5(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b, IDRIS2RC2_Value *c, IDRIS2RC2_Value *d,
-                     IDRIS2RC2_Value *e) {
-  idris2rc2_drop(a); idris2rc2_drop(b); idris2rc2_drop(c); idris2rc2_drop(d); idris2rc2_drop(e);
+IDRIS2RC2_RC_CC void idris2rc2_drop5(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b, IDRIS2RC2_Value *c, IDRIS2RC2_Value *d, IDRIS2RC2_Value *e) {
+  if (__builtin_expect(!idris2rc2_threaded, 1)) { idris2rc2_dropPlain(a); idris2rc2_dropPlain(b); idris2rc2_dropPlain(c); idris2rc2_dropPlain(d); idris2rc2_dropPlain(e); }
+  else { idris2rc2_drop(a); idris2rc2_drop(b); idris2rc2_drop(c); idris2rc2_drop(d); idris2rc2_drop(e); }
 }
-void idris2rc2_drop6(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b, IDRIS2RC2_Value *c, IDRIS2RC2_Value *d,
-                     IDRIS2RC2_Value *e, IDRIS2RC2_Value *f) {
-  idris2rc2_drop(a); idris2rc2_drop(b); idris2rc2_drop(c); idris2rc2_drop(d); idris2rc2_drop(e);
-  idris2rc2_drop(f);
+IDRIS2RC2_RC_CC void idris2rc2_drop6(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b, IDRIS2RC2_Value *c, IDRIS2RC2_Value *d, IDRIS2RC2_Value *e, IDRIS2RC2_Value *f) {
+  if (__builtin_expect(!idris2rc2_threaded, 1)) { idris2rc2_dropPlain(a); idris2rc2_dropPlain(b); idris2rc2_dropPlain(c); idris2rc2_dropPlain(d); idris2rc2_dropPlain(e); idris2rc2_dropPlain(f); }
+  else { idris2rc2_drop(a); idris2rc2_drop(b); idris2rc2_drop(c); idris2rc2_drop(d); idris2rc2_drop(e); idris2rc2_drop(f); }
+}
+
+IDRIS2RC2_RC_CC void idris2rc2_dup3(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b, IDRIS2RC2_Value *c) {
+  if (__builtin_expect(!idris2rc2_threaded, 1)) { idris2rc2_dupPlain(a); idris2rc2_dupPlain(b); idris2rc2_dupPlain(c); }
+  else { idris2rc2_dup(a); idris2rc2_dup(b); idris2rc2_dup(c); }
+}
+IDRIS2RC2_RC_CC void idris2rc2_dup4(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b, IDRIS2RC2_Value *c, IDRIS2RC2_Value *d) {
+  if (__builtin_expect(!idris2rc2_threaded, 1)) { idris2rc2_dupPlain(a); idris2rc2_dupPlain(b); idris2rc2_dupPlain(c); idris2rc2_dupPlain(d); }
+  else { idris2rc2_dup(a); idris2rc2_dup(b); idris2rc2_dup(c); idris2rc2_dup(d); }
+}
+IDRIS2RC2_RC_CC void idris2rc2_dup5(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b, IDRIS2RC2_Value *c, IDRIS2RC2_Value *d, IDRIS2RC2_Value *e) {
+  if (__builtin_expect(!idris2rc2_threaded, 1)) { idris2rc2_dupPlain(a); idris2rc2_dupPlain(b); idris2rc2_dupPlain(c); idris2rc2_dupPlain(d); idris2rc2_dupPlain(e); }
+  else { idris2rc2_dup(a); idris2rc2_dup(b); idris2rc2_dup(c); idris2rc2_dup(d); idris2rc2_dup(e); }
+}
+IDRIS2RC2_RC_CC void idris2rc2_dup6(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b, IDRIS2RC2_Value *c, IDRIS2RC2_Value *d, IDRIS2RC2_Value *e, IDRIS2RC2_Value *f) {
+  if (__builtin_expect(!idris2rc2_threaded, 1)) { idris2rc2_dupPlain(a); idris2rc2_dupPlain(b); idris2rc2_dupPlain(c); idris2rc2_dupPlain(d); idris2rc2_dupPlain(e); idris2rc2_dupPlain(f); }
+  else { idris2rc2_dup(a); idris2rc2_dup(b); idris2rc2_dup(c); idris2rc2_dup(d); idris2rc2_dup(e); idris2rc2_dup(f); }
 }
 
 void idris2rc2_free(IDRIS2RC2_Value *v) {

@@ -717,37 +717,48 @@ genConstant c cdef = case c of
 export
 data OutfileText : Type where
 
-||| A definition's C lines so far, and the drops `removeVars` holds back so
-||| that a run of them goes out as few calls (rc2/doc/batched-drops.md): their
-||| variables, last first, and their indentation.
+||| A definition's C lines so far, and the drops `removeVars` or the dups
+||| `dupVars` hold back so that a run of them goes out as few calls
+||| (rc2/doc/batched-drops.md): their variables, last first, whether they
+||| are dups, and their indentation.
 export
 record Output where
   constructor MkOutput
   body : DList String
   pendingDrops : List String
+  pendingDups : Bool
   dropIndent : String
 
 export
 emptyOutput : Output
-emptyOutput = MkOutput DList.Nil [] ""
+emptyOutput = MkOutput DList.Nil [] False ""
 
-dropCall : String -> List String -> String
-dropCall ind vs = ind ++ "idris2rc2_drop" ++ show (length vs) ++ "(" ++ concat (intersperse ", " vs) ++ ");"
+batchCall : (fn : String) -> String -> List String -> String
+batchCall fn ind vs = ind ++ fn ++ show (length vs) ++ "(" ++ concat (intersperse ", " vs) ++ ");"
 
--- The held-back drops as lines: `idris2rc2_drop3`..`drop6` calls, seven and
--- eight split so that no call takes fewer than three; one or two inline.
-dropLines : String -> List String -> List String
-dropLines ind (a :: b :: c :: d :: e :: f :: rest@(_ :: _ :: _ :: _)) = dropCall ind [a, b, c, d, e, f] :: dropLines ind rest
-dropLines ind [a, b, c, d, e, f, g] = [dropCall ind [a, b, c, d], dropCall ind [e, f, g]]
-dropLines ind [a, b, c, d, e, f, g, h] = [dropCall ind [a, b, c, d, e], dropCall ind [f, g, h]]
-dropLines ind vs@(_ :: _ :: _ :: _) = [dropCall ind vs]
-dropLines ind vs = map (\v => ind ++ "idris2rc2_drop(" ++ v ++ ");") vs
+-- The held-back run as lines: `fn`3..`fn`6 calls, a run of seven or eight
+-- split so that no call takes fewer than three, one or two inline. Pairs stay
+-- inline: a call for two is slower in a hot loop than it saves
+-- (rc2/doc/batched-drops.md).
+dropLines : (fn : String) -> String -> List String -> List String
+dropLines fn ind (a :: b :: c :: d :: e :: f :: rest@(_ :: _ :: _ :: _)) = batchCall fn ind [a, b, c, d, e, f] :: dropLines fn ind rest
+dropLines fn ind [a, b, c, d, e, f, g] = [batchCall fn ind [a, b, c, d], batchCall fn ind [e, f, g]]
+dropLines fn ind [a, b, c, d, e, f, g, h] = [batchCall fn ind [a, b, c, d, e], batchCall fn ind [f, g, h]]
+dropLines fn ind vs@(_ :: _ :: _ :: _) = [batchCall fn ind vs]
+dropLines fn ind vs = map (\v => ind ++ fn ++ "(" ++ v ++ ");") vs
 
 flushDrops : Output -> Output
 flushDrops o = case o.pendingDrops of
     [] => o
-    ds => { body $= \ls => DList.appendR ls (dropLines o.dropIndent (reverse ds)),
+    ds => { body $= \ls => DList.appendR ls (dropLines (if o.pendingDups then "idris2rc2_dup" else "idris2rc2_drop") o.dropIndent (reverse ds)),
             pendingDrops := [] } o
+
+-- Holds `vs` back as drops (`False`) or dups (`True`) at `indent`, after a
+-- held-back run of the other kind or at another indentation is written.
+holdBack : Bool -> String -> List String -> Output -> Output
+holdBack dups indent vs o =
+    let o' = if indent == o.dropIndent && dups == o.pendingDups then o else flushDrops o
+    in { pendingDrops := reverse vs ++ o'.pendingDrops, pendingDups := dups, dropIndent := indent } o'
 
 ||| Every line of `o`, the held-back drops included.
 export
@@ -817,16 +828,17 @@ removeVars : {auto oft : Ref OutfileText Output}
 removeVars [] = pure ()
 removeVars vs = do
     indent <- indentation
-    update OutfileText $ \o =>
-      let o' = if indent == o.dropIndent then o else flushDrops o
-      in { pendingDrops := reverse vs ++ o'.pendingDrops, dropIndent := indent } o'
+    update OutfileText (holdBack False indent vs)
 
 export
 dupVars : {auto oft : Ref OutfileText Output}
            -> {auto il : Ref IndentLevel Nat}
            -> List String
            -> Core ()
-dupVars = applyFunctionToVars "idris2rc2_dup"
+dupVars [] = pure ()
+dupVars vs = do
+    indent <- indentation
+    update OutfileText (holdBack True indent vs)
 
 ||| Emits a single `idris2rc2_dup(v);` for `extra=0` -- the exact same
 ||| output `dupVars [v]` produces. For `extra > 0` (made by
@@ -838,7 +850,7 @@ export
 dupVarExtra : {auto oft : Ref OutfileText Output}
            -> {auto il : Ref IndentLevel Nat}
            -> String -> Nat -> Core ()
-dupVarExtra v Z     = emit EmptyFC $ "idris2rc2_dup(" ++ v ++ ");"
+dupVarExtra v Z     = dupVars [v]
 dupVarExtra v extra = emit EmptyFC $ "idris2rc2_dup_n(" ++ v ++ ", " ++ show (S extra) ++ ");"
 
 export
