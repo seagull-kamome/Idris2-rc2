@@ -198,6 +198,16 @@ useInfo = go (MkUseInfo empty empty empty)
     go acc (RMemoize _ _ _ b) = go acc b
     go acc _ = acc
 
+||| What an enclosing `case` on a local says about it where this pass is
+||| (rc2/doc/const-caf-fold.md, "Constant-case alts").
+data Matched : Type where
+     ||| It is the constructor of the alt taken, with that alt's fields.
+     IsCon : Name -> Maybe Int -> List LocalId -> Matched
+     ||| It is none of the constructors of the alts a default is past.
+     NotCons : List Name -> Matched
+     ||| It is none of the constants of the alts a default is past.
+     NotConsts : List Constant -> Matched
+
 ||| Everything this pass knows about a definition's locals, keyed by
 ||| `RCLoc`'s own `Int` id -- ids are minted by `RC.idr`'s per-
 ||| `LiftedDef` `NextVar` counter (monotonic, reset per definition), so
@@ -225,14 +235,24 @@ record Env where
   knownPartials : SortedMap LocalId (Name, Nat, List RCLocal)
   bigLits : SortedMap LocalId Constant
   widened : SortedMap LocalId (PrimType, RCLocal)
+  matched : SortedMap LocalId Matched
 
 ||| `knownCons`: whether to fold known constructors at all, which costs
 ||| a `useInfo` walk up front.
 emptyEnv : (knownCons : Bool) -> RCExp -> Env
-emptyEnv knownCons body = MkEnv (if knownCons then Just (useInfo body) else Nothing) empty empty empty empty empty empty
+emptyEnv knownCons body = MkEnv (if knownCons then Just (useInfo body) else Nothing) empty empty empty empty empty empty empty
 
 insertConst : LocalId -> Subset RCLocal IsAnyConstLocal -> Env -> Env
 insertConst i c = { consts $= insert i c }
+
+||| `==` of a local and a constant an enclosing default is past (`Matched`).
+pastCompare : {0 arity : Nat} -> SortedMap LocalId Matched -> PrimFn arity -> Vect arity RCLocal -> Maybe Bool
+pastCompare m (EQ _) [RCLoc i, RCConst c] =
+    case lookup i m of
+         Just (NotConsts cs) => if elem c cs then Just False else Nothing
+         _ => Nothing
+pastCompare m (EQ ty) [RCConst c, RCLoc i] = pastCompare m (EQ ty) [RCLoc i, RCConst c]
+pastCompare _ _ _ = Nothing
 
 ||| Resolve `l` against `env` if it's a variable this pass has already
 ||| folded to a known constant value or an alias of another local --
@@ -614,7 +634,7 @@ foldConst _ env (ROp fc lazy op args postDrop) =
             Just cs => case constFoldOp op cs of
                             Just c  => RPrimVal fc c
                             Nothing => ROp fc lazy op resolvedArgs postDrop
-            Nothing => case selfCompare op resolvedArgs of
+            Nothing => case selfCompare op resolvedArgs <|> pastCompare env.matched op resolvedArgs of
                             Just b => RPrimVal fc (I (if b then 1 else 0))
                             Nothing => ROp fc lazy op resolvedArgs postDrop
 foldConst caf env (RCmpCase fc op args postDrop t f) =
@@ -626,7 +646,7 @@ foldConst caf env (RCmpCase fc op args postDrop t f) =
                             Just (I 1) => t'
                             Just (I 0) => f'
                             _          => RCmpCase fc op resolvedArgs postDrop t' f'
-            Nothing => case selfCompare op.fst resolvedArgs of
+            Nothing => case selfCompare op.fst resolvedArgs <|> pastCompare env.matched op.fst resolvedArgs of
                             Just b => if b then t' else f'
                             Nothing => case cmpWidened env op resolvedArgs of
                                             Just (Decided True)  => t'
@@ -665,9 +685,7 @@ foldConst caf env (RConCase fc sc alts mDef) =
                   Nothing =>
                       maybe (RCrash fc "[rc2] ConstFold: RConCase NULL scrutinee matched no alt and had no default")
                             (foldConst caf env) mDef
-         sc'@(RCLoc i) =>
-             fromMaybe (RConCase fc sc' (map (foldConstAlt caf env) alts) (map (foldConst caf env) mDef))
-                       (foldKnown i)
+         sc'@(RCLoc i) => fromMaybe (byMatched i sc') (foldKnown i)
          _ => RConCase fc sc (map (foldConstAlt caf env) alts) (map (foldConst caf env) mDef)
   where
     foldConstAlt : CafTable -> Env -> RConAlt -> RConAlt
@@ -714,12 +732,67 @@ foldConst caf env (RConCase fc sc alts mDef) =
                     Nothing =>
                         maybe (RCrash fc "[rc2] ConstFold: RConCase known scrutinee matched no alt and had no default")
                               (foldConst caf env) mDef
+
+    altName : RConAlt -> Name
+    altName (MkRConAlt n _ _ _ _) = n
+
+    -- The case on `i`, each alt folded knowing its constructor and the
+    -- default knowing every constructor it is past.
+    -- An alt folded knowing its constructor.
+    foldAltIn : LocalId -> RConAlt -> RConAlt
+    foldAltIn i (MkRConAlt n ci tag args body) =
+        MkRConAlt n ci tag args (foldConst caf ({ matched $= insert i (IsCon n tag args) } env) body)
+
+    keep : LocalId -> RCLocal -> List Name -> List RConAlt -> RCExp
+    keep i sc' past as =
+        RConCase fc sc' (map (foldAltIn i) as)
+                 (map (foldConst caf ({ matched $= insert i (NotCons (past ++ map altName as)) } env)) mDef)
+
+    -- An alt's fields as aliases of the enclosing alt's. Every field has
+    -- its own id before RC (`DeadVars` blanks them much later), so the
+    -- lists only differ in a case of another arity, which a well-typed
+    -- program does not have.
+    aliasFields : List LocalId -> List LocalId -> Env -> Maybe Env
+    aliasFields [] [] e = Just e
+    aliasFields (a :: as) (b :: bs) e = aliasFields as bs ({ aliases $= insert a (resolveLocal e (RCLoc b)) } e)
+    aliasFields _ _ _ = Nothing
+
+    -- A case again on a local an enclosing case matched: the alt of its
+    -- constructor, or without the alts of those its default is past.
+    byMatched : LocalId -> RCLocal -> RCExp
+    byMatched i sc' = case lookup i env.matched of
+        Just (IsCon n tag outer) => case findKnownAlt n tag alts of
+            Just (MkRConAlt _ _ _ inner body) =>
+                maybe (keep i sc' [] alts) (\e => foldConst caf e body) (aliasFields inner outer env)
+            Nothing => maybe (keep i sc' [] alts) (foldConst caf env) mDef
+        Just (NotCons past) => case filter (\a => not (elem (altName a) past)) alts of
+            [] => maybe (keep i sc' past alts) (foldConst caf env) mDef
+            live => keep i sc' past live
+        _ => keep i sc' [] alts
 foldConst caf env (RConstCase fc sc alts mDef) =
-    let alts' = map (foldConstConstAlt caf env) alts
-        mDef' = map (foldConst caf env) mDef
-    in case resolveConst env sc of
-            Just c  => fromMaybe (RConstCase fc sc alts' mDef') (findConstAlt c alts' mDef')
-            Nothing => RConstCase fc (aliasOf sc) alts' mDef'
+    case resolveConst env sc of
+         Just c  => let alts' = map (foldConstConstAlt caf env) alts
+                        mDef' = map (foldConst caf env) mDef
+                    in fromMaybe (RConstCase fc sc alts' mDef') (findConstAlt c alts' mDef')
+         -- Without the alts of the constants an enclosing default is past;
+         -- this default is past these alts' as well.
+         Nothing =>
+             let sc' = aliasOf sc
+                 past : List Constant
+                 past = case sc' of
+                             RCLoc i => case lookup i env.matched of
+                                             Just (NotConsts cs) => cs
+                                             _ => []
+                             _ => []
+                 live : List RConstAlt
+                 live = filter (\(MkRConstAlt c _) => not (elem c past)) alts
+                 envDef : Env
+                 envDef = case sc' of
+                               RCLoc i => { matched $= insert i (NotConsts (past ++ map (\(MkRConstAlt c _) => c) live)) } env
+                               _ => env
+             in case (live, mDef) of
+                     ([], Just d) => foldConst caf envDef d
+                     _ => RConstCase fc sc' (map (foldConstConstAlt caf env) live) (map (foldConst caf envDef) mDef)
   where
     aliasOf : RCLocal -> RCLocal
     aliasOf l = case resolveLocal env l of

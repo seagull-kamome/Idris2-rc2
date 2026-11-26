@@ -67,8 +67,8 @@ record Locals where
 
 -- Where each child of `e` is: in the same region as `e` (its tails are
 -- tails of the region), the first node of a region of its own (a `let`'s
--- value), or neither. A loop's body is in its loop's region: its tails
--- leave the region or continue the loop.
+-- value, a memoized CAF's body), or neither. A loop's body is in its loop's
+-- region: its tails leave the region or continue the loop.
 data Place = Same | Region | Neither
 
 -- One function's body with its repeated tail subtrees made jumps.
@@ -86,6 +86,7 @@ joinIn args body =
     kidPlaces : RCExp -> List Place
     kidPlaces (RLet {}) = [Region, Same]
     kidPlaces (RLoop {}) = [Same]
+    kidPlaces (RMemoize {}) = [Region]
     kidPlaces e = replicate (length (children e)) (if isJust (tailChildren e) then Same else Neither)
 
     size : RCExp -> Nat

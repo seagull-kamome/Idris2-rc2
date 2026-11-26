@@ -7,9 +7,9 @@ name="$2"
 pass() { echo "PASS  $name ($1)"; }
 fail() { echo "FAIL  $name ($1)"; }
 
-# rc2/doc/join-points.md: in `walk` the copies end in `continue loop`, and
-# the join point is inside the loop. `classify`, inlined into `main`, has
-# no loop. Each join point takes at least two jumps.
+# rc2/doc/join-points.md: in `walk`, inlined into `main`'s memoized body,
+# the copies end in `continue loop`, and the join point is inside the loop.
+# `finish` has no loop. Each join point takes at least two jumps.
 dump="$TMP/${name}_rc2.rcexpr"
 counts="$(awk '
     /^def / { name = $2; loop[name] = 0 }

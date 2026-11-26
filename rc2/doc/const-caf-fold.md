@@ -237,6 +237,18 @@ body, and the `bigLits` path folds what reads it.
 A `let` whose value then becomes a constant is one too (the
 `RV (RCConst c)` arm, for any `litRep` constant as for a `Str`).
 
+A `case` on a local says more than its constants. In an alt of a
+constructor `case`, the local is that constructor, with that alt's fields
+(`Matched`'s `IsCon`); in a default it is none of the alts' constructors
+(`NotCons`), and in a constant `case`'s default none of its constants
+(`NotConsts`). A `case` on the local again then takes the alt of its
+constructor, its fields aliases of the enclosing alt's, or loses the alts
+it cannot reach, and a `==` against one of those constants is false. The
+case trees repeat such a `case` where they destructure a record again (an
+interface dictionary, `MkApplicative`) and in the clauses copied into a
+default: in `rc2-norepl` 1,269 of them were in an alt of a `case` on the
+same local and 1,862 in its default, with 577 alts that could not run.
+
 The same pass folds a comparison of a local with itself: `<` and `>`
 are false, `==`, `<=` and `>=` true, but for a `Double` (NaN). Left to
 C, clang's `-Wtautological-compare` rejects `x == x` under `-Werror`

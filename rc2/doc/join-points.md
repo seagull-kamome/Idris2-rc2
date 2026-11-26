@@ -64,8 +64,8 @@ rewrites a body sees the nodes: only `Emit` and the generic walkers in
 1. Every subtree of at least `minJoinNodes` (8) nodes in a tail of its
    region is a candidate, of at least `minJoinNodesInLoop` (24) inside a
    loop: there each jump moves its arguments on every iteration (see
-   "Measured"). A region is the body or a `let`'s value, and
-   the path from it goes only through a `let`'s body, an ownership
+   "Measured"). A region is the body, a `let`'s value or a memoized CAF's
+   body, and the path from it goes only through a `let`'s body, an ownership
    wrapper, an arm of a branch, or a loop's body. A `let`'s value counts
    because `LateInline` splices loops there: `mkRHSargs`' loop is in a
    `let`'s value of `mkSpecDef`'s twelfth lambda. Its free
