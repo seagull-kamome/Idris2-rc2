@@ -15,7 +15,7 @@ rc2は、上流のIdris 2本体を変更せずに開発されています。手�
 - [主な特徴とハイライト](#主な特徴とハイライト)
 - [クイックスタート](#クイックスタート)（[環境準備](#1-環境変数の準備) / [ビルド](#2-rc2本体のビルドとインストール) / [ライブラリ導入](#3-サポートライブラリrc2baseのインストール) / [コンパイル実行](#4-プログラムのコンパイルと実行) / [セルフホスティング](#5-rc2-自身でコンパイラをビルドするセルフホスティングchez-scheme-なし) / [性能計測](#ビルド時の性能計測--timing)）
 - [付属エコシステムと開発ツール](#付属エコシステムと開発ツール)（[rc2base](#libsrc2baseネイティブc-abiツールキット) / [control-async](#libscontrol-asyncタスクとノンブロッキングソケット) / [web](#libswebhttpクライアントとサーバ) / [text-re2](#libstext-re2google-re2正規表現バインディング) / [notcurses・termui](#その他のバインディングnotcurses-termui) / [rcexpr-lint](#toolsrcexpr-lintir静的解析バグ検出ツール) / [rcexpr-diff](#toolsrcexpr-diffir差分比較ツール) / [c-split](#toolsc-splitcファイル分割ツール) / [idris2-browser](#toolsidris2-browserパッケージブラウザ)）
-- [アーキテクチャと最適化パイプライン](#アーキテクチャと最適化パイプライン)（[リポジトリ構成](#リポジトリ全体の構成) / [コンパイラ内部構成](#コンパイラ本体rc2の内部構成) / [最適化パス](#主要な最適化パス10の技術的柱)）
+- [アーキテクチャと最適化パイプライン](#アーキテクチャと最適化パイプライン)（[リポジトリ構成](#リポジトリ全体の構成) / [コンパイラ内部構成](#コンパイラ本体rc2の内部構成) / [パイプラインの順序](#パイプラインの順序) / [最適化パス](#主要な最適化パス10の技術的柱)）
 - [上流RefCとの意図的な違い・改善点](#上流refcとの意図的な違い改善点)（[Char](#1-完全なunicodeスカラー値に対応したchar) / [String](#2-コードポイント準拠とnul終端安全なstring) / [pthread](#3-本物のマルチスレッド並行処理pthread) / [%export](#4-ネイティブc-abiとの直接連携export) / [ライフサイクル](#5-プロセスのライフサイクルとロケール非依存な数値書式化) / [CAF・Lazyメモ化](#6-正しい意味論を保証するcafとlazy--infのメモ化)）
 - [%cg rc2ディレクティブによるチューニング](#cg-rc2ディレクティブによるチューニング)
 - [インクリメンタルコンパイル（--inc rc2）](#インクリメンタルコンパイル--inc-rc2)
@@ -255,44 +255,82 @@ rc2は上流の構文木（case tree）を受け取り、独自のANF中間表�
 ```
 rc2/
 ├── rc2.ipkg           Idris2パッケージ設定。実行ファイル idris2-rc2 をビルド
-├── src/Compiler/RC2/
+├── src/Compiler/RC2/  最適化パスは下の「パイプラインの順序」に順番どおり並べる。それ以外は次のとおり:
 │   ├── RCExp.idr        IR定義。ANF正規化され所有権注釈を持つ式構造
 │   ├── Util.idr         依存の少ない共通ユーティリティ（import循環を防ぐ末端設計）
-│   ├── RC.idr           case tree -> RCExp。Phase 1（正規化）、Phase 2（dup/drop/free挿入）
+│   ├── Rewrite.idr      複数のパスが共有する木全体の書き換え
 │   ├── Types.idr        native / boxed 表現の推論（Rep）
-│   ├── InlineCExp.idr   リフティング前のプログラム全体インライン化
-│   ├── LateInline.idr   ループ変換後のプログラム全体インライン化
-│   ├── ArityRaiseCExp.idr, ArityRaise.idr
-│   │                    world 引数の arity raising
-│   ├── DeadArgs.idr     where 関数の未使用引数を削除
-│   ├── LazyCaf.idr      トップレベル Delay をメモ化 CAF に変換
-│   ├── LazyFold.idr     1回だけ force される遅延値を直接呼び出しに展開
-│   ├── ConstFold.idr    ExtPrim、算術、比較、case、クロージャの定数畳み込み
-│   ├── PushCon.idr      case 式をコンストラクタの末尾へ押し込み、畳み込みの機会を作る
-│   ├── SpecClosure.idr  定数クロージャ・インターフェース辞書ごとの呼び出し先の特殊化
-│   ├── Reuse.idr        コンストラクタセルのその場再利用
-│   ├── ConAltNative.idr 分解フィールドのうち native として反復読取されるものをキャッシュ
-│   ├── DeadVars.idr     参照されない分解済みフィールドを空化
-│   ├── MutualLoop.idr   相互末尾再帰の関数を1つのループに統合
-│   ├── Trmc.idr         Tail Recursion Modulo Constructor（TRMC）最適化
-│   ├── ClosureCtx.idr   差分リストのパラメータをセルの連鎖として保持
-│   ├── Loop.idr         自己末尾呼び出し -> goto 変換、ループ不変式の巻き上げ
-│   ├── Sink.idr         分岐局所への let 沈め込み
-│   ├── DualABI.idr      関数境界を跨ぐ二重呼び出し規約、構造体値返し
-│   ├── DeadCode.idr     プログラム全体の mark-and-sweep デッドコード除去
-│   ├── DupMerge.idr     同一変数に対する連続した RDup を一括化
+│   ├── NativeUse.idr    式がどの局所変数を native として読むか
+│   ├── CalleeTable.idr  呼び出し先が引数ごとに native で読むかの表（呼び出し側が使う）
+│   ├── Pending.idr      未完了のクロージャを返しうる関数の判定（トランポリン省略用）
+│   ├── WorkerName.idr   rc2 が合成する関数の名前
+│   ├── Stage.idr        `--directive no<stage>` で止められるステージの一覧
+│   ├── ForeignSpec.idr  %foreign 規約文字列（C:/RefC:/RC2:/CExpr:/C__collect_safe:）のパーサ
 │   ├── Emit.idr         RCExp -> C コードの機械的変換
 │   ├── Emit/Util.idr        名前マングリング、リテラル・値出力、クロージャ、FFI 型変換
 │   ├── Emit/Foreign.idr     %foreign / %export ラッパー生成と FFI マーシャリング
-│   ├── ForeignSpec.idr      %foreign 規約文字列（C:/RefC:/RC2:/CExpr:/C__collect_safe:）のパーサ
 │   ├── Emit/ExternRefs.idr  インクリメンタルコンパイル用の前方宣言ウォーカー
 │   ├── Pretty.idr       RCExp ダンプ出力（--directive dumprcexpr）
 │   ├── CC.idr           C コンパイラ起動とリンク処理
+│   ├── LibraryFiles.idr 静的・共有ライブラリと一緒に書き出すファイル
 │   └── RC2.idr          バックエンドエントリポイントとパイプライン登録
 ├── support/rc2/       ランタイムライブラリ（libidris2rc2.a）
 ├── doc/               各最適化パスの詳細な設計ノート（索引は AGENT.md 参照）
 └── tests/             回帰テスト・ベンチマークスイート
 ```
+
+### パイプラインの順序
+
+プログラム全体をコンパイルするとき、`Compiler.RC2.RC2` が各ステージを走らせる順番です。ステージ名から設計ドキュメント（英語版）へ飛べます。多くのステージは、最後の列のディレクティブで止められます（[`rc2/doc/directives.md`](rc2/doc/directives.md)）。「opt-in」と書いたステージは、そのディレクティブを指定したときだけ走ります。インクリメンタルモードでは、最初に上流の CSE（`IncCse`）が走ります。また、プログラム全体を見るステージ（部分木の共通化、読まれない定数フィールドの除去、関数の重複除去）は走りません。
+
+| # | ステージ | モジュール | 内容 | ディレクティブ |
+|---|---|---|---|---|
+| | **名前付き case tree の上で** | | | |
+| 1 | [Nat magic](rc2/doc/nat-magic.md) | `NatMagic` | `Data.Nat.isLTE` / `lte` を定数時間にする | `nonatmagic` |
+| 2 | [Delay CAF](rc2/doc/lazy-memoization.md) | `LazyCaf` | トップレベルの `Delay` をメモ化 CAF にする | |
+| 3 | [List divert](rc2/doc/list-divert.md) | `ListDivert` | 上流の 2 パスの末尾再帰リスト関数を、TRMC が 1 つのループにできる素朴な形に置き換える | opt-in `listdivert` / `listfuse` |
+| 4 | [インライン化](rc2/doc/inlining.md) | `InlineCExp` | lambda lifting 前のプログラム全体インライン化 | `noinline` |
+| 5 | [読まれないフィールド](rc2/doc/dead-fields.md) | `DeadFields` | 呼び出し側が読まない結果のフィールドを作らない関数の複製 | opt-in `deadfields` |
+| 6 | [未使用引数](rc2/doc/dead-args.md) | `DeadArgs` | `where` 関数の使われない引数を除く | `nodeadargs` |
+| 7 | [arity raising](rc2/doc/world-arity-raising.md) | `ArityRaiseCExp` | world を待つクロージャを返す関数が、world を直接受け取るようにする | `noarityraise` |
+| 8 | [宣言された型](rc2/doc/native-type-inference.md) | `StrictNative` | 各関数の引数と結果を、どの native 型で持てるか | `loosenative`、opt-in `strictnative` |
+| | **`RCExp` へ** | | | |
+| 9 | [lambda lifting と正規化](rc2/doc/lambda-lifting.md) | `RC`（Phase 1）、[`ForeignDivert`](rc2/doc/fastpack-fix.md) | lambda lifting と ANF 化。一部の `%foreign` 宣言を rc2 独自のものに差し替える | |
+| | **RC 注釈の前**（`toRCDefs`） | | | |
+| 10 | ターゲット OS | `TargetOs` | `prim__os` を定数に畳む | `target-os=<name>` |
+| 11 | [定数畳み込み](rc2/doc/const-con-fold.md) | `ConstFold`（[クロージャ](rc2/doc/const-closure-fold.md)、[CAF](rc2/doc/const-caf-fold.md)） | プログラム全体で不動点まで定数を畳む | `noconstfold`、`noknowncon` |
+| 12 | [case を末尾へ](rc2/doc/constructor-escape-analysis.md) | `PushCon` | `case` を、それが調べる値の末尾へ移す | `nopushcon` |
+| 13 | [特殊化](rc2/doc/speculative-closure-specialization.md) | `SpecClosure`（[辞書](rc2/doc/constant-constructor-specialization.md)） | 定数クロージャ・定数辞書の引数ごとに呼び出し先を複製する | `nospecclosure`、`nospecconstcon` |
+| 14 | [早期インライン化](rc2/doc/inlining.md) | `LateInline`、`PushApply`、`KnownPartial` | 呼び出し元が 1 つの関数と小さな関数を展開し、畳み直す | `noearlyinline`、`notinyinline`、`nopushapply` |
+| 15 | [比較の統合](rc2/doc/native-type-inference.md) | `CmpMerge` | 同じ値どうしの入れ子の比較を 1 つにする | `nocmpmerge` |
+| 16 | [遅延値の畳み込み](rc2/doc/lazy-memoization.md) | `LazyFold` | 1 回だけ force される遅延値を呼び出しにする | |
+| 17 | [再度の arity raising](rc2/doc/world-arity-raising.md) | `ArityRaise` | インライン化で見えるようになった箇所に 7 をもう一度 | `noarityraise` |
+| 18 | [TRMC](rc2/doc/trmc.md) | `Trmc` | `x :: f xs` 型の再帰を、セルの穴を埋めるループにする | `notrmc` |
+| 19 | [差分リスト](rc2/doc/closure-accumulator.md) | `ClosureCtx` | `c . (y ::)` の差分リストをセルの連鎖として持つ | `noctx` |
+| 20 | [CAF のメモ化](rc2/doc/caf-memoization.md) | `RC`（`insertMemoize`） | トップレベルの `unsafePerformIO` CAF を `RMemoize` で包む | |
+| 21 | [部分木の共通化](rc2/doc/shared-subtrees.md) | `FunDedup`、`ShareSubtrees` | 関数の中で繰り返される部分木を 1 つの新しい関数にする | `nosharesubtrees` |
+| | **RC 注釈とその後** | | | |
+| 22 | [RC 注釈](rc2/doc/reuse-analysis.md) | `RC`（Phase 2）、`Reuse`、[`ConAltNative`](rc2/doc/con-alt-native.md) | dup/drop/free の挿入、コンストラクタの再利用、フィールドの native 影変数 | `noconaltnative`、`noreusenested` |
+| 23 | [相互ループ](rc2/doc/loop-conversion.md) | `MutualLoop` | 相互末尾再帰の関数を 1 つのループにまとめる | `nomutualloop` |
+| 24 | [ループ](rc2/doc/loop-conversion.md) | `Loop` | 自己末尾呼び出しを `goto` にし、ループ不変の引数を除く | `noloop` |
+| 25 | [Late inline](rc2/doc/inlining.md) | `LateInline` | 呼び出し元が 1 つの関数を、ループも含めて展開する | `nolateinline` |
+| 26 | [適用されたクロージャの畳み込み](rc2/doc/world-arity-raising.md) | `ArityRaise` | 作ってすぐ適用するクロージャを呼び出しにする | `noapplyfold` |
+| 27 | [case を末尾へ（RC 後）](rc2/doc/constructor-escape-analysis.md) | `PushCon` | Late inline が作った形に 12 をもう一度 | opt-in `latepushcon` |
+| 28 | [Sink](rc2/doc/branch-sinking.md) | `Sink` | `let` を、それを読む唯一の分岐へ移す（そのあと 26 をもう一度） | `nosink` |
+| 29 | [二重 ABI](rc2/doc/dual-abi.md) | `DualABI`（[構造体での返却](rc2/doc/struct-return.md)）、[`NullParams`](rc2/doc/null-params.md) | native のワーカー、構造体での返却、world・消去済み引数の NULL 型化 | `nodualabi`、`nostructreturn`、`noboolret`、`nonullparams` など |
+| 30 | [再利用の再確認](rc2/doc/reuse-analysis.md) | `Reuse` | DualABI のあとで使われなくなった再利用の申し出を除く | `noreuserecheck` |
+| 31 | [転送関数の別名](rc2/doc/fwd-alias.md) | `FwdAlias` | 引数を転送するだけの関数への参照を、転送先に向ける | `nofwdalias` |
+| 32 | [デッドコード除去](rc2/doc/dead-code-elim.md) | `DeadCode` | プログラム全体の mark-and-sweep | `nodeadcode` |
+| 33 | [押し下げ](rc2/doc/pushdown.md) | `PushDown` | `case` の直前の dup/drop を各分岐へ移して打ち消す | `nopushdown` |
+| 34 | dup の統合 | `DupMerge` | 同じ局所変数の複数の `dup` を 1 つにする | `nodupmerge` |
+| 35 | [末端の末尾呼び出し](rc2/doc/leaf-tail-calls.md) | `LeafTail` | 末尾呼び出しの循環に入らない末尾呼び出しを、C の直接呼び出しにする | `noleaftail` |
+| 36 | [未使用変数](rc2/doc/dead-vars.md) | `DeadVars` | 使われない束縛変数を消す（そのあと 34 の打ち消しをもう一度） | `nodeadvars` |
+| 37 | [読まれない定数フィールド](rc2/doc/dead-fields.md) | `ConstFields` | どの alt も読まない定数コンストラクタのフィールドを除く | `noconstfields` |
+| 38 | [関数の重複除去](rc2/doc/fun-dedup.md) | `FunDedup` | 局所変数の番号を除いて同じ関数を 1 つにする | `nofundedup` |
+| 39 | [スタック上のコンストラクタ](rc2/doc/stack-con.md) | `StackCon` | 関数の外へ出ないコンストラクタを C のフレームに作る | `nostackcon` |
+| | **出力** | | | |
+| 40 | C の生成 | `Emit` | `RCExp` から C へ | |
+| 41 | C のコンパイルとリンク | `CC` | C コンパイラを走らせる | `nocc` |
 
 ### 主要な最適化パス（10の技術的柱）
 

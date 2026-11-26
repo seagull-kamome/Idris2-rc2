@@ -15,7 +15,7 @@ rc2 is developed without modifying the upstream Idris 2 codebase. It lives in it
 - [Key Highlights](#key-highlights)
 - [Quick Start](#quick-start) ([Environment](#1-environment-setup) / [Build & Install](#2-building-and-installing-rc2) / [Companion Library](#3-installing-the-support-library-rc2base) / [Compiling Programs](#4-compiling-and-running-programs) / [Self-Hosting](#5-building-the-compiler-with-rc2-itself-self-hosting-no-chez-scheme) / [Profiling](#profiling-build-performance---timing))
 - [Ecosystem and Developer Tools](#ecosystem-and-developer-tools) ([rc2base](#libsrc2base-native-c-abi-toolkit) / [control-async](#libscontrol-async-tasks-and-non-blocking-sockets) / [web](#libsweb-http-client-and-servers) / [text-re2](#libstext-re2-google-re2-regex-bindings) / [notcurses & termui](#other-bindings-notcurses-termui) / [rcexpr-lint](#toolsrcexpr-lint-ir-static-checker) / [rcexpr-diff](#toolsrcexpr-diff-ir-diff-tool) / [c-split](#toolsc-split-c-file-splitter) / [idris2-browser](#toolsidris2-browser-package-browser))
-- [Architecture and Optimization Pipeline](#architecture-and-optimization-pipeline) ([Repository Layout](#repository-layout) / [Compiler Structure](#compiler-structure-rc2) / [Optimization Passes](#ten-key-optimizations))
+- [Architecture and Optimization Pipeline](#architecture-and-optimization-pipeline) ([Repository Layout](#repository-layout) / [Compiler Structure](#compiler-structure-rc2) / [Pipeline Order](#pipeline-order) / [Optimization Passes](#ten-key-optimizations))
 - [Deliberate Differences from Upstream RefC](#deliberate-differences-from-upstream-refc) ([Char](#1-full-unicode-scalar-values-for-char) / [String](#2-codepoint-semantics-and-nul-safe-string) / [pthread](#3-real-multithreaded-concurrency-pthread) / [%export](#4-native-c-abi-export-export) / [Lifecycle](#5-process-lifecycle-and-locale-independent-formatting) / [CAF & Lazy Memoization](#6-caf-and-lazy--inf-memoization))
 - [%cg rc2 Directives](#cg-rc2-directives)
 - [Incremental Compilation (--inc rc2)](#incremental-compilation---inc-rc2)
@@ -255,44 +255,82 @@ rc2 consumes upstream case trees, transforms them through its proprietary ANF in
 ```
 rc2/
 ├── rc2.ipkg           Idris2 package configuration; builds idris2-rc2 executable
-├── src/Compiler/RC2/
+├── src/Compiler/RC2/  The passes are listed in pipeline order below; besides them:
 │   ├── RCExp.idr        IR definition: ANF-normalized expressions with ownership annotations
 │   ├── Util.idr         Shared leaf-level helpers (designed to avoid import cycles)
-│   ├── RC.idr           case tree -> RCExp: Phase 1 (normalization), Phase 2 (dup/drop/free insertion)
+│   ├── Rewrite.idr      Whole-tree rewrites several passes share
 │   ├── Types.idr        native / boxed representation inference (Rep)
-│   ├── InlineCExp.idr   Whole-program inlining before lambda lifting
-│   ├── LateInline.idr   Whole-program inlining after loop conversion
-│   ├── ArityRaiseCExp.idr, ArityRaise.idr
-│   │                    World argument arity raising
-│   ├── DeadArgs.idr     Removes unused arguments in where functions
-│   ├── LazyCaf.idr      Transforms top-level Delay into memoized CAFs
-│   ├── LazyFold.idr     Unfolds singly forced lazy values into direct calls
-│   ├── ConstFold.idr    Constant folding for ExtPrim, arithmetic, comparisons, cases, and closures
-│   ├── PushCon.idr      Pushes case expressions into constructor tails to expose fold opportunities
-│   ├── SpecClosure.idr  Callee specialization for constant closures and interface dictionaries
-│   ├── Reuse.idr        In-place constructor cell reuse
-│   ├── ConAltNative.idr Caches destructured fields repeatedly accessed as native values
-│   ├── DeadVars.idr     Clears destructured fields that are never referenced
-│   ├── MutualLoop.idr   Merges mutually tail-recursive functions into unified loops
-│   ├── Trmc.idr         Tail Recursion Modulo Constructor (TRMC) optimization
-│   ├── ClosureCtx.idr   Maintains difference-list parameters as cell chains
-│   ├── Loop.idr         Self-tail-call -> goto conversion and loop-invariant hoisting
-│   ├── Sink.idr         Branch-local let sinking
-│   ├── DualABI.idr      Dual calling convention across function boundaries and struct return
-│   ├── DeadCode.idr     Whole-program mark-and-sweep dead-code elimination
-│   ├── DupMerge.idr     Batches consecutive RDup nodes on the same variable
+│   ├── NativeUse.idr    Which locals an expression reads natively
+│   ├── CalleeTable.idr  What each callee reads natively per argument, for its callers
+│   ├── Pending.idr      Which functions can return a pending closure (trampoline elision)
+│   ├── WorkerName.idr   Names of the functions rc2 synthesises
+│   ├── Stage.idr        The stages `--directive no<stage>` turns off
+│   ├── ForeignSpec.idr  %foreign convention strings (C:/RefC:/RC2:/CExpr:/C__collect_safe:) parser
 │   ├── Emit.idr         Mechanical translation from RCExp to C
 │   ├── Emit/Util.idr        Name mangling, literal/value emission, closures, FFI type mapping
 │   ├── Emit/Foreign.idr     %foreign / %export C wrapper generation and FFI marshalling
-│   ├── ForeignSpec.idr      %foreign convention strings (C:/RefC:/RC2:/CExpr:/C__collect_safe:) parser
 │   ├── Emit/ExternRefs.idr  Forward declaration walkers for incremental compilation
 │   ├── Pretty.idr       Human-readable RCExp dumper (--directive dumprcexpr)
 │   ├── CC.idr           C compiler driver and linker orchestration
+│   ├── LibraryFiles.idr The files written next to a static or shared library
 │   └── RC2.idr          Backend entry point and codegen pipeline registration
 ├── support/rc2/       Runtime library (libidris2rc2.a)
 ├── doc/               Detailed per-pass design notes (see index in AGENT.md)
 └── tests/             Regression and benchmark suites
 ```
+
+### Pipeline Order
+
+The stages in the order `Compiler.RC2.RC2` runs them on a whole program, each linked to its design notes. Most can be turned off with the directive in the last column ([`rc2/doc/directives.md`](rc2/doc/directives.md)); an *opt-in* stage runs only when that directive is given. In incremental mode upstream's CSE (`IncCse`) runs first, and the whole-program stages (shared subtrees, unread constant fields, function dedup) do not run.
+
+| # | Stage | Module | What it does | Directive |
+|---|---|---|---|---|
+| | **On the named case trees** | | | |
+| 1 | [Nat magic](rc2/doc/nat-magic.md) | `NatMagic` | `Data.Nat.isLTE` / `lte` in constant time | `nonatmagic` |
+| 2 | [Delay CAFs](rc2/doc/lazy-memoization.md) | `LazyCaf` | A top-level `Delay` becomes a memoized CAF | |
+| 3 | [List divert](rc2/doc/list-divert.md) | `ListDivert` | Upstream's two-pass tail-recursive list functions become naive ones TRMC makes one loop | opt-in `listdivert` / `listfuse` |
+| 4 | [Inline](rc2/doc/inlining.md) | `InlineCExp` | Whole-program inlining before lambda lifting | `noinline` |
+| 5 | [Dead fields](rc2/doc/dead-fields.md) | `DeadFields` | A copy of a function that does not build the result fields its caller does not read | opt-in `deadfields` |
+| 6 | [Dead arguments](rc2/doc/dead-args.md) | `DeadArgs` | Unused arguments of `where` functions go | `nodeadargs` |
+| 7 | [Arity raise](rc2/doc/world-arity-raising.md) | `ArityRaiseCExp` | A function returning a closure waiting for the world takes the world itself | `noarityraise` |
+| 8 | [Declared types](rc2/doc/native-type-inference.md) | `StrictNative` | The native types each function's arguments and result may be held as | `loosenative`; opt-in `strictnative` |
+| | **Into `RCExp`** | | | |
+| 9 | [Lambda lift + normalize](rc2/doc/lambda-lifting.md) | `RC` (Phase 1), [`ForeignDivert`](rc2/doc/fastpack-fix.md) | Lambda lifting and ANF; a few `%foreign` declarations go to rc2's own | |
+| | **Before RC annotation** (`toRCDefs`) | | | |
+| 10 | Target OS | `TargetOs` | `prim__os` folds to a constant | `target-os=<name>` |
+| 11 | [ConstFold](rc2/doc/const-con-fold.md) | `ConstFold` ([closures](rc2/doc/const-closure-fold.md), [CAFs](rc2/doc/const-caf-fold.md)) | Constant folding to a whole-program fixpoint | `noconstfold`, `noknowncon` |
+| 12 | [Push case into tails](rc2/doc/constructor-escape-analysis.md) | `PushCon` | A `case` moves into the tails of the value it scrutinises | `nopushcon` |
+| 13 | [Specialization](rc2/doc/speculative-closure-specialization.md) | `SpecClosure` ([dictionaries](rc2/doc/constant-constructor-specialization.md)) | A callee cloned per constant closure or constant dictionary argument | `nospecclosure`, `nospecconstcon` |
+| 14 | [Early inline](rc2/doc/inlining.md) | `LateInline`, `PushApply`, `KnownPartial` | Single-caller and tiny callees spliced, then refolded | `noearlyinline`, `notinyinline`, `nopushapply` |
+| 15 | [Comparison merge](rc2/doc/native-type-inference.md) | `CmpMerge` | Two nested comparisons of the same operands become one | `nocmpmerge` |
+| 16 | [Lazy fold](rc2/doc/lazy-memoization.md) | `LazyFold` | A lazy value forced once becomes a call | |
+| 17 | [Arity raise again](rc2/doc/world-arity-raising.md) | `ArityRaise` | Step 7 on what inlining exposed | `noarityraise` |
+| 18 | [TRMC](rc2/doc/trmc.md) | `Trmc` | `x :: f xs` recursion becomes a loop filling each cell's hole | `notrmc` |
+| 19 | [Closure contexts](rc2/doc/closure-accumulator.md) | `ClosureCtx` | A `c . (y ::)` difference list kept as a chain of cells | `noctx` |
+| 20 | [CAF memoization](rc2/doc/caf-memoization.md) | `RC` (`insertMemoize`) | `RMemoize` around a top-level `unsafePerformIO` CAF | |
+| 21 | [Shared subtrees](rc2/doc/shared-subtrees.md) | `FunDedup`, `ShareSubtrees` | Repeated subtrees of a function become one new function | `nosharesubtrees` |
+| | **RC annotation and after** | | | |
+| 22 | [RC annotate](rc2/doc/reuse-analysis.md) | `RC` (Phase 2), `Reuse`, [`ConAltNative`](rc2/doc/con-alt-native.md) | dup/drop/free insertion, constructor reuse, native shadows of fields | `noconaltnative`, `noreusenested` |
+| 23 | [Mutual loop](rc2/doc/loop-conversion.md) | `MutualLoop` | Mutually tail-recursive functions merged into one loop | `nomutualloop` |
+| 24 | [Loop](rc2/doc/loop-conversion.md) | `Loop` | Self tail calls become `goto`, with loop-invariant parameters pruned | `noloop` |
+| 25 | [Late inline](rc2/doc/inlining.md) | `LateInline` | Single-caller callees spliced, loops included | `nolateinline` |
+| 26 | [Fold applied closures](rc2/doc/world-arity-raising.md) | `ArityRaise` | A closure built and applied at once becomes a call | `noapplyfold` |
+| 27 | [Push case into tails (post-RC)](rc2/doc/constructor-escape-analysis.md) | `PushCon` | Step 12 on what Late inline creates | opt-in `latepushcon` |
+| 28 | [Sink](rc2/doc/branch-sinking.md) | `Sink` | A `let` moves into the one branch that reads it (then step 26 again) | `nosink` |
+| 29 | [Dual ABI](rc2/doc/dual-abi.md) | `DualABI` ([struct return](rc2/doc/struct-return.md)), [`NullParams`](rc2/doc/null-params.md) | Native workers, struct return, NULL-typed world/erased parameters | `nodualabi`, `nostructreturn`, `noboolret`, `nonullparams`, ... |
+| 30 | [Reuse re-check](rc2/doc/reuse-analysis.md) | `Reuse` | Reuse offers DualABI left dead are dropped | `noreuserecheck` |
+| 31 | [Forwarder aliases](rc2/doc/fwd-alias.md) | `FwdAlias` | A reference to a function that only forwards goes to its target | `nofwdalias` |
+| 32 | [Dead code](rc2/doc/dead-code-elim.md) | `DeadCode` | Whole-program mark-and-sweep | `nodeadcode` |
+| 33 | [Push-down](rc2/doc/pushdown.md) | `PushDown` | The dup/drop run before a `case` moves into its branches and cancels | `nopushdown` |
+| 34 | Dup merge | `DupMerge` | Several `dup`s of one local become one | `nodupmerge` |
+| 35 | [Leaf tail calls](rc2/doc/leaf-tail-calls.md) | `LeafTail` | A tail call outside any tail-call cycle becomes a direct C call | `noleaftail` |
+| 36 | [Dead variables](rc2/doc/dead-vars.md) | `DeadVars` | Unused bound locals erased (then step 34's cancellation again) | `nodeadvars` |
+| 37 | [Unread constant fields](rc2/doc/dead-fields.md) | `ConstFields` | Fields of constant constructors no alt reads go | `noconstfields` |
+| 38 | [Function dedup](rc2/doc/fun-dedup.md) | `FunDedup` | Functions equal up to local numbering become one | `nofundedup` |
+| 39 | [Stack constructors](rc2/doc/stack-con.md) | `StackCon` | A constructor that never leaves its function is built in the C frame | `nostackcon` |
+| | **Output** | | | |
+| 40 | C generation | `Emit` | `RCExp` to C | |
+| 41 | C compile and link | `CC` | Runs the C compiler | `nocc` |
 
 ### Ten Key Optimizations
 
