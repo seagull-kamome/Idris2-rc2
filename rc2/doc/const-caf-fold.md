@@ -248,6 +248,11 @@ case trees repeat such a `case` where they destructure a record again (an
 interface dictionary, `MkApplicative`) and in the clauses copied into a
 default: in `rc2-norepl` 1,269 of them were in an alt of a `case` on the
 same local and 1,862 in its default, with 577 alts that could not run.
+A constant `case` that loses every alt this way and has no default (one in
+`Libraries.Text.Parser.Core`'s `map`, in `rc2-norepl`) becomes an
+`RCrash` ("no alt of this case can be reached"): left as a `case` of no
+alt, `Emit` wrote nothing for it, and the function it ended had no
+`return` (`rc2-norepl`'s C did not compile, under `-Werror=return-type`).
 
 The same pass folds a comparison of a local with itself: `<` and `>`
 are false, `==`, `<=` and `>=` true, but for a `Double` (NaN). Left to
