@@ -490,13 +490,16 @@ alwaysUnboxedBoxedLocalsR e = union (producers e) (onEveryPath operands e)
     immProducer RBoxed (RLet _ _ _ _ body) = immProducer RBoxed body
     immProducer _ _ = False
 
-    ||| A `let` bound directly to an erased value or the world token: C
-    ||| `NULL`, which `idris2rc2_dup`/`drop` skip anyway.
+    ||| A `let` bound directly to an erased value, the world token, or the
+    ||| unit that a store into a hole or a C struct field returns: C `NULL`,
+    ||| which `idris2rc2_dup`/`drop` skip anyway.
     nullProducer : RCExp -> Bool
     nullProducer (RErased _) = True
     nullProducer (RV _ RCErased) = True
     nullProducer (RV _ RCWorld) = True
     nullProducer (RPrimVal _ WorldVal) = True
+    nullProducer (RFill {}) = True
+    nullProducer (RStructSet {}) = True
     nullProducer _ = False
 
     ||| A Boxed `let` bound directly to a comparison primitive: its value is

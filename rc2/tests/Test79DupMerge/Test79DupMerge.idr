@@ -328,6 +328,45 @@ letPushDown = do
   printLn (largest (the Int 0) [3, cast k + 4, 5])
   putStrLn (largest "" (map show [cast {to = Int} k + 4, 2]))
 
+-- ============================================================
+-- Section 9: a dup that leads every arm moves in front of the case
+-- ============================================================
+-- `around` appends `s` in both arms of the `if` and again after it, so
+-- each arm opens with a `dup` of `s`. One `dup` in front of the `case`
+-- does the same on every path (doc/pushdown.md, "Common dups");
+-- check.sh asserts no `case` is left whose arms all open with a `dup` of
+-- the same local. Prints "ab<ab>ab<ab".
+
+around : Nat -> Bool -> String -> String
+around Z _ s = s
+around (S k) b s = (if b then s ++ "<" else s ++ ">") ++ around k (not b) s
+
+commonDups : IO ()
+commonDups = do
+  args <- getArgs
+  let s = if length args > 100 then "" else "ab"
+  putStrLn (around 3 (length args < 100) s)
+
+-- ============================================================
+-- Section 10: dups merged across a match that does not branch
+-- ============================================================
+-- `compare` on pairs (inlined into `countLess`) matches both pairs, each a
+-- `case` of one alt, and uses the first field of the first pair once more
+-- after the second match. DupMerge counts the alt of a one-alt `case` in
+-- the same region, so the two `dup`s of that field become one `dup x2`;
+-- check.sh asserts no local of `countLess` is `dup`'d in two places.
+-- Prints 2.
+
+countLess : List ((List Int, List Int), (List Int, List Int)) -> Nat
+countLess [] = 0
+countLess ((p, q) :: rest) = (if compare p q == LT then 1 else 0) + countLess rest
+
+mergedDups : IO ()
+mergedDups = do
+  args <- getArgs
+  let k = if length args > 100 then 0 else 1
+  printLn (countLess [(([k], [2]), ([k], [3])), (([k, 1], [2]), ([2], [1]))])
+
 main : IO ()
 main = do
   useThrice "dup-merge"
@@ -339,3 +378,5 @@ main = do
   pushDown
   deadVars
   letPushDown
+  commonDups
+  mergedDups

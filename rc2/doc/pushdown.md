@@ -124,12 +124,25 @@ one dup call and one drop instead of four calls.
 
 A run that gains nothing keeps its order. Moving every run measured worse:
 on `BenchListSort`, `drop [p]; dup q` turned into `dup q; drop [p]` in the
-merge loop cost 3% with the code aligned either way, for no fewer calls.
+merge loop, for no fewer calls, ran 1.15% more instructions under cachegrind
+(3,084,134,506 against 3,119,483,176) with the same data references, cache
+misses and branch mispredictions (the loop's machine code differs; which
+instructions it adds was not traced).
 
 On rc2-norepl the whole change (this and the push into `let` values) takes
 the object's text from 15,289,381 to 15,225,828 bytes (-0.42%) and the
 `dup`/`drop` calls in its C from 155,502 to 154,698; putting every run in
-canonical form took the text to 15,186,278 bytes but cost the 3% above.
+canonical form took the text to 15,186,278 bytes but cost the instructions
+above.
+
+## Common dups
+
+In the same sweep, a `dup` of a local bound outside a `case` that opens
+every arm (in its leading run, any number of times: the fewest of them)
+moves in front of the `case`, so it is written once instead of once per arm.
+Every path makes as many dups as before; a dup only happens earlier, which
+is safe (see above). A `drop` is not moved: in front of the dispatch it could
+free a parent of what the dispatch reads.
 
 ## Measurements (idris2-lsp, final IR, static counts)
 

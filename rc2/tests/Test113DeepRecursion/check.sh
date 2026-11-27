@@ -19,3 +19,17 @@ if [ "$varFills" -ge 1 ]; then
 else
     fail "TrmcHoles: no fill at a run-time index (want >= 1) in $dump"
 fi
+
+# A fill returns unit, C `NULL`, which annotate does not count
+# (RC.alwaysUnboxedBoxedLocalsR): no `let` bound to a fill is dropped.
+nullDrops="$(awk '
+    /^ *let v[0-9]+ : Boxed =$/ { x = $2; st = 1; next }
+    st == 1 { st = ($0 ~ /^ *fill /) ? 2 : 0; next }
+    st == 2 { s = $0; sub(/^ */, "", s); if (s == "drop [" x "]") bad++; st = 0 }
+    END { print bad + 0 }
+' "$dump")"
+if [ "$nullDrops" = "0" ]; then
+    pass "TRMC: no fill result is dropped"
+else
+    fail "TRMC: $nullDrops fill result(s) dropped in $dump"
+fi

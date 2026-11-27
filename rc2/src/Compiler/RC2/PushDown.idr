@@ -20,6 +20,8 @@ import Compiler.RC2.RCExp
 import Core.FC
 
 import Data.List
+import Data.Maybe
+import Data.SortedSet
 import Data.Vect
 
 %default covering
@@ -65,19 +67,21 @@ removeN Z _ xs = xs
 removeN (S k) v xs = removeN k v (delete v xs)
 
 ||| The canonical form of a refcount-only run, and how many `dup`/`drop`
-||| pairs cancelled in it: every `dup` first, then one `drop`. Moving a
-||| `dup` earlier is safe (fewer objects have died by then) and so is moving
-||| a `drop` later (an object only lives longer), so reordering a run this
-||| way never frees anything early; and once every `dup` precedes every
-||| `drop`, a `dup v` and a `drop v` cancel whatever sits between them, even
-||| the `drop` of a parent that owns `v`.
+||| pairs cancelled in it: every `dup` first, then one `drop`. A local
+||| `dup`'d more than once comes before those `dup`'d once: Emit writes its
+||| `idris2rc2_dup_n` as a call of its own, which would split their batch.
+||| Moving a `dup` earlier is safe (fewer objects have died by then) and so
+||| is moving a `drop` later (an object only lives longer), so reordering a
+||| run this way never frees anything early; and once every `dup` precedes
+||| every `drop`, a `dup v` and a `drop v` cancel whatever sits between
+||| them, even the `drop` of a parent that owns `v`.
 normalize : List RcOp -> (Nat, List RcOp)
 normalize ops =
     let (cancelled, dups, drops) = foldl cancel (0, [], dropsOf ops) (foldl addDup [] ops)
         dropFC = fromMaybe emptyFC (head' (mapMaybe (\o => case o of
                                                               DropOp fc _ => Just fc
                                                               _ => Nothing) ops))
-    in (cancelled, map (\(fc, v, n) => DupOp fc v n) (reverse dups)
+    in (cancelled, map (\(fc, v, n) => DupOp fc v n) (uncurry (++) (partition (\(_, _, n) => n > 1) (reverse dups)))
                    ++ (if null drops then [] else [DropOp dropFC drops]))
   where
     cancel : (Nat, List (FC, LocalId, Nat), List LocalId) -> (FC, LocalId, Nat)
@@ -184,12 +188,44 @@ emittedCalls = go Nothing 0
 ||| (`rc2/doc/pushdown.md`, "Canonical runs").
 normalizeRuns : RCExp -> RCExp
 normalizeRuns e =
-    case spanRun e of
-         ([], _) => mapChildren normalizeRuns e
-         (ops, rest) =>
-             let (cancelled, ops') = normalize ops
-                 kept = if cancelled > 0 || emittedCalls ops' < emittedCalls ops then ops' else ops
-             in rebuild kept (mapChildren normalizeRuns rest)
+    let (ops, rest0) = spanRun e
+        (hoisted, rest) = hoistDups rest0
+        run = ops ++ hoisted
+        (cancelled, run') = normalize run
+        kept = if cancelled > 0 || emittedCalls run' < emittedCalls run then run' else run
+    in rebuild kept (mapChildren normalizeRuns rest)
+  where
+    dupCounts : List RcOp -> List (LocalId, Nat)
+    dupCounts = map (\(_, v, n) => (v, n)) . foldl addDup []
+
+    takeDups : List (LocalId, Nat) -> List RcOp -> List RcOp
+    takeDups _ [] = []
+    takeDups hs (DupOp fc v n :: ops) =
+        let t = min n (fromMaybe 0 (lookup v hs))
+            hs' = map (\(w, m) => if w == v then (w, minus m t) else (w, m)) hs
+        in (if n == t then [] else [DupOp fc v (minus n t)]) ++ takeDups hs' ops
+    takeDups hs (op :: ops) = op :: takeDups hs ops
+
+    -- The dups that lead every arm of the `case` `c` (any number of times,
+    -- the fewest of them), of locals bound outside it, moved in front of
+    -- it: one copy instead of one per arm, and every path makes as many as
+    -- before. A drop is not moved: before the dispatch it could free a
+    -- parent of what the dispatch reads.
+    hoistDups : RCExp -> (List RcOp, RCExp)
+    hoistDups c = fromMaybe ([], c) $ do
+        (_, arms, put) <- caseParts c
+        guard (length arms >= 2)
+        let runs = map spanRun arms
+        let free = freeLocalsR c
+        let common = case map (dupCounts . fst) runs of
+                          r :: rs => mapMaybe (\(v, n) => do
+                                                   ms <- traverse (lookup v) rs
+                                                   pure (v, foldl min n ms)) r
+                          [] => []
+        let hs = filter (\(v, _) => contains (RCLoc v) free) common
+        guard (not (null hs))
+        pure (map (\(v, n) => DupOp emptyFC v n) hs,
+              put (map (\(ops, rest) => rebuild (takeDups hs ops) rest) runs))
 
 ||| `normalizeRuns` over one top-level definition.
 export

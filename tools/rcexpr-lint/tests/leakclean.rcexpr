@@ -152,3 +152,11 @@ def TestCleanJoinInLetValue  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
       call {f:1} [v10]
   drop [v1, v2]
   v5
+
+def TestCleanFillUnit  (fun args= ["v1:Boxed", "v2:Boxed", "v3:Boxed"] ret= Boxed)
+  let v4 : Boxed =
+    fill v1 . 1 = v2 postDrop= []
+  let v5 : Boxed =
+    dup v3
+    fill v1 . 0 = v3 postDrop= [v1]
+  v3

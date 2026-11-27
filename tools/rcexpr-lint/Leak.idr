@@ -431,8 +431,18 @@ leaf env Tail st ctx fs =
     MkRes Nothing (fs ++ (if st.pending == 0 then [] else leakFindings env st ("path end: " ++ ctx)))
 leaf _ (Val _) st _ fs = MkRes (Just st) fs
 
-||| A value that is a constant (or erased): immortal, so a local bound
-||| to it needs no consuming.
+||| A store into a hole or a C struct field, under the dups and lets of its
+||| own operands: its value is unit, C `NULL`.
+storeValue : RCExp -> Bool
+storeValue (RFillNode _ _ _ _) = True
+storeValue (RStructSetNode _ _ _ _) = True
+storeValue (RDupNode _ _ b) = storeValue b
+storeValue (RDropNode _ b) = storeValue b
+storeValue (RLetIn _ _ _ b) = storeValue b
+storeValue _ = False
+
+||| A value that is a constant (or erased), or a store's unit: immortal, so
+||| a local bound to it needs no consuming.
 immortalValue : RCExp -> Bool
 immortalValue (RV (RVar _)) = False
 immortalValue (RV _) = True
@@ -440,7 +450,7 @@ immortalValue (RPrim _) = True
 immortalValue RErasedNode = True
 -- the cell is in the frame: no count, nothing to release (the fields are released by their own drops)
 immortalValue (RStackConNode _ _ _) = True
-immortalValue _ = False
+immortalValue e = storeValue e
 
 isTail : Mode -> Bool
 isTail Tail = True

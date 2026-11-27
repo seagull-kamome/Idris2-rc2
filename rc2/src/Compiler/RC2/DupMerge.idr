@@ -5,11 +5,12 @@
 ||| over-increment a refcount on whichever branch is actually NOT taken
 ||| at runtime, a permanent leak -- see RC.idr's own RConCase/RConstCase
 ||| annotate cases, which pass the identical `owned` set to every alt
-||| independently rather than accumulating across them) into one RDup
-||| with a higher `extra`, trading N atomic increments (each paying its
-||| own conditional-branch-plus-atomic-add cost) for a single batched one
-||| via idris2rc2_dup_n. Runs after DeadCode and PushDown, and before
-||| LeafTail and Compiler.RC2.DeadVars, since later passes
+||| independently rather than accumulating across them; a `RConCase` of
+||| one alt and no default is no branch, and its alt is in the region)
+||| into one RDup with a higher `extra`, trading N atomic increments (each
+||| paying its own conditional-branch-plus-atomic-add cost) for a single
+||| batched one via idris2rc2_dup_n. Runs after DeadCode and PushDown, and
+||| before LeafTail and Compiler.RC2.DeadVars, since later passes
 ||| (Compiler.RC2.Loop's wrapInvariantDups/dupInvariantBoxed,
 ||| Compiler.RC2.ConAltNative's wrapNDups) are themselves what NEWLY
 ||| introduces most of the individual-adjacent-RDup shapes this pass
@@ -228,9 +229,10 @@ cancelDupDrop ns e = mapChildren (cancelDupDrop ns) e
 ||| Collects, for every RCLocal targeted by at least one RDup anywhere
 ||| within `e`'s own straight-line region (never descending into a
 ||| RConCase/RConstCase/RCmpCase/RLoop's own children -- those are
-||| independent regions, scanned separately, see `mergeDupsExp`), the
-||| TOTAL increment count (`S extra` summed across every such RDup node
-||| targeting that same local).
+||| independent regions, scanned separately, see `mergeDupsExp`; a
+||| `RConCase` of one alt and no default does not branch and stays in the
+||| region), the TOTAL increment count (`S extra` summed across every such
+||| RDup node targeting that same local).
 collectDupCounts : RCExp -> SortedMap LocalId Nat
 collectDupCounts (RLet _ _ _ value body) =
     mergeWith (+) (collectDupCounts value) (collectDupCounts body)
@@ -240,6 +242,9 @@ collectDupCounts (RDrop _ _ body) = collectDupCounts body
 collectDupCounts (RFree _ _ body) = collectDupCounts body
 collectDupCounts (RReleaseReuse _ _ body) = collectDupCounts body
 collectDupCounts (RReuseOffer _ _ _ _ body) = collectDupCounts body
+-- One alt and no default: a match that does not branch, so its alt is the
+-- same straight-line region.
+collectDupCounts (RConCase _ _ [MkRConAlt _ _ _ _ body] Nothing) = collectDupCounts body
 collectDupCounts _ = empty
 
 mutual
@@ -291,6 +296,9 @@ mutual
       in (done', RReuseOffer fc sc dupOnShared dropOnUnique body')
   rewriteRegion ns counts done (RCmpCase fc op args postDrop t f) =
       (done, RCmpCase fc op args postDrop (mergeDupsExp ns t) (mergeDupsExp ns f))
+  rewriteRegion ns counts done (RConCase fc sc [MkRConAlt n ci tag as body] Nothing) =
+      let (done', body') = rewriteRegion ns counts done body
+      in (done', RConCase fc sc [MkRConAlt n ci tag as body'] Nothing)
   rewriteRegion ns counts done (RConCase fc sc alts mDef) =
       (done, RConCase fc sc
                (map (\(MkRConAlt n ci tag as body) => MkRConAlt n ci tag as (mergeDupsExp ns body)) alts)
@@ -308,7 +316,8 @@ mutual
   ||| `done` set. Every RConCase/RConstCase/RCmpCase/RLoop child
   ||| encountered along the way recurses back into this same function
   ||| as an entirely independent region (see `rewriteRegion`'s own
-  ||| handling of those four constructors).
+  ||| handling of those four constructors). A `RConCase` of one alt and
+  ||| no default is not a child region: its alt goes on with this one.
   export
   mergeDupsExp : SortedSet LocalId -> RCExp -> RCExp
   mergeDupsExp ns e = let e' = cancelDupDrop ns e

@@ -466,7 +466,8 @@ toRCDefs strict directives incremental roots thunks preFolded0 = do
     -- local adjacent that weren't when Dup merge ran, so its own
     -- cancellation peephole gets one more sweep here -- no re-merge,
     -- and gated by the same directive. Then every run is put in its
-    -- canonical form (rc2/doc/pushdown.md) for Emit's batching.
+    -- canonical form for Emit's batching, and a dup that opens every arm
+    -- of a case moves in front of it (rc2/doc/pushdown.md).
     cancelled <- unlessOff [NoDupMerge] directives erased $
         logTime 2 "rc2: Dup/drop cancel (post dead-vars)" $
                            pure (map (\(n, d) => (n, applyNormalizeRuns (applyCancelDupDrop d))) erased)

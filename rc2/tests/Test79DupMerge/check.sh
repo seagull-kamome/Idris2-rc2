@@ -216,3 +216,47 @@ if [ "$late" = "0" ]; then
 else
     fail "$late run(s) Emit would write in fewer calls with their dups first in $TMP/${name}_rc2.rcexpr"
 fi
+
+# Section 9: no `case` whose every arm opens with a `dup` of the same
+# local is left (a local bound inside one arm has an id of its own, so a
+# local common to every arm is bound outside the `case`).
+common="$(awk '
+    function ind(s) { match(s, /^ */); return RLENGTH }
+    { L[NR] = $0 }
+    END {
+        for (i = 1; i <= NR; i++) {
+            if (L[i] !~ /^ *case v[0-9]+ of$/) continue
+            ci = ind(L[i]); arms = 0; first = 1; delete common
+            for (j = i + 1; j <= NR && ind(L[j]) > ci; j++) {
+                if (ind(L[j]) != ci + 2 || L[j] !~ /->$/) continue
+                arms++; delete here
+                for (k = j + 1; k <= NR && ind(L[k]) == ci + 4; k++) {
+                    s = L[k]; sub(/^ */, "", s)
+                    if (s ~ /^dup v[0-9]+/) { split(s, q, " "); here[q[2]] = 1 }
+                    else if (s !~ /^drop \[/) break
+                }
+                if (first) { for (v in here) common[v] = 1; first = 0 }
+                else for (v in common) if (!(v in here)) delete common[v]
+            }
+            if (arms >= 2) for (v in common) { bad++; break }
+        }
+        print bad + 0
+    }
+' "$TMP/${name}_rc2.rcexpr")"
+if [ "$common" = "0" ]; then
+    pass "Common dups -- no case whose every arm opens with a dup of the same local"
+else
+    fail "$common case(s) whose every arm opens with a dup of the same local in $TMP/${name}_rc2.rcexpr"
+fi
+
+# Section 10: no local of `countLess` is `dup`'d in two places.
+twice="$(awk '
+    /^def / { on = ($2 == "Main.countLess") }
+    on && /^ *dup v[0-9]+( x[0-9]+)?$/ { n[$2]++ }
+    END { for (v in n) if (n[v] > 1) bad++; print bad + 0 }
+' "$TMP/${name}_rc2.rcexpr")"
+if [ "$twice" = "0" ]; then
+    pass "DupMerge across a one-alt case -- countLess dups each local in one place"
+else
+    fail "DupMerge left $twice local(s) of countLess dup'd in two places in $TMP/${name}_rc2.rcexpr"
+fi
