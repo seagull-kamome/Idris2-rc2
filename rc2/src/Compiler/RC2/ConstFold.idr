@@ -847,6 +847,10 @@ foldConst caf env (RConstCase fc sc alts mDef) =
                                _ => env
              in case (live, mDef) of
                      ([], Just d) => foldConst caf envDef d
+                     -- An enclosing default is past every alt and there is no
+                     -- default: a case of no alt, which Emit writes as nothing.
+                     ([], Nothing) => if null alts then RConstCase fc sc' [] Nothing
+                                         else RCrash fc "[rc2] ConstFold: no alt of this case can be reached"
                      _ => RConstCase fc sc' (map (foldConstConstAlt caf env) live) (map (foldConst caf envDef) mDef)
   where
     aliasOf : RCLocal -> RCLocal

@@ -261,6 +261,12 @@ would lose that crash the same way. In `rc2-norepl` 146 such `case`s
 became crashes; the 3 left are made by `LateInline`, after the last
 `ConstFold`.
 
+A constant `case` that loses every alt and has no default (one in
+`Libraries.Text.Parser.Core`'s `map`, in `rc2-norepl`) becomes one too:
+left as a `case` of no alt, `Emit` wrote nothing for it, and the function
+it ended had no `return` (`rc2-norepl`'s C did not compile, under
+`-Werror=return-type`).
+
 The same pass folds a comparison of a local with itself: `<` and `>`
 are false, `==`, `<=` and `>=` true, but for a `Double` (NaN). Left to
 C, clang's `-Wtautological-compare` rejects `x == x` under `-Werror`
