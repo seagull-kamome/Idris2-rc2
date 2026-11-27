@@ -1,8 +1,9 @@
 ||| Dup/drop push-down: a run of `dup`/`drop` nodes that sits right in
-||| front of a `case` is moved into the head of every arm, where a `dup`
-||| meets the `drop` of the same local that the arm opens with and the
-||| pair is cancelled. This is what is left of the lint's pattern A (a
-||| `dup` above a `case` that some arm cancels) for the adjacent runs;
+||| front of a `case`, or of a `let` whose value is one, is moved into the
+||| head of every arm, where a `dup` meets the `drop` of the same local
+||| that the arm opens with and the pair is cancelled. This is what is
+||| left of the lint's pattern A (a `dup` above a `case` that some arm
+||| cancels) for the adjacent runs;
 ||| see `rc2/doc/pushdown.md` for the soundness argument, the cases it
 ||| deliberately leaves alone, and the measurements. Runs right after
 ||| dead-code elimination and before `DupMerge`, so it sees the final
@@ -115,6 +116,11 @@ caseParts e@(RCmpCase fc op args [] t f) =
     Just (toList args, [t, f], \bs => case bs of
                                            [t', f'] => RCmpCase fc op args [] t' f'
                                            _ => e)
+caseParts (RLet fc x rep value body) =
+    case rep of
+         -- Its value is spliced where `x` is used, so it runs after `body` began.
+         RInlineNative _ => Nothing
+         _ => (\(scruts, arms, put) => (scruts, arms, \bs => RLet fc x rep (put bs) body)) <$> caseParts value
 caseParts _ = Nothing
 
 ||| Move the run `ops` into every arm of the `case` `e` when that cancels
@@ -146,6 +152,52 @@ pushDownExp e =
          (ops, rest) => case tryPush ops rest of
                              Just pushed => mapChildren pushDownExp pushed
                              Nothing => rebuild ops (mapChildren pushDownExp rest)
+
+||| The calls `Emit` writes for a run: consecutive plain dups, or drops,
+||| become one batched call per `Emit.Util.pendingLines`, and a dup of a
+||| count above one is a call of its own that ends a batch.
+emittedCalls : List RcOp -> Nat
+emittedCalls = go Nothing 0
+  where
+    batched : Nat -> Nat
+    batched n = if n <= 2 then n
+                else if n <= 6 || n == 9 then 1
+                else if n <= 8 then 2
+                else 1 + batched (minus n 6)
+
+    flush : Maybe Bool -> Nat -> Nat
+    flush Nothing _ = 0
+    flush (Just _) n = batched n
+
+    go : Maybe Bool -> Nat -> List RcOp -> Nat
+    go k n [] = flush k n
+    go k n (DupOp _ _ c :: ops) =
+        if c == 1
+           then if k == Just True then go k (S n) ops else flush k n + go (Just True) 1 ops
+           else flush k n + 1 + go Nothing 0 ops
+    go k n (DropOp _ vs :: ops) =
+        if k == Just False then go k (n + length vs) ops else flush k n + go (Just False) (length vs) ops
+
+||| Every refcount-only run of `e` in its canonical form when that cancels
+||| a pair or lets `Emit` batch it into fewer calls
+||| (`rc2/doc/batched-drops.md`). A run that gains nothing keeps its order
+||| (`rc2/doc/pushdown.md`, "Canonical runs").
+normalizeRuns : RCExp -> RCExp
+normalizeRuns e =
+    case spanRun e of
+         ([], _) => mapChildren normalizeRuns e
+         (ops, rest) =>
+             let (cancelled, ops') = normalize ops
+                 kept = if cancelled > 0 || emittedCalls ops' < emittedCalls ops then ops' else ops
+             in rebuild kept (mapChildren normalizeRuns rest)
+
+||| `normalizeRuns` over one top-level definition.
+export
+applyNormalizeRuns : RCDef -> RCDef
+applyNormalizeRuns (MkRCFun args retRep isWorker body) = MkRCFun args retRep isWorker (normalizeRuns body)
+applyNormalizeRuns (MkRCError body) = MkRCError (normalizeRuns body)
+applyNormalizeRuns d@(MkRCCon _ _ _) = d
+applyNormalizeRuns d@(MkRCForeign _ _ _) = d
 
 ||| Apply the push-down to one top-level definition.
 export

@@ -465,10 +465,11 @@ toRCDefs strict directives incremental roots thunks preFolded0 = do
     -- Erasing a dead `RLet` can leave a `dup` and a `drop` of the same
     -- local adjacent that weren't when Dup merge ran, so its own
     -- cancellation peephole gets one more sweep here -- no re-merge,
-    -- and gated by the same directive.
+    -- and gated by the same directive. Then every run is put in its
+    -- canonical form (rc2/doc/pushdown.md) for Emit's batching.
     cancelled <- unlessOff [NoDupMerge] directives erased $
         logTime 2 "rc2: Dup/drop cancel (post dead-vars)" $
-                           pure (map (\(n, d) => (n, applyCancelDupDrop d)) erased)
+                           pure (map (\(n, d) => (n, applyNormalizeRuns (applyCancelDupDrop d))) erased)
     -- rc2/doc/fun-dedup.md: functions with equal bodies become one. Not in
     -- incremental mode, where a module only sees its own definitions.
     -- rc2/doc/dead-fields.md, "Constant constructors": closures in fields

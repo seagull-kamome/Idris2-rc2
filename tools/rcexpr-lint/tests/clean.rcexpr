@@ -20,3 +20,14 @@ def TestOkPostDropChain  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
   let v3 : Boxed =
     op ++ [v1, v2]
   op ++ [v3, v1] postDrop= [v3, v1, v2]
+
+def TestOkLetArmDup  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  let v3 : Boxed =
+    cmp ==Int [v1, v2]
+    then
+      dup v2
+      v1
+    else
+      dup v2
+      v1
+  op ++ [v3, v2] postDrop= [v3, v2, v2]

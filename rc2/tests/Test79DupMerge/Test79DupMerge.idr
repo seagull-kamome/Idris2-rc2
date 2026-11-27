@@ -292,6 +292,42 @@ deadVars = do
   traverse_ (printLn . middle) ts
   traverse_ (putStrLn . firstOf) ts
 
+-- ============================================================
+-- Section 8: push-down into a let's value, canonical runs
+-- ============================================================
+-- `leftLens` matches a pair inside a list cell, then takes the length of
+-- a field of the pair's first field: that last match is the value of a
+-- `let` (its result is still added to), not the arm's tail. PushDown
+-- moves the run into the arms of that value's `case` too, so each field
+-- `dup` meets its own `drop` there and only the parent's drop is left
+-- (doc/pushdown.md). Every refcount-only run that is left is put in
+-- canonical form, all its dups before its drops, when Emit then writes it
+-- in fewer calls: `largest` (the shape of Compiler.Inline.largest) dups
+-- the cell's fields, drops the cell and dups the accumulator, which
+-- becomes one batched dup and a drop. check.sh asserts both. Prints 14,
+-- 7 and "7".
+
+data Two = MkTwo (List Int) (List Int)
+
+leftOf : Two -> List Int
+leftOf (MkTwo a _) = a
+
+leftLens : List (Two, Nat) -> Nat
+leftLens [] = 0
+leftLens ((t, n) :: rest) = length (leftOf t) + n + leftLens rest
+
+largest : Ord a => a -> List a -> a
+largest x [] = x
+largest x (y :: ys) = if y > x then largest y ys else largest x ys
+
+letPushDown : IO ()
+letPushDown = do
+  args <- getArgs
+  let k = if length args > 100 then 0 else 3
+  printLn (leftLens [(MkTwo [1, 2, k] [4], 10), (MkTwo [] [5], 1)])
+  printLn (largest (the Int 0) [3, cast k + 4, 5])
+  putStrLn (largest "" (map show [cast {to = Int} k + 4, 2]))
+
 main : IO ()
 main = do
   useThrice "dup-merge"
@@ -302,3 +338,4 @@ main = do
   shapes
   pushDown
   deadVars
+  letPushDown

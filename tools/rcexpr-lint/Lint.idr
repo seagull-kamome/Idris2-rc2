@@ -24,11 +24,11 @@ module Lint
 -- adjust a local's count; any other read of a `Boxed` local already
 -- at zero is a use-after-free, any drop of one already at zero is a
 -- double-drop. Branches (`cmp`/`case`) fork the count map into each
--- arm independently and never merge afterward -- correct for this
--- check's purpose, an anomaly inside one arm doesn't depend on what
--- the other arm did, and this round doesn't attempt the bigger
--- problem (full-path enumeration/merging) leak detection or cross-arm
--- consistency would need.
+-- arm independently -- an anomaly inside one arm doesn't depend on
+-- what the other arm did. What follows a branching `let` value sees
+-- each local as the arms left it when they all agree on it
+-- (`joinArms`), and as it was before the branch otherwise; full-path
+-- merging is the leak check's (`Leak`).
 --
 -- Known imprecision: a `case`-alt's own bound variables (`RConAlt`'s
 -- `args : List Int`) have no `Rep` in this dump at all (`Pretty.idr`
@@ -226,6 +226,35 @@ immediateValue _ = False
 isImmediateEntry : Entry -> Bool
 isImmediateEntry e = e.owned >= immediateRefs
 
+||| The state a branching node continues with, which matters when it is a
+||| `let`'s value: for each local tracked before it, the arms' own entry
+||| when every arm that falls through ends with the same one, and the
+||| entry before the branch otherwise (a call consuming an argument is
+||| not modelled, so arms that pass different locals to calls disagree on
+||| those). An arm ending in `crash` or a `jump` does not fall through.
+joinArms : OwnState -> List (RCExp, OwnState) -> OwnState
+joinArms st arms =
+    case map snd (filter (fallsThrough . fst) arms) of
+         [] => st
+         ss => foldl (\acc, (i, e) => insert i (agreed i e ss) acc) empty (SortedMap.toList st)
+  where
+    same : Entry -> Entry -> Bool
+    same a b = a.owned == b.owned && a.parent == b.parent
+
+    agreed : Int -> Entry -> List OwnState -> Entry
+    agreed i e ss =
+        case map (lookup i) ss of
+             Just a :: rest => if all (\m => maybe False (same a) m) rest then a else e
+             _ => e
+
+    fallsThrough : RCExp -> Bool
+    fallsThrough (RCrashNode _) = False
+    fallsThrough (RJumpNode _ _) = False
+    fallsThrough (RLetIn _ _ _ b) = fallsThrough b
+    fallsThrough (RDupNode _ _ b) = fallsThrough b
+    fallsThrough (RDropNode _ b) = fallsThrough b
+    fallsThrough _ = True
+
 mutual
   walk : String -> OwnState -> RCExp -> (OwnState, List Anomaly)
   walk dn st (RV loc) = (st, checkRead dn "RV" st loc)
@@ -279,19 +308,18 @@ mutual
   walk dn st (RCmp _ args postDrop whenTrue whenFalse) =
       let readAs = checkReads dn "cmp args" st args
           (stAfterDrop, dropAs) = doDrops dn "cmp postDrop" st postDrop
-          (_, trueAs) = walk dn stAfterDrop whenTrue
-          (_, falseAs) = walk dn stAfterDrop whenFalse
-      in (stAfterDrop, readAs ++ dropAs ++ trueAs ++ falseAs)
+          (stTrue, trueAs) = walk dn stAfterDrop whenTrue
+          (stFalse, falseAs) = walk dn stAfterDrop whenFalse
+      in (joinArms stAfterDrop [(whenTrue, stTrue), (whenFalse, stFalse)], readAs ++ dropAs ++ trueAs ++ falseAs)
   walk dn st (RConCaseNode sc alts mDef) =
       let readAs = checkRead dn "case scrutinee" st sc
-          altsAs = concatMap (walkConAlt dn st sc) alts
-          defAs = maybe [] (\b => snd (walk dn st b)) mDef
-      in (st, readAs ++ altsAs ++ defAs)
+          arms = map (\a => (a.altBody, walkConAlt dn st sc a)) alts
+                   ++ maybe [] (\b => [(b, walk dn st b)]) mDef
+      in (joinArms st (map (\(b, (s, _)) => (b, s)) arms), readAs ++ concatMap (snd . snd) arms)
   walk dn st (RConstCaseNode sc alts mDef) =
       let readAs = checkRead dn "case scrutinee" st sc
-          altsAs = concatMap (\a => snd (walk dn st a.altBody)) alts
-          defAs = maybe [] (\b => snd (walk dn st b)) mDef
-      in (st, readAs ++ altsAs ++ defAs)
+          arms = map (\b => (b, walk dn st b)) (map (.altBody) alts ++ toList mDef)
+      in (joinArms st (map (\(b, (s, _)) => (b, s)) arms), readAs ++ concatMap (snd . snd) arms)
   walk dn st (RPrim _) = (st, [])
   walk dn st RErasedNode = (st, [])
   walk dn st (RCrashNode _) = (st, [])
@@ -351,7 +379,7 @@ mutual
   -- A field borrows from a tracked scrutinee (see `Entry`); from an
   -- untracked one (a constant, or a local this walk never saw bound)
   -- it is assumed to own its reference, as before.
-  walkConAlt : String -> OwnState -> RCLocal -> RConAlt -> List Anomaly
+  walkConAlt : String -> OwnState -> RCLocal -> RConAlt -> (OwnState, List Anomaly)
   walkConAlt dn st sc alt =
       let fieldEntry = case sc of
                             RVar s => if isJust (lookup s st) then MkEntry 0 (Just s) else owning 1
@@ -361,7 +389,7 @@ mutual
                                Just e => if isImmediateEntry e then s else insert i fieldEntry s
                                Nothing => insert i fieldEntry s
           stWithArgs = foldl bind st alt.args
-      in snd (walk dn stWithArgs alt.altBody)
+      in walk dn stWithArgs alt.altBody
 
 seedImmediates : RCExp -> OwnState -> OwnState
 seedImmediates body st =

@@ -159,3 +159,60 @@ if [ "$first" -ge 1 ] && [ "$middle" -ge 1 ]; then
 else
     fail "DeadVars did not blank the unused MkTriple fields in $TMP/${name}_rc2.rcexpr ([vN, _, _] x$first, [_, vN, _] x$middle)"
 fi
+
+# Section 8: in `leftLens` the last match is a `let`'s value. With the run
+# pushed into its arms too, no local any `case` of the def matches is
+# `dup`'d at all.
+scrutDups="$(awk '
+    /^def / { on = ($2 == "Main.leftLens") }
+    on && /^ *case v[0-9]+ of$/ { scrut[$2] = 1 }
+    on && /^ *dup v[0-9]+( x[0-9]+)?$/ { dups[$2] = 1 }
+    END { for (v in dups) if (v in scrut) bad++; print bad + 0 }
+' "$TMP/${name}_rc2.rcexpr")"
+if [ "$scrutDups" = "0" ]; then
+    pass "PushDown into a let's value -- leftLens dups no scrutinee"
+else
+    fail "PushDown left $scrutDups scrutinee dup(s) in leftLens in $TMP/${name}_rc2.rcexpr"
+fi
+
+# Every refcount-only run that Emit would write in fewer calls with all
+# its dups first is in that order. A call is counted as Emit.Util's
+# pendingLines makes them: consecutive plain dups or drops are batched,
+# and a `dup v xN` is a call of its own.
+late="$(awk '
+    function indent_of(s) { match(s, /^ */); return RLENGTH }
+    function batched(n) { if (n <= 2) return n; if (n <= 6 || n == 9) return 1; if (n <= 8) return 2; return 1 + batched(n - 6) }
+    function calls(seq,    k, i, n, c, kind, t, m) {
+        k = split(seq, t, " "); c = 0; kind = ""; n = 0
+        for (i = 1; i <= k; i++) {
+            m = substr(t[i], 2) + 0
+            if (substr(t[i], 1, 1) == "X") { if (kind != "") c += batched(n); c++; kind = ""; n = 0; continue }
+            if (substr(t[i], 1, 1) == kind) { n += m; continue }
+            if (kind != "") c += batched(n)
+            kind = substr(t[i], 1, 1); n = m
+        }
+        if (kind != "") c += batched(n)
+        return c
+    }
+    function flush(    canon) {
+        if (seq != "") {
+            canon = (xs != "" ? xs " " : "") (ds > 0 ? "D" ds " " : "") (ps > 0 ? "P" ps : "")
+            if (calls(canon) < calls(seq)) bad++
+        }
+        seq = ""; xs = ""; ds = 0; ps = 0; ind = -1
+    }
+    /^ *dup v[0-9]+( x[0-9]+)?$/ || /^ *drop \[/ {
+        if (indent_of($0) != ind) { flush(); ind = indent_of($0) }
+        if ($0 ~ /^ *dup .* x[0-9]+$/) { seq = seq " X1"; xs = xs " X1" }
+        else if ($0 ~ /^ *dup /) { seq = seq " D1"; ds++ }
+        else { s = $0; sub(/^ *drop \[/, "", s); sub(/\]$/, "", s); k = split(s, vs, /, */); seq = seq " P" k; ps += k }
+        next
+    }
+    { flush() }
+    END { flush(); print bad + 0 }
+' "$TMP/${name}_rc2.rcexpr")"
+if [ "$late" = "0" ]; then
+    pass "Canonical runs -- no run Emit would write in fewer calls with its dups first"
+else
+    fail "$late run(s) Emit would write in fewer calls with their dups first in $TMP/${name}_rc2.rcexpr"
+fi

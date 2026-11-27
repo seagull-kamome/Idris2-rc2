@@ -98,11 +98,38 @@ must happen while something still keeps the field alive.
   so a `reuseOffer v` arm keeps its `dup` and the parent-unique reuse path is
   unchanged.
 
-What it deliberately does not cross: a `let` (a call between the run and the
-`case` may consume a field's parent or keep a parent alive across a call that
-relies on uniqueness; a delayed parent drop would silently turn an in-place
-update into a copy), and a cancelling `drop` that sits deeper in the arm than
-its leading run.
+A `case` that is the value of a `let` (`run; let x = case v of ...; body`,
+also through nested `let` values) is pushed into the same way: the value is
+evaluated first, so the arms of its `case` are still the first thing after the
+run, and `body` only follows them. An `RInlineNative` `let` is excluded, since
+its value is spliced into its use site and runs after `body` has begun.
+
+What it deliberately does not cross: a `let` whose value is not a `case` (a
+call between the run and the `case` may consume a field's parent or keep a
+parent alive across a call that relies on uniqueness; a delayed parent drop
+would silently turn an in-place update into a copy), and a cancelling `drop`
+that sits deeper in the arm than its leading run.
+
+## Canonical runs
+
+After `Compiler.RC2.DeadVars` and the last `cancelDupDrop` sweep,
+`applyNormalizeRuns` puts a remaining refcount-only run into the canonical
+form of step 1 (all its dups, counts merged per local, then one drop) when
+that cancels a pair or `Emit` then writes it in fewer calls. The soundness
+argument is the one above. `Emit` writes consecutive plain dups, or drops, as
+one batched call from three on (`batched-drops.md`), and a dup of a count
+above one as a call of its own, so a run like `dup a; dup b; drop [p]; dup c`
+(fields, the cell, then an accumulator: `Compiler.Inline.largest`) becomes
+one dup call and one drop instead of four calls.
+
+A run that gains nothing keeps its order. Moving every run measured worse:
+on `BenchListSort`, `drop [p]; dup q` turned into `dup q; drop [p]` in the
+merge loop cost 3% with the code aligned either way, for no fewer calls.
+
+On rc2-norepl the whole change (this and the push into `let` values) takes
+the object's text from 15,289,381 to 15,225,828 bytes (-0.42%) and the
+`dup`/`drop` calls in its C from 155,502 to 154,698; putting every run in
+canonical form took the text to 15,186,278 bytes but cost the 3% above.
 
 ## Measurements (idris2-lsp, final IR, static counts)
 

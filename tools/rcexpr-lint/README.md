@@ -488,8 +488,8 @@ checking both the exit code and the exact report text (the fixture's
 
 | fixture | covers |
 |---|---|
-| `clean.rcexpr` | a correct program produces no anomalies (guards against the check silently doing nothing) |
-| `anomalies.rcexpr` | every anomaly/context combination fires: plain read after drop, double drop, a drop inside one `cmp` arm, and a `postDrop=`-consumed local read afterwards |
+| `clean.rcexpr` | a correct program produces no anomalies (guards against the check silently doing nothing); a `dup` in the arms of a `let`'s value released after it |
+| `anomalies.rcexpr` | every anomaly/context combination fires: plain read after drop, double drop, a drop inside one `cmp` arm, a `postDrop=`-consumed local read afterwards, and a local dropped in every arm of a `let`'s value read after it |
 | `dupcount.rcexpr` | regression for a real parser bug -- `dup vN xM`'s repeat count was glued onto `x` as one token and silently undercounted if read as two |
 | `fieldborrow.rcexpr` | field borrowing: a field read after its scrutinee is dropped (the exact shape of a real use-after-free in `refc-suite/clock`, 2026-09-25), a field of a field, and the correct forms -- dup before the drop, `reuseOffer` |
 | `metrics.rcexpr` | every node kind the metrics count, so each figure is checked against a hand count at least once |
