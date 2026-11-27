@@ -249,6 +249,18 @@ interface dictionary, `MkApplicative`) and in the clauses copied into a
 default: in `rc2-norepl` 1,269 of them were in an alt of a `case` on the
 same local and 1,862 in its default, with 577 alts that could not run.
 
+When no alt is left and the `case` has no default, no value of the
+local's type reaches it, and it becomes an `RCrash` ("no alt of this case
+can be reached"): the case trees put a default after alts that already
+cover the type (a record's one constructor, say), and a `case` in that
+default on the same local has only alts that default is past. Left as it
+was, a value that did reach it (through `believe_me`) would take its last
+alt, which `Emit` does not test. The enclosing default stays: an
+`RCrash` there could be a genuine error branch, and dropping a default
+would lose that crash the same way. In `rc2-norepl` 146 such `case`s
+became crashes; the 3 left are made by `LateInline`, after the last
+`ConstFold`.
+
 The same pass folds a comparison of a local with itself: `<` and `>`
 are false, `==`, `<=` and `>=` true, but for a `Double` (NaN). Left to
 C, clang's `-Wtautological-compare` rejects `x == x` under `-Werror`

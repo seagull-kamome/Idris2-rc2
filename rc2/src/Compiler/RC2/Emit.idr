@@ -940,6 +940,8 @@ mutual
     emitNativeValue ty (RReleaseReuse fc loc cont) = do
         removeReuseConstructors [reuseVarName (RCLoc loc)]
         emitNativeValue ty cont
+    -- A crash in a native position (`DualABI.tailLeaves` lets one through).
+    emitNativeValue ty (RCrash fc _) = pure ("0 /* CRASH */", [])
     emitNativeValue ty e = throw $ InternalError "[rc2] internal: expected a native-producing expression"
 
 emitAppNameRepInto sink tailPosition fc n argReps retRep postDrop args = do

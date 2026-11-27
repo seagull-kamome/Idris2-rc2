@@ -119,6 +119,8 @@ tailLeaves leaf reps (RConstCase _ _ alts mDef) =
 tailLeaves leaf reps (RLoop _ loopParams _ _ body) =
     tailLeaves leaf (foldl (\m, (i, r) => insert i r m) reps loopParams) body
 tailLeaves _ _ (RLoopContinue _ _ _) = []
+-- A crash returns no value, so it says nothing about the type the others share.
+tailLeaves _ _ (RCrash _ _) = []
 tailLeaves leaf reps e = [leaf reps e]
 
 ||| `tailValueReps` over `NativeTy`, and, given `ffiRets` (each usable
@@ -152,18 +154,18 @@ tailValueRepsWith ffiRets = tailLeaves leafRep
         case lookup n ffiRets of
              Just (ty, k) => if length args == k then Just ty else Nothing
              Nothing => Nothing
-    -- RUnderApp, RApp, RCon, RExtPrim, RErased, RCrash, RStructGet,
-    -- RStructSet, any other RV: never a native value regardless of context.
+    -- RUnderApp, RApp, RCon, RExtPrim, RErased, RStructGet, RStructSet,
+    -- any other RV: never a native value regardless of context.
     leafRep _ _ = Nothing
 
 ||| Every `Rep` a genuine (non-`RLoopContinue`) tail-position value of
 ||| `e` would have, given `reps` (natives known so far, seeded from
 ||| `paramEligibility`, extended through `RLet`/`RLoop` bindings) --
 ||| `Nothing` for a leaf never native regardless of context (a call,
-||| closure, constructor, extprim, erasure, crash), which is what makes
+||| closure, constructor, extprim, erasure), which is what makes
 ||| the whole return ineligible the moment any exit can't be native.
 ||| See `doc/dual-abi.md`'s "returnEligibility / tailValueReps".
-||| `RLoopContinue` contributes nothing (never a real exit). Exported
+||| `RLoopContinue` and `RCrash` contribute nothing (no value returned). Exported
 ||| for `Compiler.RC2.LateInline`'s own reuse (the same "what native
 ||| type, if any, does every tail-position exit of this body agree on"
 ||| question, asked there about a spliced-in callee's own tail value

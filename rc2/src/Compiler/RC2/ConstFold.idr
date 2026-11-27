@@ -807,6 +807,11 @@ foldConst caf env (RConCase fc sc alts mDef) =
     aliasFields (a :: as) (b :: bs) e = aliasFields as bs ({ aliases $= insert a (resolveLocal e (RCLoc b)) } e)
     aliasFields _ _ _ = Nothing
 
+    -- No alt left and no default: no value of the local's type reaches
+    -- this case. It crashes rather than taking an alt Emit would not test.
+    unreachable : RCExp
+    unreachable = RCrash fc "[rc2] ConstFold: no alt of this case can be reached"
+
     -- A case again on a local an enclosing case matched: the alt of its
     -- constructor, or without the alts of those its default is past.
     byMatched : LocalId -> RCLocal -> RCExp
@@ -814,9 +819,9 @@ foldConst caf env (RConCase fc sc alts mDef) =
         Just (IsCon n tag outer) => case findKnownAlt n tag alts of
             Just (MkRConAlt _ _ _ inner body) =>
                 maybe (keep i sc' [] alts) (\e => foldConst caf e body) (aliasFields inner outer env)
-            Nothing => maybe (keep i sc' [] alts) (foldConst caf env) mDef
+            Nothing => maybe unreachable (foldConst caf env) mDef
         Just (NotCons past) => case filter (\a => not (elem (altName a) past)) alts of
-            [] => maybe (keep i sc' past alts) (foldConst caf env) mDef
+            [] => maybe unreachable (foldConst caf env) mDef
             live => keep i sc' past live
         _ => keep i sc' [] alts
 foldConst caf env (RConstCase fc sc alts mDef) =
