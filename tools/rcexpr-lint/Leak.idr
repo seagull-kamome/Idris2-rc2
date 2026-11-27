@@ -673,18 +673,31 @@ mutual
       walk ({ joins $= insert label (params, body) } env) m st scope
   walk env m st (RJumpNode label args) = case lookup label env.joins of
       Nothing => MkRes Nothing [MkAnomaly env.defName (Unknown "jump outside its join") 0 "jump"]
-      -- Each param takes over what its argument held: the references it
-      -- owned, or none if it is a field that only borrows its scrutinee's.
-      Just (params, body) => walk env m (foldl handOver st (zip args params)) body
+      -- A param names its argument's object (rc2/doc/join-points.md): it
+      -- takes over what the argument held, the references it owned or none
+      -- if it is a field that only borrows its scrutinee's, and gives what
+      -- is left back when the join's body falls through. An exempt param
+      -- (an immediate) holds nothing, like its argument.
+      Just (params, body) =>
+          let res = walk env m (foldl (handOver env) st (zip args params)) body
+          in { out $= map (\s => foldl handBack s (zip args params)) } res
 
-  handOver : St -> (RCLocal, (Int, RRep)) -> St
-  handOver st (RVar a, (p, r)) = case lookup a st.owned of
-      Just n => if isBoxedRep r
+  handOver : Env -> St -> (RCLocal, (Int, RRep)) -> St
+  handOver env st (RVar a, (p, r)) = case lookup a st.owned of
+      Just n => if contains p env.exempt then untrack a st
+                else if isBoxedRep r
                    then let st' = setOwned p n (untrack a st)
                         in if contains a st.fields then { fields $= insert p } st' else st'
                    else st
       Nothing => st
-  handOver st _ = st
+  handOver _ st _ = st
+
+  handBack : St -> (RCLocal, (Int, RRep)) -> St
+  handBack st (RVar a, (p, _)) = case lookup p st.owned of
+      Just n => let st' = setOwned a n (untrack p st)
+                in if contains p st.fields then { fields $= insert a } st' else st'
+      Nothing => st
+  handBack st _ = st
 
   walkLet : Env -> Mode -> St -> Int -> RRep -> RCExp -> RCExp -> Res
   walkLet env m st var rep value body =

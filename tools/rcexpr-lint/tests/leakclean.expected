@@ -1,18 +1,18 @@
-rcexpr-lint: leakclean.rcexpr: 13 defs, no anomalies found
+rcexpr-lint: leakclean.rcexpr: 15 defs, no anomalies found
 leak check: 2 cases not decided (unknown loop parameter not tracked (constant or unowned argument) x2)
 metrics (places in the IR, not executions):
-  definitions       13  (functions 13, workers 0, constructors 0, foreign 0, error 0)
+  definitions       15  (functions 14, workers 1, constructors 0, foreign 0, error 0)
   con                2  (fresh 1, reusing a cell 1)
-  retpack            0  (constructors returned by value, no cell)
+  retpack            4  (constructors returned by value, no cell)
   stackcon           0  (constructors built in the frame, no count)
   partial            0  (closures built)
   apply              0  (closure calls)
-  call               4  (plain 0, callRep 3, FFI inline 1)
+  call               6  (plain 1, callRep 4, FFI inline 1)
   op                 1  (op 1, extprim 0)
-  let                6  (Boxed 4, native 2)
-  case              10  (constructor 8, constant 0, cmp 2)
-  dup                6  (increments, in 6 dup nodes)
-  drop              10  (decrements, in 10 drop nodes)
+  let                8  (Boxed 5, native 3)
+  case              14  (constructor 11, constant 1, cmp 2)
+  dup                9  (increments, in 9 dup nodes)
+  drop              18  (decrements, in 14 drop nodes)
   postDrop           6  (decrements attached to another node: postDrop, dropOnUnique, prologueDrop)
   free               0
   reuseOffer         1  (releaseReuse 0)

@@ -113,3 +113,42 @@ def TestCleanJoinBorrowedField  (fun args= ["v1:Boxed"] ret= Boxed)
     dup v10
     drop [v11]
     v10
+
+def TestCleanJoinImmediateParam  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Ret1 worker=True)
+  join j0 ["v10:Boxed", "v11:Boxed", "v12:Boxed", "v13:Boxed"]
+  case v1 of
+    M.Add [datacon] tag= Just 0 args= [v3] ->
+      case v2 of
+        M.Add [datacon] tag= Just 0 args= [v4] ->
+          jump j0 [v3, v4, v1, v2]
+        _ ->
+          drop [v1, v2]
+          retpack _builtin.NOTHING tag= 0 []
+    _ ->
+      drop [v1, v2]
+      retpack _builtin.NOTHING tag= 0 []
+  at j0 ->
+    dup v10
+    dup v11
+    drop [v12, v13]
+    let v20 : Native Bits8 =
+      callRep {eqPrim:1} ["Native Bits8", "Native Bits8"] -> Native Bits8 postDrop= [] [v10, v11]
+    case v20 of
+      u: 1 ->
+        retpack _builtin.JUST tag= 1 [[erased]]
+      u: 0 ->
+        retpack _builtin.NOTHING tag= 0 []
+
+def TestCleanJoinInLetValue  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  let v5 : Boxed =
+    join j0 ["v10:Boxed"]
+    case v1 of
+      _builtin.NIL [nil] tag= Just 0 args= [] ->
+        jump j0 [v2]
+      _builtin.CONS [cons] tag= Just 1 args= [_, _] ->
+        jump j0 [v2]
+    at j0 ->
+      dup v10
+      call {f:1} [v10]
+  drop [v1, v2]
+  v5
