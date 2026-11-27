@@ -757,9 +757,13 @@ int64_t idris2rc2_extractInt(IDRIS2RC2_Value *v) {
   }
 }
 
-IDRIS2RC2_Value *idris2rc2_crash(IDRIS2RC2_Value *msg) {
+_Noreturn IDRIS2RC2_Value *idris2rc2_crash(IDRIS2RC2_Value *msg) {
   IDRIS2RC2_String *s = (IDRIS2RC2_String *)msg;
-  fprintf(stderr, "ERROR: %s\n", s ? s->str : "(no message)");
+  idris2rc2_crashC(s ? s->str : "(no message)");
+}
+
+_Noreturn void idris2rc2_crashC(const char *msg) {
+  fprintf(stderr, "ERROR: %s\n", msg);
   exit(1);
 }
 

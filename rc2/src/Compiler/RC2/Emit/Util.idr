@@ -164,6 +164,12 @@ cStringQuoted cs = strCons '"' (showCString (unpack cs) "\"")
     showCString ('"'::cs) = ("\\\"" ++) . showCString cs
     showCString (c ::cs) = (showCChar c) . showCString cs
 
+||| The C expression of an `RCrash`: prints `msg` and exits, never yielding
+||| the `value` after it, which is only there for the sink's type.
+export
+crashExpr : String -> String -> String
+crashExpr msg value = "(idris2rc2_crashC(" ++ cStringQuoted msg ++ "), " ++ value ++ ")"
+
 export
 showIntMin : Int -> String
 showIntMin x = if x == -9223372036854775808
