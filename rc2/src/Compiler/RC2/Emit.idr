@@ -589,6 +589,10 @@ mutual
     ||| -- see `resolveSink`) instead of a throwaway `switchReturnVar` --
     ||| see `emitAltChain`'s own doc comment for the `if`-chain shape.
     emitConCaseInto : EmitDeps (Sink -> TailPositionStatus -> FC -> RCLocal -> List RConAlt -> Maybe RCExp -> Core ())
+    -- A case of no alt and no default is unreachable: written as nothing,
+    -- the function it ends would have no `return`.
+    emitConCaseInto sink tailPosition fc sc [] Nothing =
+        emitInto fc sink tailPosition (RCrash fc "[rc2] Emit: a case of no alt")
     emitConCaseInto sink tailPosition fc sc alts mDef = do
         let sc' = varName sc
         resolvedSink <- resolveSink fc sink
@@ -617,6 +621,8 @@ mutual
     ||| dispatch strategies (a fast integer switch via `extractIntExpr`,
     ||| or the string/double equality chain).
     emitConstCaseInto : EmitDeps (Sink -> TailPositionStatus -> FC -> RCLocal -> List RConstAlt -> Maybe RCExp -> Core ())
+    emitConstCaseInto sink tailPosition fc sc [] Nothing =
+        emitInto fc sink tailPosition (RCrash fc "[rc2] Emit: a case of no alt")
     emitConstCaseInto sink tailPosition fc sc alts def = do
         let sc' = varName sc
         resolvedSink <- resolveSink fc sink

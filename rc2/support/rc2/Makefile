@@ -22,6 +22,7 @@ SRCS = \
 	idris2rc2_buffer.c \
 	idris2rc2_caf_memoize.c \
 	idris2rc2_clock.c \
+	idris2rc2_crash.c \
 	idris2rc2_ioprims.c \
 	idris2rc2_memory.c \
 	idris2rc2_numeric.c \

@@ -484,6 +484,7 @@ data RCExp : Type where
      RConstCase : FC -> RCLocal -> List RConstAlt -> Maybe RCExp -> RCExp
      RPrimVal   : FC -> Constant -> RCExp
      RErased    : FC -> RCExp
+     ||| Prints its message and exits (`idris2rc2_crashC`).
      RCrash     : FC -> String -> RCExp
      ||| Increment `loc`'s refcount by `S extra` (`extra=0`: one
      ||| increment), then continue -- what a borrowed use lowers to.

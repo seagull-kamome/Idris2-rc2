@@ -79,11 +79,11 @@ IDRIS2RC2_Value *idris2rc2_force(IDRIS2RC2_Value *v);
 // right. Narrower types and Bits64 have their own idris2rc2_to_* accessors.
 int64_t idris2rc2_extractInt(IDRIS2RC2_Value *v);
 
-// Print "ERROR: <msg>" and exit(1). Neither returns, so a compiler drops
-// what follows a call. idris2rc2_crash takes an Idris String (`prim__crash`),
-// idris2rc2_crashC the message of an RCrash the compiler wrote.
-_Noreturn IDRIS2RC2_Value *idris2rc2_crash(IDRIS2RC2_Value *msg);
-_Noreturn void idris2rc2_crashC(const char *msg);
+IDRIS2RC2_Value *idris2rc2_crash(IDRIS2RC2_Value *msg);
+// Prints "ERROR: <msg>" and exits, as idris2rc2_crash does, for an RCrash's
+// message the compiler wrote. In a file of its own (idris2rc2_crash.c), so a
+// program with no RCrash links none of it.
+void idris2rc2_crashC(const char *msg);
 
 // Predeclared name strings for Idris2's "typecase" feature -- see the
 // definition site in idris2rc2_rt.c for why these need to exist independent of
