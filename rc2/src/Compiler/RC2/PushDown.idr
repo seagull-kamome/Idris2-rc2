@@ -216,12 +216,14 @@ normalizeRuns e =
         (_, arms, put) <- caseParts c
         guard (length arms >= 2)
         let runs = map spanRun arms
-        let free = freeLocalsR c
         let common = case map (dupCounts . fst) runs of
                           r :: rs => mapMaybe (\(v, n) => do
                                                    ms <- traverse (lookup v) rs
                                                    pure (v, foldl min n ms)) r
                           [] => []
+        -- `freeLocalsR` walks all of `c`: only for the few with a common dup.
+        guard (not (null common))
+        let free = freeLocalsR c
         let hs = filter (\(v, _) => contains (RCLoc v) free) common
         guard (not (null hs))
         pure (map (\(v, n) => DupOp emptyFC v n) hs,
