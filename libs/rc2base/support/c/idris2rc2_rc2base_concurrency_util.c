@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
 #include "idris2rc2_rc2base_concurrency_util.h"
+#include "idris2rc2_ioprims.h"
 #include "idris2rc2_rt.h"
 #include "idris2rc2_util.h"
 
@@ -156,8 +157,7 @@ void *idris2rc2_fork_join(IDRIS2RC2_Value *, IDRIS2RC2_Closure *fct) {
   v->header.tag = IDRIS2RC2_TAG_JOINHANDLE;
   IDRIS2RC2_JoinHandle *h = (IDRIS2RC2_JoinHandle *)v;
   h->joined = false;
-  int err = pthread_create(&h->tid, NULL, idris2rc2_joinThreadTrampoline, fct);
-  IDRIS2RC2_VERIFY(err == 0, "pthread_create failed: %d", err);
+  idris2rc2_threadCreate(&h->tid, idris2rc2_joinThreadTrampoline, fct);
   return v;
 }
 

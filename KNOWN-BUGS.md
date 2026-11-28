@@ -252,7 +252,11 @@ path, cast to `Int` first, and mind the range.
 
 ## rc2: deep non-tail recursion overflows the C stack (Chez doesn't)
 
-rc2 runs Idris code on the C stack (8 MB by default). Chez grows its
+rc2 runs Idris code on the C stack: the main thread's, which is the
+`ulimit -s` limit (8 MB by default), and for a `fork` or `forkJoin`
+thread one of the same size, fixed when the thread starts (16 MB when
+the limit is unlimited; `IDRIS2RC2_THREAD_STACK=256M` asks for another
+size, see `rc2/doc/concurrency.md`, "Design: thread stacks"). Chez grows its
 stack on demand, so the same programs run to completion there. The
 crash is a stack overflow, not a miscompile: every size that fits
 returns the right result.
@@ -281,9 +285,9 @@ enough depth:
 - mutual recursion reached back only through a non-tail call, and
   continuation-passing traversals and other closure chains (`TODO.md`,
   "closure-valued loop parameters, beyond difference lists");
-- any of these on a thread: `prim__fork` and `forkJoin` create threads
-  with the default attributes, so their stack is glibc's default (the
-  `ulimit -s` at start, or 2 MB when it is unlimited).
+- any of these on a thread, at a depth set by the thread's stack (the
+  limit, or 16 MB when it is unlimited; `IDRIS2RC2_THREAD_STACK` asks for
+  more, above).
 
 ## rc2: the cell pool never gives up a heap that a late thread-exit destructor creates
 

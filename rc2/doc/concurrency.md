@@ -335,6 +335,73 @@ once per handle, the same lack of a type-enforced uniqueness guarantee
 upstream's own `Mutex`/`Condition` API already has; nothing beyond that
 documentation stops a caller from calling it twice.
 
+## Design: thread stacks
+
+Idris code runs on the C stack (`KNOWN-BUGS.md`, "deep non-tail recursion
+overflows the C stack"), and a thread's stack is fixed when it starts.
+`pthread_create` with default attributes leaves the size to the C library:
+glibc gives the main thread's soft stack limit as it was at start, but
+2 MB when that limit is unlimited, so `ulimit -s unlimited` gave a thread
+a quarter of what it had at the usual 8 MB; musl gives 128 KB and macOS
+512 KB whatever the limit.
+
+Both places that start a thread for Idris code (`idris2rc2_fork`,
+rc2base's `idris2rc2_fork_join`) therefore go through one function,
+`idris2rc2_threadCreate` (`idris2rc2_ioprims.c`), which asks for a size:
+
+| | a thread's stack |
+|---|---|
+| `IDRIS2RC2_THREAD_STACK` is set | that size |
+| else, the soft stack limit is finite | the limit (what glibc gives already) |
+| else | 16 MB |
+
+- **`IDRIS2RC2_THREAD_STACK`** is a number of bytes, or a number followed
+  by `K`, `M` or `G` (powers of 1024, either case; a `B` or `iB` may
+  follow): `IDRIS2RC2_THREAD_STACK=256M`, `256MB` and `256MiB` are the same.
+  It is not bounded by the stack limit. `0` leaves the size to
+  `pthread_create`, as before this section. Anything else is reported on
+  stderr once and ignored: a server should not stop at its first `fork`
+  for a misspelt variable. The size is raised to `PTHREAD_STACK_MIN` and
+  rounded up to a page, as glibc treats the limit.
+- **Read once, at the first thread** (`pthread_once`), not at start: a
+  program can set the variable itself (`setEnv`) before its first `fork`.
+  The limit is read then too.
+- **The limit when it is finite**, so that nothing changes for a program
+  run at the default limit, and a thread still gets what the main thread
+  gets.
+- **16 MB when it is unlimited.** A thread's stack cannot be unlimited.
+  The pages of a stack are committed when touched, so the size costs
+  address space only (500 idle threads have the same resident size with
+  2 MB and with 1 GB stacks), and glibc's `malloc` already reserves
+  64 MB a thread for its arena. What a large stack does cost is time at
+  thread creation: glibc keeps the stacks of ended threads for the next
+  ones only up to 40 MB in all (`glibc.pthread.stack_cache_size`), and a
+  stack that does not fit is mapped and unmapped again for every thread.
+  With 64 MB, starting a thread and joining it took 67 microseconds
+  instead of 40; with 32 MB that was unchanged, but a detached thread
+  (`fork`) took 51 instead of 39, because the stack of the thread
+  before it is often still in use and two do not fit. Two of 16 MB do,
+  and neither case costs anything measurable. Eight threads alive at
+  once do not fit with any stack over 5 MB: started and joined in
+  groups of eight, a thread costs 27 microseconds with glibc's 2 MB,
+  36 with 8 MB (the cost at the default limit, before and after) and
+  41 with 16 MB.
+- **If `pthread_create` fails, the program stops**, as before, and the
+  message now names the size and the variable. There is no second try
+  with default attributes: where address space is short (`ulimit -s
+  unlimited` with `ulimit -v 4000000`), 85 threads could be alive at
+  once with glibc's 2 MB stacks and 50 with 16 MB, and a second try
+  made that 55, since the address space the earlier threads took stays
+  taken. `IDRIS2RC2_THREAD_STACK=0` (or `2M`) gives the 85 back.
+
+The main thread's stack is the limit's, as for any C program; the runtime
+does not move it.
+
+`rc2/tests/Test193ThreadStack` runs a 100,000-deep recursion (4.8 MB) on
+a `fork` and on a `forkJoin` thread under `ulimit -s unlimited`, two
+million levels with `IDRIS2RC2_THREAD_STACK=1G`, the 100,000 again with
+`128K` (which must overflow), and reads the sizes back.
+
 ## Design: Channel
 
 Channel was originally the one primitive in this stage that couldn't be

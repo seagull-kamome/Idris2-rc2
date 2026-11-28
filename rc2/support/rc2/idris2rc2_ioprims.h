@@ -85,6 +85,12 @@ extern IDRIS2RC2_String const idris2rc2_codegenString;
 IDRIS2RC2_Value *idris2rc2_Prelude_IO_prim__onCollect(IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *);
 IDRIS2RC2_Value *idris2rc2_Prelude_IO_prim__onCollectAny(IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *);
 
+// Starts a thread that runs Idris code, with the stack such a thread gets:
+// IDRIS2RC2_THREAD_STACK if set, else the main thread's soft stack limit,
+// else (unlimited) 16 MB. Every thread the runtime or a library starts for
+// Idris code goes through here; stops the program if no thread can be had.
+void idris2rc2_threadCreate(pthread_t *tid, void *(*start)(void *), void *arg);
+
 void *idris2rc2_fork(IDRIS2RC2_Closure *fct);
 // See ioprims.c for why this bare (un-namespaced) name is required --
 // it's a thin adapter to idris2rc2_fork above, not the real logic.
