@@ -1,9 +1,13 @@
 #include "idris2rc2_ioprims.h"
 
+#include <errno.h>
 #include <limits.h>
 
 #include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <sys/resource.h>
+#include <unistd.h>
 
 #include "idris2rc2_memory.h"
 #include "idris2rc2_rt.h"
@@ -143,6 +147,75 @@ IDRIS2RC2_Value *idris2rc2_Prelude_IO_prim__onCollect(IDRIS2RC2_Value *erased,
   return idris2rc2_Prelude_IO_prim__onCollectAny(anyPtr, onFree, world);
 }
 
+// ---- the stack of a thread that runs Idris code (rc2/doc/concurrency.md,
+// "Design: thread stacks") ----
+
+// What a thread gets when the main thread's stack limit is unlimited.
+#define IDRIS2RC2_THREAD_STACK_UNLIMITED ((size_t)16 << 20)
+
+static pthread_once_t threadStackOnce = PTHREAD_ONCE_INIT;
+static pthread_attr_t threadAttr;
+static size_t threadStack; // 0: pthread_create's own default
+
+// A number of bytes, or a number followed by K, M or G (powers of 1024),
+// either case, which a B or iB may follow (256M, 256MB, 256MiB).
+static bool parseSize(const char *s, size_t *size) {
+  if (*s < '0' || *s > '9') return false;
+  char *end;
+  errno = 0;
+  unsigned long long n = strtoull(s, &end, 10);
+  if (errno != 0) return false;
+  int shift = 0;
+  switch (*end) {
+  case 'k': case 'K': shift = 10; end++; break;
+  case 'm': case 'M': shift = 20; end++; break;
+  case 'g': case 'G': shift = 30; end++; break;
+  }
+  if (shift != 0 && *end == 'i' && (end[1] == 'B' || end[1] == 'b')) end += 2;
+  else if (shift != 0 && (*end == 'B' || *end == 'b')) end++;
+  if (*end != '\0' || n > (SIZE_MAX >> shift)) return false;
+  *size = (size_t)n << shift;
+  return true;
+}
+
+static void threadStackInit(void) {
+  size_t size = 0;
+  const char *e = getenv("IDRIS2RC2_THREAD_STACK");
+  if (e && *e) {
+    if (parseSize(e, &size)) {
+      if (size == 0) return;
+    } else {
+      fprintf(stderr,
+              "idris2rc2: IDRIS2RC2_THREAD_STACK=\"%s\" is not a size (bytes, or a number with K, M or G); ignored\n", e);
+    }
+  }
+  if (size == 0) {
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_STACK, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY)
+      size = (size_t)rl.rlim_cur;
+    else
+      size = IDRIS2RC2_THREAD_STACK_UNLIMITED;
+  }
+  // As glibc treats the limit: no less than the smallest stack, and whole
+  // pages (macOS takes nothing else).
+  if (size < (size_t)PTHREAD_STACK_MIN) size = (size_t)PTHREAD_STACK_MIN;
+  size_t page = (size_t)sysconf(_SC_PAGESIZE);
+  if (size <= SIZE_MAX - page) size = (size + page - 1) / page * page;
+  if (pthread_attr_init(&threadAttr) != 0) return;
+  if (pthread_attr_setstacksize(&threadAttr, size) != 0) {
+    pthread_attr_destroy(&threadAttr);
+    return;
+  }
+  threadStack = size;
+}
+
+void idris2rc2_threadCreate(pthread_t *tid, void *(*start)(void *), void *arg) {
+  pthread_once(&threadStackOnce, threadStackInit);
+  int err = pthread_create(tid, threadStack != 0 ? &threadAttr : NULL, start, arg);
+  IDRIS2RC2_VERIFY(err == 0, "pthread_create failed: %d (thread stack: %zu bytes, see IDRIS2RC2_THREAD_STACK)", err,
+                   threadStack);
+}
+
 // prelude/Prelude/IO.idr's `prim__fork` is declared with a generic
 // `%foreign "C:refc_fork"` (not gated behind any codegen-tag whitelist --
 // literally the bare C symbol name every C backend is expected to
@@ -173,8 +246,7 @@ void *idris2rc2_fork(IDRIS2RC2_Closure *fct) {
   // can free fct out from under the still-running thread.
   idris2rc2_dup((IDRIS2RC2_Value *)fct);
   pthread_t tid;
-  int err = pthread_create(&tid, NULL, idris2rc2_threadTrampoline, fct);
-  IDRIS2RC2_VERIFY(err == 0, "pthread_create failed: %d", err);
+  idris2rc2_threadCreate(&tid, idris2rc2_threadTrampoline, fct);
   pthread_detach(tid);
   // ThreadID is `[external]` (CFUser: identity pass-through, see
   // Compiler.RC2.EmitUtil's packCFType/extractValue for CFUser), so any

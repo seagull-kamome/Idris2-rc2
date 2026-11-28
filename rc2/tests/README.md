@@ -209,6 +209,7 @@ program's generated C.
 | `Test42SupportMisc` | environment variables, PID, sleep, `System.Info` | saved valgrind |
 | `Test102MultiThreadSwitch` | refcounts switch to atomic when the first thread starts (`doc/hybrid-refcount.md`) | refc valgrind tsan |
 | `Test104ThreadStress` | values crossing eight threads | refc valgrind tsan |
+| `Test193ThreadStack` | the stack of a `fork` and of a `forkJoin` thread: the stack limit, 16 MB when it is unlimited, `IDRIS2RC2_THREAD_STACK` (`doc/concurrency.md`) | saved valgrind check.sh C |
 
 ## Benchmarks
 
