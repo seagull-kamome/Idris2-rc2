@@ -203,17 +203,33 @@ IDRIS2RC2_Array *idris2rc2_mkArray(int length) {
 // actually dropped) and idris2rc2_free (which always skips straight to
 // teardown) live in this translation unit.
 
-// Whether `v` can hold further heap values: the one child of such a kind
-// that dies with its parent is torn down by looping rather than by
-// recursion, so a long list, `SnocList` or closure chain needs no C
-// stack proportional to its length. Recursion is left for any other
-// dying child, so its depth is bounded by how bushy the structure is
-// (a tree's height), not by how long it is.
+// Whether `v` can hold further heap values. No dying child of such a kind
+// is torn down by recursion, so freeing a value takes no C stack
+// proportional to its size, whatever its shape (a list of pairs, a
+// `SnocList` of records, a list of lists, a chain of IORefs):
+// - the last field with children of a constructor or closure, and the
+//   value of a lazy cell or an IORef, is looped on: the cell is freed and
+//   the walk goes on from it, with no `next` to carry (a register gcc kept
+//   resetting on every call);
+// - an earlier field with children hands the rest of the walk to
+//   idris2rc2_teardownWaiting, which frees a dead cell under a field where
+//   it stands and, where it cannot, makes a cell wait on a chain that
+//   costs no memory of its own: a released field links the cell before
+//   it, and the cell's dead reference count holds the field to go on
+//   from (Koka's `kk_block_drop_free_recx` keeps its parents the same way).
+// A dying child of any other kind is torn down by a call of its own. That
+// call does not come back here for a string, a number or a buffer, but
+// does for an array's items, a GCPointer's value (or the finalizer run on
+// it) and a channel's queued values, which it drops one by one: the C
+// stack then grows with how deeply arrays, GCPointers and channels nest
+// inside each other, not with the size of what they hold.
 // Not a general worklist: that cost 5-7% more instructions on a
-// free-heavy benchmark, since every teardown paid to set it up; this
-// loop costs 1.4% (`perf stat`, 2026-09-26).
+// free-heavy benchmark, since every teardown paid to set it up; the
+// waiting chain lives out of line for the same reason, so the common path
+// keeps a short shape and few registers.
 #define IDRIS2RC2_TAGS_WITH_CHILDREN \
-  ((1ull << IDRIS2RC2_TAG_CONSTRUCTOR) | (1ull << IDRIS2RC2_TAG_CLOSURE) | (1ull << IDRIS2RC2_TAG_LAZY))
+  ((1ull << IDRIS2RC2_TAG_CONSTRUCTOR) | (1ull << IDRIS2RC2_TAG_CLOSURE) | (1ull << IDRIS2RC2_TAG_LAZY) | \
+   (1ull << IDRIS2RC2_TAG_IOREF))
 _Static_assert(IDRIS2RC2_TAG_LAZY < 64, "every tag is a bit of a 64-bit mask");
 static inline int idris2rc2_hasChildren(IDRIS2RC2_Value *v) {
   return (IDRIS2RC2_TAGS_WITH_CHILDREN >> v->header.tag) & 1;
@@ -225,6 +241,8 @@ static inline int idris2rc2_releaseLast(IDRIS2RC2_Value *v) {
   return v && !idris2rc2_is_unboxed(v) && idris2rc2_rc_release(&v->header);
 }
 
+static void idris2rc2_teardownWaiting(IDRIS2RC2_Value *v, int k, IDRIS2RC2_Value *c);
+
 // Drop `v`'s children (each of which may itself still be shared, so
 // each goes through the same checked decrement as idris2rc2_drop) and
 // then free `v` itself. Shared by idris2rc2_drop's refcount==1 case and by
@@ -232,11 +250,9 @@ static inline int idris2rc2_releaseLast(IDRIS2RC2_Value *v) {
 // decrementing `v`'s own count first -- so it must only ever be called on
 // a value the caller has *statically* proven has no other references.
 void idris2rc2_teardown(IDRIS2RC2_Value *v) {
-  IDRIS2RC2_Value *next;
   IDRIS2RC2_Value **args;
   int n;
 again:
-  next = NULL;
   // The commonest tag by far, tested before the switch's indirect jump.
   // Constructors and closures share the one loop over the fields below. No
   // __builtin_expect: with it gcc took the other tags for cold and stopped
@@ -265,26 +281,48 @@ again:
     args = ((IDRIS2RC2_Closure *)v)->args;
     n = ((IDRIS2RC2_Closure *)v)->filled;
   fields:
-    for (int i = 0; i < n; ++i)
+    for (int i = 0; i < n - 1; ++i)
       if (idris2rc2_releaseLast(args[i])) {
-        if (!next && idris2rc2_hasChildren(args[i]))
-          next = args[i];
-        else
-          idris2rc2_teardown(args[i]);
+        if (idris2rc2_hasChildren(args[i])) {
+          idris2rc2_teardownWaiting(v, i, args[i]); // the rest of the walk
+          return;
+        }
+        idris2rc2_teardown(args[i]); // nothing this walk follows (see IDRIS2RC2_TAGS_WITH_CHILDREN)
       }
+    if (n > 0 && idris2rc2_releaseLast(args[n - 1])) {
+      IDRIS2RC2_Value *x = args[n - 1];
+      if (idris2rc2_hasChildren(x)) {
+        idris2rc2_cellFreeInline(v); // the last field is looped on
+        v = x;
+        goto again;
+      }
+      idris2rc2_teardown(x);
+    }
     break;
-  case IDRIS2RC2_TAG_IOREF:
-    idris2rc2_drop(((IDRIS2RC2_IORef *)v)->v);
+  case IDRIS2RC2_TAG_IOREF: {
+    // Deferred like a lazy cell's value: a chain of IORefs loops.
+    IDRIS2RC2_Value *x = ((IDRIS2RC2_IORef *)v)->v;
+    if (idris2rc2_releaseLast(x)) {
+      if (idris2rc2_hasChildren(x)) {
+        idris2rc2_cellFreeInline(v);
+        v = x;
+        goto again;
+      }
+      idris2rc2_teardown(x);
+    }
     break;
+  }
   case IDRIS2RC2_TAG_LAZY: {
     // Deferred like a constructor field, so freeing a long forced stream
     // (cons -> cell -> cons -> ...) loops instead of recursing.
     IDRIS2RC2_Value *x = atomic_load_explicit(&((IDRIS2RC2_IORef *)v)->av, memory_order_acquire);
     if (idris2rc2_releaseLast(x)) {
-      if (idris2rc2_hasChildren(x))
-        next = x;
-      else
-        idris2rc2_teardown(x);
+      if (idris2rc2_hasChildren(x)) {
+        idris2rc2_cellFreeInline(v);
+        v = x;
+        goto again;
+      }
+      idris2rc2_teardown(x);
     }
     break;
   }
@@ -361,12 +399,158 @@ again:
     break;
   }
   idris2rc2_cellFreeInline(v);
-  if (next) {
-    v = next;
-    goto again;
-  }
 }
 
+// The fields of a constructor or closure, and how many.
+static inline IDRIS2RC2_Value **idris2rc2_fieldsOf(IDRIS2RC2_Value *v, int *n) {
+  if (v->header.tag == IDRIS2RC2_TAG_CONSTRUCTOR) {
+    *n = ((IDRIS2RC2_Constructor *)v)->arity;
+    return ((IDRIS2RC2_Constructor *)v)->args;
+  }
+  *n = ((IDRIS2RC2_Closure *)v)->filled;
+  return ((IDRIS2RC2_Closure *)v)->args;
+}
+
+// Whether `v` is a value whose last reference was released already.
+// Relies on no live value having a count of 0: a static or stack-built
+// value is immortal (IDRIS2RC2_REFCOUNT_MAX), a fresh cell starts at 1.
+// idris2rc2_teardownWaiting tells a kept cell (its first field dead) from
+// one not yet entered (its first field still held) by this alone, so a
+// value that lived at count 0 (were borrowing ever to make one) would make
+// it take a cell not yet entered for a kept one and free that live
+// first field. Such a value must not reach it.
+static inline int idris2rc2_isDead(IDRIS2RC2_Value *v) {
+  return v && !idris2rc2_is_unboxed(v) && atomic_load_explicit(&v->header.refCount, memory_order_relaxed) == 0;
+}
+
+// The rest of a teardown once field `k` of the constructor or closure `v`
+// (already released, `c`) is a dead value with children and is not the
+// last. No C frame per level, and no memory but the dead cells' own (see
+// IDRIS2RC2_TAGS_WITH_CHILDREN):
+// - a dead cell under a field of `v` has its own fields released where it
+//   stands, in a loop inside `v`'s, and is freed there; a dead last field
+//   with children takes its place, so a chain through last fields is a
+//   loop too;
+// - when its first field is dead with children, the cell is kept (`deep`)
+//   and entered after `v`, at that field: a chain through first fields;
+// - a second such cell is entered at once, and `v` waits; so does a cell
+//   with such a field between its first and its last. The waiting cells
+//   form a chain (`parent`), each linked through the field before the one
+//   it goes on from, with that field's number in its dead reference count
+//   (arity and `filled` fit its 16 bits).
+static __attribute__((noinline)) void idris2rc2_teardownWaiting(IDRIS2RC2_Value *v, int k, IDRIS2RC2_Value *c) {
+  IDRIS2RC2_Value *parent = NULL;
+  IDRIS2RC2_Value *deep = NULL;
+  IDRIS2RC2_Value **args, **cargs;
+  int n, i = k, cn;
+  args = idris2rc2_fieldsOf(v, &n);
+  goto child;
+fields:
+  for (; i < n; ++i) {
+    c = args[i];
+    if (!idris2rc2_releaseLast(c))
+      continue;
+    if (__builtin_expect(!idris2rc2_hasChildren(c), 0)) {
+      idris2rc2_teardown(c); // nothing this walk follows (see IDRIS2RC2_TAGS_WITH_CHILDREN)
+      continue;
+    }
+  child:
+    // `c`, under field i of `v`, is dead and can hold children
+    if (c->header.tag == IDRIS2RC2_TAG_CONSTRUCTOR) {
+      cargs = ((IDRIS2RC2_Constructor *)c)->args;
+      cn = ((IDRIS2RC2_Constructor *)c)->arity;
+    } else if (c->header.tag == IDRIS2RC2_TAG_CLOSURE) {
+      cargs = ((IDRIS2RC2_Closure *)c)->args;
+      cn = ((IDRIS2RC2_Closure *)c)->filled;
+    } else {
+      // a lazy cell or an IORef: its value is its last field
+      IDRIS2RC2_Value *d = c->header.tag == IDRIS2RC2_TAG_LAZY
+        ? atomic_load_explicit(&((IDRIS2RC2_IORef *)c)->av, memory_order_acquire)
+        : ((IDRIS2RC2_IORef *)c)->v;
+      if (idris2rc2_releaseLast(d)) {
+        if (idris2rc2_hasChildren(d)) {
+          idris2rc2_cellFreeInline(c);
+          c = d;
+          goto child;
+        }
+        idris2rc2_teardown(d);
+      }
+      cn = 0;
+    }
+    for (int j = 0; j < cn; ++j) {
+      IDRIS2RC2_Value *d = cargs[j];
+      if (idris2rc2_releaseLast(d)) {
+        if (__builtin_expect(idris2rc2_hasChildren(d), 1)) {
+          if (j == cn - 1) {
+            // the last field: `c` is done with, and `d` takes its place
+            idris2rc2_cellFreeInline(c);
+            c = d;
+            goto child;
+          }
+          if (j == 0) {
+            // the first: `c` is kept for after `v`, or entered now
+            if (__builtin_expect(deep != NULL, 0))
+              goto wait;
+            deep = c;
+          } else {
+            // between: `c` waits to go on from field j
+            cargs[j - 1] = parent;
+            c->header.rc = (uint16_t)j;
+            parent = c;
+          }
+          goto walked;
+        }
+        idris2rc2_teardown(d); // nothing this walk follows (see IDRIS2RC2_TAGS_WITH_CHILDREN)
+      }
+    }
+    idris2rc2_cellFreeInline(c);
+  walked:;
+  }
+  idris2rc2_cellFreeInline(v);
+  if (deep) {
+    // the cell kept is entered at its first field, dead already
+    v = deep;
+    deep = NULL;
+  enter:
+    args = idris2rc2_fieldsOf(v, &n);
+    i = 0;
+    c = args[0];
+    goto child;
+  }
+  if (!parent)
+    return;
+  // Back to the innermost waiting cell, at the field it is to go on from.
+  // That field is dead already: the one it waited at, still whole, or the
+  // cell that was kept when it began to wait, whose first field is dead too
+  // (told apart by idris2rc2_isDead, whose comment says what that needs).
+  v = parent;
+  i = v->header.rc;
+  args = idris2rc2_fieldsOf(v, &n);
+  parent = args[i - 1];
+  c = args[i];
+  if (c->header.tag == IDRIS2RC2_TAG_CONSTRUCTOR || c->header.tag == IDRIS2RC2_TAG_CLOSURE) {
+    cargs = idris2rc2_fieldsOf(c, &cn);
+    if (__builtin_expect(cn > 0 && idris2rc2_isDead(cargs[0]), 0)) {
+      deep = c;
+      ++i;
+      goto fields;
+    }
+  }
+  goto child;
+wait:
+  // Two cells are in hand whose first field is dead: the one kept and `c`.
+  // `c` is entered now and `v` waits: the kept one becomes field i of `v`,
+  // where `v` goes on from, and field i - 1 links the cell waiting before
+  // `v`. Both fields are free: the kept one was met under a field before i,
+  // and `c` under field i.
+  args[i] = deep;
+  args[i - 1] = parent;
+  v->header.rc = (uint16_t)i;
+  parent = v;
+  deep = NULL;
+  v = c;
+  goto enter;
+}
 
 // The flag is read again for each drop: a teardown can run a finalizer that
 // forks, and the drops after it must then be atomic. A dup runs nothing.

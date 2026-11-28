@@ -257,20 +257,33 @@ stack on demand, so the same programs run to completion there. The
 crash is a stack overflow, not a miscompile: every size that fits
 returns the right result.
 
-TRMC (`rc2/doc/trmc.md`, phase 1), the difference-list rewrite
-(`rc2/doc/closure-accumulator.md`) and a non-recursive
-`idris2rc2_teardown` for long lists (`Test113DeepRecursion/TeardownDeep.idr`) cover
-`mergeBy`, `[1 .. n]`, `sortBy`'s `splitRec` and `Data.List.sort`: all
-four run at 4M elements with `ulimit -s` 8192 (measured 2026-09-26).
-Chez sorts a 1M list in 1.23s; rc2 takes 4.17s.
+TRMC (`rc2/doc/trmc.md`, phases 1-3: self and mutual recursion, a hole
+at any field) and the difference-list rewrite
+(`rc2/doc/closure-accumulator.md`) cover `mergeBy`, `[1 .. n]`,
+`sortBy`'s `splitRec` and `Data.List.sort`: all four run at 4M elements
+with `ulimit -s` 8192 (measured 2026-09-26). Chez sorts a 1M list in
+1.23s; rc2 takes 4.17s.
+
+Freeing takes no stack proportional to a value's size, whatever its
+shape: `idris2rc2_teardown` loops on the last field with children and
+enters an earlier one without recursing, its parent linked through the
+field just released (`Test113DeepRecursion/TeardownDeep.idr`,
+`TeardownShapes.idr`: a list of pairs, a `SnocList` of pairs, a list of
+lists, an IORef chain, a million each). An array's items are still
+dropped by a call each, so only arrays nested inside arrays nest frames.
 
 Any non-tail recursion none of these covers still overflows at a large
 enough depth:
-- mutual recursion, and sites filling different fields (`TODO.md`,
-  TRMC phases 2-4);
-- continuation-passing traversals and other closure chains
-  (`TODO.md`, "closure-valued loop parameters, beyond difference
-  lists").
+- a call whose result is used after it returns (`n + f (n - 1)`,
+  `foldr` with an arbitrary function, `traverse` in IO over a list):
+  no TRMC phase covers it, measured to break at about 130,000-170,000
+  levels at 8 MB;
+- mutual recursion reached back only through a non-tail call, and
+  continuation-passing traversals and other closure chains (`TODO.md`,
+  "closure-valued loop parameters, beyond difference lists");
+- any of these on a thread: `prim__fork` and `forkJoin` create threads
+  with the default attributes, so their stack is glibc's default (the
+  `ulimit -s` at start, or 2 MB when it is unlimited).
 
 ## rc2: the cell pool never gives up a heap that a late thread-exit destructor creates
 
